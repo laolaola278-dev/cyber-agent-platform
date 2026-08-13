@@ -1,0 +1,24 @@
+name: owasp-zap
+version: 2.17.0
+tool_type: zap-daemon-api
+description: Version-pinned OWASP ZAP daemon controlled through the typed Adapter.
+required_permissions:
+  - tool.invoke
+runtime_requirements:
+  adapter: zap-api-python
+  mode: daemon
+  sandbox: container
+security:
+  api_key_required: true
+  api_bind: loopback-or-isolated-network
+  file_transfer: false
+  dynamic_addons: false
+  arbitrary_targets: false
+  passive_scan_default: true
+  active_scan_default: false
+  context_scope_required: true
+sandbox_profile:
+  cpu_limit: 1.0
+  memory_limit_mb: 1024
+  timeout_seconds: 600
+  network_policy: asset-scope-only

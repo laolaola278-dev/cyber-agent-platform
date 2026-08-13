@@ -1,0 +1,258 @@
+name: CAP Linux Certification
+
+# Phase 28.5-CI: reproducible Linux runtime certification pipeline.
+# Runner must be a REAL Linux host with a working docker daemon, cgroup v2,
+# and enough memory for PostgreSQL + MinIO + Chromium.
+#
+# LAYERS (cost strategy):
+#   PR            : unit + SQLite regression + OCI smoke + network isolation
+#                   + secret audit + 20-run HA (fast subset)
+#   main          : full regression + 100-run HA
+#   release tag   : full adversarial certification + 500-run benchmark
+#
+# cap-production-certification (release gate): release jobs depend on it.
+# Any critical gate FAIL / critical SKIP / missing JSON field -> job FAILED.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      layer:
+        description: "Certification layer to run"
+        required: true
+        default: "main"
+        type: choice
+        options:
+          - pr
+          - main
+          - release
+      ha_n:
+        description: "HA run count (main layer only)"
+        required: false
+        default: "20"
+        type: string
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, "release/**"]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cap-cert-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------
+  # PR / fast subset
+  # ---------------------------------------------------------------------
+  fast-certification:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CAP_CERTIFICATION_STRICT: "1"
+      CAP_CERT_OUT: outputs/cap-cert
+      CAP_CERT_PREFIX: capcert-pr-${{ github.run_id }}
+      CAP_SANDBOX_NETWORK: cap-sandbox-egress
+      CAP_SANDBOX_IMAGE: cap-sandbox-http:latest
+      EGRESS_PROXY_URL: http://capcert-pr-${{ github.run_id }}-egress:8080
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: cap, POSTGRES_PASSWORD: cap, POSTGRES_DB: cap283 }
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cap" --health-interval 5s --health-retries 12
+      minio:
+        image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        env: { MINIO_ROOT_USER: capadmin, MINIO_ROOT_PASSWORD: capadmin123 }
+        command: ["server", "/data", "--console-address", ":9001"]
+        ports: ["9000:9000"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install deps
+        run: uv sync --project backend --frozen --extra dev
+      - name: Build sandbox images
+        run: bash scripts/certification/build_images.sh
+      - name: Network + egress proxy setup
+        run: |
+          docker network create cap-sandbox-egress
+          docker build -q -t cap-egress-proxy:latest -f backend/docker/egress-proxy/Dockerfile backend/
+          docker run -d --name capcert-pr-${{ github.run_id }}-egress --network cap-sandbox-egress \
+            -e CAP_EGRESS_ALLOW= cap-egress-proxy:latest
+      - name: OCI smoke + network isolation + secret audit
+        run: |
+          uv run --project backend pytest \
+            tests/test_phase_28_5_linux_network.py \
+            tests/test_phase_28_5_linux_secrets.py \
+            tests/test_phase_28_5_oci_provider.py \
+            tests/test_phase_28_5_oci_reaper.py \
+            -m "certification or oci or security" \
+            --junitxml=outputs/cap-cert/junit-security.xml -p no:cacheprovider
+      - name: SQLite + PG regression subset
+        run: |
+          uv run --project backend pytest \
+            tests/test_phase_28_1_worker_path.py tests/test_phase_28_2_claim_fencing.py \
+            tests/test_phase_28_2_cancellation.py tests/test_phase_28_3_recovery_loop.py \
+            tests/test_phase_28_4_object_store.py tests/test_phase_28_4_orphan_gc.py \
+            -p no:cacheprovider
+      - name: 20-run HA
+        run: CAP284_HA_N=20 uv run --project backend pytest tests/test_phase_28_4_multi_worker_ha.py -p no:cacheprovider
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cert-artifacts-pr
+          path: outputs/cap-cert/
+
+  # ---------------------------------------------------------------------
+  # main / full certification (100-run HA; no 500-run benchmark)
+  # ---------------------------------------------------------------------
+  full-certification:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CAP_CERTIFICATION_STRICT: "1"
+      CAP_CERT_OUT: outputs/cap-cert
+      CAP_CERT_PREFIX: capcert-main
+      CAP_SANDBOX_NETWORK: cap-sandbox-egress
+      CAP_SANDBOX_IMAGE: cap-sandbox-http:latest
+      EGRESS_PROXY_URL: http://capcert-main-egress:8080
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: cap, POSTGRES_PASSWORD: cap, POSTGRES_DB: cap283 }
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cap" --health-interval 5s --health-retries 12
+      minio:
+        image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        env: { MINIO_ROOT_USER: capadmin, MINIO_ROOT_PASSWORD: capadmin123 }
+        command: ["server", "/data", "--console-address", ":9001"]
+        ports: ["9000:9000"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: uv sync --project backend --frozen --extra dev
+      - name: Build images + setup
+        run: |
+          bash scripts/certification/build_images.sh
+          bash scripts/certification/setup.sh
+      - name: Preflight
+        run: bash scripts/certification/preflight.sh
+      - name: Security certification (network/secrets/resources/browser/reaper)
+        run: bash scripts/certification/run_security.sh
+      - name: 100-run HA
+        run: CAP284_HA_N=100 bash scripts/certification/run_ha.sh
+      - name: Full regression
+        run: |
+          uv run --project backend pytest tests/test_phase_28_1_worker_path.py \
+            tests/test_phase_28_2_*.py tests/test_phase_28_3_*.py tests/test_phase_28_4_*.py \
+            tests/test_phase_28_5_*.py -p no:cacheprovider \
+            --junitxml=outputs/cap-cert/junit-regression.xml
+      - name: Collect artifacts
+        run: bash scripts/certification/collect_artifacts.sh
+      - name: Generate certification result (meta-gate check, release-blocking)
+        run: |
+          CAP_CERT_SECRET_SENTINEL="${CAP_CERT_SECRET_SENTINEL:-}" \
+          python scripts/certification/generate_report.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cert-artifacts-main
+          path: outputs/cap-cert/
+
+  # ---------------------------------------------------------------------
+  # release tag / production certification (RELEASE GATE)
+  # ---------------------------------------------------------------------
+  cap-production-certification:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      CAP_CERTIFICATION_STRICT: "1"
+      CAP_CERT_OUT: outputs/cap-cert
+      CAP_CERT_PREFIX: capcert-rel-${{ github.ref_name }}
+      CAP_SANDBOX_NETWORK: cap-sandbox-egress
+      CAP_SANDBOX_IMAGE: cap-sandbox-http:latest
+      CAP_SANDBOX_BROWSER_IMAGE: cap-sandbox-browser:latest
+      EGRESS_PROXY_URL: http://capcert-rel-${{ github.ref_name }}-egress:8080
+      CAP284_BENCH_N: "500"
+      CAP284_BENCH_LAB: "40"
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: cap, POSTGRES_PASSWORD: cap, POSTGRES_DB: cap283 }
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cap" --health-interval 5s --health-retries 12
+      minio:
+        image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        env: { MINIO_ROOT_USER: capadmin, MINIO_ROOT_PASSWORD: capadmin123 }
+        command: ["server", "/data", "--console-address", ":9001"]
+        ports: ["9000:9000"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: uv sync --project backend --frozen --extra dev
+      - name: Build images (http + browser)
+        run: bash scripts/certification/build_images.sh
+      - name: Preflight (hard requirements, exit non-zero on missing)
+        run: bash scripts/certification/preflight.sh
+      - name: Setup infra (PG/MinIO/egress)
+        run: bash scripts/certification/setup.sh
+      - name: Security certification (full adversarial)
+        run: bash scripts/certification/run_security.sh
+      - name: 100-run HA (kill -9 worker)
+        run: CAP284_HA_N=100 bash scripts/certification/run_ha.sh
+      - name: 500-run OCI correctness benchmark (release-blocking)
+        run: bash scripts/certification/run_benchmark.sh
+      - name: Full regression (28.1 - 28.5)
+        run: |
+          uv run --project backend pytest tests/test_phase_28_1_worker_path.py \
+            tests/test_phase_28_2_*.py tests/test_phase_28_3_*.py tests/test_phase_28_4_*.py \
+            tests/test_phase_28_5_*.py -p no:cacheprovider \
+            --junitxml=outputs/cap-cert/junit-regression.xml
+      - name: Collect artifacts
+        run: bash scripts/certification/collect_artifacts.sh
+      - name: Generate certification JSON + human report (meta-gate check)
+        run: |
+          CAP_CERT_SECRET_SENTINEL="${CAP_CERT_SECRET_SENTINEL:-}" \
+          python scripts/certification/generate_report.py
+      - name: Assert machine-readable artifact exists with all gates
+        run: |
+          python - <<'EOF'
+          import json
+          p = "outputs/cap-cert/cap-28.5-linux-certification.json"
+          data = json.load(open(p))
+          required = ["container_isolation","filesystem","memory","cpu","pids",
+                      "network_enforcement","ssrf_defense_in_depth","hard_cancellation",
+                      "reaper","browser","secrets","real_integration"]
+          missing = [g for g in required if g not in data.get("gates", {})]
+          assert not missing, f"missing gates: {missing}"
+          bad = [g for g, v in data["gates"].items() if v in ("NOT_RUN","SKIPPED")]
+          assert not bad, f"incomplete gates: {bad}"
+          failed = [g for g, v in data["gates"].items() if v == "FAIL"]
+          assert not failed, f"failed gates: {failed}"
+          print("release certification artifact OK")
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cert-artifacts-release
+          path: outputs/cap-cert/
+          if-no-files-found: error
+
+# Production releases MUST depend on cap-production-certification
+# (the release.yml workflow includes this file via workflow_call and lists it
+# as a required job before publishing artifacts).

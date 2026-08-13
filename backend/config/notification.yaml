@@ -1,0 +1,62 @@
+policy:
+  policy_name: default-notification-policy
+  enabled: true
+  allowed_capabilities:
+    - notification.email
+    - notification.webhook
+    - notification.chat
+    - notification.ticket
+    - notification.sms
+    - notification.custom
+  allowed_severities:
+    - INFO
+    - LOW
+    - MEDIUM
+    - HIGH
+    - CRITICAL
+  allowed_priorities:
+    - LOW
+    - MEDIUM
+    - HIGH
+    - CRITICAL
+  business_hours_start: 0
+  business_hours_end: 23
+  defer_outside_business_hours: false
+  recipient_allowlist:
+    - soc@example.test
+    - soc-lead@example.test
+  recipient_groups:
+    - name: soc
+      recipients:
+        - soc@example.test
+    - name: soc-leads
+      recipients:
+        - soc-lead@example.test
+  routes:
+    - name: default-synthetic
+      capability: notification.custom
+      recipient_group: soc
+      template_name: default-text
+    - name: email-soc
+      capability: notification.email
+      recipient_group: soc
+      template_name: default-text
+    - name: webhook-soc
+      capability: notification.webhook
+      recipient_group: soc
+      template_name: default-text
+    - name: ticket-soc
+      capability: notification.ticket
+      recipient_group: soc
+      template_name: default-text
+  rate_limit_count: 100
+  rate_limit_window_seconds: 60
+  deduplication_window_seconds: 300
+  silence_rules: []
+  escalation_rules:
+    - minimum_severity: CRITICAL
+      from_group: soc
+      to_group: soc-leads
+  execution_timeout_seconds: 30
+  max_evidence_items: 20
+  max_result_bytes: 1000000

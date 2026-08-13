@@ -1,0 +1,31 @@
+{
+  "schema_version": "phase22.v1",
+  "scope": "single-node validation budget",
+  "api": {
+    "p95_ms": 500,
+    "p99_ms": 1000,
+    "error_rate_max": 0.01
+  },
+  "worker": {
+    "success_rate_min": 0.99,
+    "scheduling_p95_ms": 100,
+    "lease_conflict_rate_max": 0.01
+  },
+  "plugin": {
+    "success_rate_min": 0.99,
+    "p95_ms": 1000
+  },
+  "playbook": {
+    "success_rate_min": 0.99,
+    "p95_ms": 1000
+  },
+  "resources": {
+    "rss_growth_mb_max": 256,
+    "cpu_utilization_ratio_max": 0.85
+  },
+  "notes": [
+    "Budgets are validation gates, not production SLOs.",
+    "SQLite in-process results must not be represented as PostgreSQL production capacity.",
+    "1000-concurrency results are invalid if the local load generator saturates first."
+  ]
+}

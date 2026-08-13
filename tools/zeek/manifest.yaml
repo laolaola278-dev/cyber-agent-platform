@@ -1,0 +1,32 @@
+name: zeek
+version: 7.0.0
+tool_type: zeek-jsonl-adapter
+description: Version-pinned read-only Zeek JSONL Adapter with evidence lineage.
+required_permissions:
+  - zeek.read
+runtime_requirements:
+  adapter: zeek-jsonl
+  mode: read-only
+  sandbox: container-or-restricted-worker
+supported_logs:
+  - conn
+  - dns
+  - http
+  - ssl
+  - files
+  - notice
+security:
+  arbitrary_paths: false
+  shell: false
+  network_access: false
+  jsonl_only: true
+  tsv_reserved: true
+  configured_sources_only: true
+sandbox_profile:
+  cpu_limit: 0.5
+  memory_limit_mb: 256
+  timeout_seconds: 30
+  max_input_bytes: 5000000
+  max_records: 1000
+  filesystem_policy: configured-read-only-sources
+  network_policy: none

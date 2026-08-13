@@ -1,0 +1,264 @@
+name: cyber-agent-platform
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  init: true
+
+services:
+  postgres:
+    <<: *service-defaults
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cap}
+      POSTGRES_USER: ${POSTGRES_USER:-cap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+    networks: [cap-network]
+
+  redis:
+    <<: *service-defaults
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 10
+    networks: [cap-network]
+
+  backend:
+    <<: *service-defaults
+    build:
+      context: ./backend
+      args:
+        VERSION: ${APP_VERSION:-1.0.0-rc1}
+    environment:
+      APP_VERSION: ${APP_VERSION:-1.0.0-rc1}
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-production}
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-false}
+      DEBUG: ${DEBUG:-false}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      RBAC_IDENTITY_HEADER: ${RBAC_IDENTITY_HEADER:-X-CAP-User}
+      RBAC_TRUSTED_PROXY_HEADER: ${RBAC_TRUSTED_PROXY_HEADER:-X-CAP-Proxy-Secret}
+      RBAC_TRUSTED_PROXY_SECRET: ${RBAC_TRUSTED_PROXY_SECRET:?RBAC_TRUSTED_PROXY_SECRET is required}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      TRACING_ENABLED: ${TRACING_ENABLED:-true}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-cyber-agent-platform}
+      OTEL_EXPORTER_ENDPOINT: ${OTEL_EXPORTER_ENDPOINT:-}
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+      redis:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+    networks: [cap-network]
+
+  # Phase 28.4: durable evidence object storage (S3-compatible)
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-capminio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-capminio-secret}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [cap-network]
+
+  # Phase 28.5: controlled egress proxy -- the sandbox containers' ONLY
+  # route to the outside world (layer-2 SSRF defense). Sandbox containers
+  # join cap-sandbox-egress and point HTTP(S)_PROXY here.
+  egress-proxy:
+    build:
+      context: ./backend
+      dockerfile: docker/egress-proxy/Dockerfile
+    environment:
+      CAP_EGRESS_ALLOW: ${CAP_EGRESS_ALLOW:-}
+    networks:
+      - cap-sandbox-egress
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  acquisition-worker:
+    <<: *service-defaults
+    build:
+      context: ./backend
+      args:
+        VERSION: ${APP_VERSION:-1.0.0-rc1}
+    environment:
+      APP_VERSION: ${APP_VERSION:-1.0.0-rc1}
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-production}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ACQ_WORKER_NAME: ${ACQ_WORKER_NAME:-acquisition-worker}
+      ACQ_MAX_CONCURRENCY: ${ACQ_MAX_CONCURRENCY:-4}
+      ACQ_POLL_INTERVAL: ${ACQ_POLL_INTERVAL:-0.2}
+      ACQ_BATCH_SIZE: ${ACQ_BATCH_SIZE:-5}
+      ACQ_LEASE_TTL_SECONDS: ${ACQ_LEASE_TTL_SECONDS:-120}
+      ACQ_STORE_ROOT: ${ACQ_STORE_ROOT:-outputs/acquisition-objects}
+      # Phase 28.4: production sandbox + durable object storage + metrics
+      SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-subprocess-sandbox}
+      SANDBOX_TIMEOUT_SECONDS: ${SANDBOX_TIMEOUT_SECONDS:-120}
+      SANDBOX_MEMORY_MB: ${SANDBOX_MEMORY_MB:-512}
+      OBJECT_STORE_BACKEND: ${OBJECT_STORE_BACKEND:-s3}
+      OBJECT_STORE_ENDPOINT: ${OBJECT_STORE_ENDPOINT:-minio:9000}
+      OBJECT_STORE_ACCESS_KEY: ${MINIO_ROOT_USER:-capminio}
+      OBJECT_STORE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-capminio-secret}
+      OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-cap-evidence}
+      ORPHAN_GRACE_SECONDS: ${ORPHAN_GRACE_SECONDS:-3600}
+      GC_INTERVAL_SECONDS: ${GC_INTERVAL_SECONDS:-3600}
+      ACQ_METRICS_PORT: ${ACQ_METRICS_PORT:-9100}
+      # Phase 28.5: OCI container sandbox (Linux production)
+      SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-oci-sandbox}
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-cap-sandbox-http:latest}
+      SANDBOX_BROWSER_IMAGE: ${SANDBOX_BROWSER_IMAGE:-cap-sandbox-browser:latest}
+      SANDBOX_NETWORK: ${SANDBOX_NETWORK:-cap-sandbox-egress}
+      SANDBOX_CPU_MILLICORES: ${SANDBOX_CPU_MILLICORES:-500}
+      SANDBOX_PIDS_LIMIT: ${SANDBOX_PIDS_LIMIT:-256}
+      EGRESS_PROXY_URL: ${EGRESS_PROXY_URL:-http://egress-proxy:8080}
+      SANDBOX_REAPER_INTERVAL_SECONDS: ${SANDBOX_REAPER_INTERVAL_SECONDS:-60}
+    # The worker manages sandbox containers through the docker CLI (the
+    # SANDBOX containers never mount the socket -- only the worker does).
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["python", "-m", "app.acquisition.worker_main"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+      minio:
+        condition: service_healthy
+        restart: true
+      egress-proxy:
+        condition: service_healthy
+        restart: true
+    networks:
+      - cap-network
+      - cap-sandbox-egress
+
+  frontend:
+    <<: *service-defaults
+    build:
+      context: ./frontend
+      args:
+        VERSION: ${APP_VERSION:-1.0.0-rc1}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    environment:
+      BACKEND_UPSTREAM: backend
+      CAP_DEFAULT_USER: ${CAP_DEFAULT_USER:-read-only}
+      RBAC_TRUSTED_PROXY_SECRET: ${RBAC_TRUSTED_PROXY_SECRET:?RBAC_TRUSTED_PROXY_SECRET is required}
+    ports:
+      - "8080:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    networks: [cap-network]
+
+  prometheus:
+    <<: *service-defaults
+    image: prom/prometheus:v2.55.1
+    profiles: ["observability"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
+    volumes:
+      - ./deployment/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deployment/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [cap-network]
+
+  grafana:
+    <<: *service-defaults
+    image: grafana/grafana:11.3.1
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./deployment/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deployment/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+    networks: [cap-network]
+
+  pgadmin:
+    <<: *service-defaults
+    image: dpage/pgadmin4:8
+    profiles: ["admin"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:?PGADMIN_DEFAULT_EMAIL is required}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?PGADMIN_DEFAULT_PASSWORD is required}
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks: [cap-network]
+
+volumes:
+  postgres_data:
+  redis_data:
+  pgadmin_data:
+  prometheus_data:
+  grafana_data:
+  minio_data:
+
+networks:
+  cap-network:
+  # isolated bridge: sandbox containers can ONLY reach the egress proxy
+  cap-sandbox-egress:
+    driver: bridge
+    internal: false
+    driver: bridge

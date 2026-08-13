@@ -1,0 +1,42 @@
+apiVersion: cap.security/v1
+kind: NotificationPlugin
+metadata:
+  name: synthetic-notification
+  version: 1.0.0
+spec:
+  capabilities:
+    - notification.email
+    - notification.webhook
+    - notification.chat
+    - notification.ticket
+    - notification.sms
+    - notification.custom
+  permissions:
+    - notification.render
+    - notification.send
+    - notification.verify
+  sandboxCompatible: true
+  supportsVerification: true
+  networkAccess: none
+  databaseAccess: denied
+  incidentMutation: denied
+  responseMutation: denied
+  templateExecution: denied
+runtime_version: phase-18
+entrypoint: app.notification.fake_plugin:FakeNotificationPlugin
+capabilities:
+  - notification.email
+  - notification.webhook
+  - notification.chat
+  - notification.ticket
+  - notification.sms
+  - notification.custom
+permissions: [notification.render, notification.send, notification.verify]
+sandbox: {name: notification-synthetic-default, cpu_millicores: 250, memory_mb: 128, filesystem_writable: false, network_enabled: false, allowed_networks: [], environment: {}, secret_references: [], timeout_seconds: 60, working_directory: /workspace, readonly_mounts: [], tmp_mounts: [{target: /tmp, size_mb: 32}]}
+worker: {runtime_version: phase-18, max_concurrency: 8, heartbeat_seconds: 30, lease_ttl_seconds: 120}
+secret: {provider: memory, references: []}
+network: {enabled: false, allowlist: []}
+filesystem: {writable: false, working_directory: /workspace, readonly_mounts: [], tmp_mounts: [{target: /tmp, size_mb: 32}]}
+healthcheck: {enabled: true, interval_seconds: 30}
+name: synthetic-notification
+version: 1.0.0

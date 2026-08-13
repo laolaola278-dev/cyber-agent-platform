@@ -1,0 +1,26 @@
+id: cap-http-missing-content-type-options
+
+info:
+  name: Missing X-Content-Type-Options Header
+  author: cap
+  severity: low
+  description: Detects an authorized HTTP asset response without X-Content-Type-Options.
+  reference:
+    - https://owasp.org/www-project-secure-headers/
+  classification:
+    cwe-id:
+      - CWE-693
+  tags: cap,headers,misconfiguration
+  metadata:
+    max-request: 1
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}"
+    max-redirects: 2
+    host-redirects: true
+    matchers:
+      - type: dsl
+        dsl:
+          - "!contains(tolower(all_headers), 'x-content-type-options')"

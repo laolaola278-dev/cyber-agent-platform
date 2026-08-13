@@ -1,0 +1,72 @@
+policy:
+  capability_allowlist:
+    - network.detect
+    - host.detect
+    - log.detect
+    - ids.detect
+    - traffic.detect
+    - event.detect
+    - ioc.detect
+    - rule.detect
+  allowed_log_sources:
+    - synthetic
+    - suricata-eve
+    - zeek-telemetry
+  allowed_plugins:
+    - fake-detection
+    - suricata-detection
+    - zeek-detection
+  allowed_parsers:
+    - structured-json
+    - eve-jsonl
+    - zeek-jsonl
+  sampling_rate: 1.0
+  max_event_size_bytes: 262144
+  rate_limit_per_second: 100.0
+  retention_days: 30
+  timeout_seconds: 60
+  max_events: 1000
+  correlation_window_seconds: 300
+suricata:
+  version: 8.0.6
+  data_sources:
+    phase11-fixture:
+      path: ../tests/fixtures/suricata/eve.jsonl
+      fixture: true
+  sandbox:
+    cpu_limit: 0.5
+    memory_limit_mb: 256
+    timeout_seconds: 30
+    max_input_bytes: 5000000
+    max_records: 1000
+    allowed_event_types:
+      - alert
+      - flow
+      - stats
+      - dns
+      - http
+      - tls
+      - fileinfo
+    filesystem_policy: configured-read-only-sources
+    network_policy: none
+zeek:
+  version: 7.0.0
+  data_sources:
+    phase13-fixture:
+      path: ../tests/fixtures/zeek/logs.jsonl
+      fixture: true
+  sandbox:
+    cpu_limit: 0.5
+    memory_limit_mb: 256
+    timeout_seconds: 30
+    max_input_bytes: 5000000
+    max_records: 1000
+    allowed_logs:
+      - conn
+      - dns
+      - http
+      - ssl
+      - files
+      - notice
+    filesystem_policy: configured-read-only-sources
+    network_policy: none

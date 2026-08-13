@@ -1,0 +1,37 @@
+name: nuclei-assessment
+version: 1.0.0
+sdk_version: 1.0.0
+description: Governed Nuclei Assessment Plugin executed only through Adapter and Sandbox.
+entrypoint: app.plugins.nuclei:NucleiAssessmentPlugin
+permissions:
+  - assessment.execute
+  - tool.invoke
+  - evidence.write
+capabilities:
+  - template.scan
+  - web.scan
+tool: nuclei
+security:
+  arbitrary_targets: false
+  dynamic_template_downloads: false
+  approved_local_templates_only: true
+  sandbox_required: true
+runtime_version: phase-18
+sandbox:
+  name: nuclei-default
+  cpu_millicores: 500
+  memory_mb: 512
+  filesystem_writable: false
+  network_enabled: true
+  allowed_networks: [asset-scope]
+  environment: {}
+  secret_references: []
+  timeout_seconds: 60
+  working_directory: /workspace
+  readonly_mounts: []
+  tmp_mounts: [{target: /tmp, size_mb: 64}]
+worker: {runtime_version: phase-18, max_concurrency: 2, heartbeat_seconds: 30, lease_ttl_seconds: 120}
+secret: {provider: memory, references: []}
+network: {enabled: true, allowlist: [asset-scope]}
+filesystem: {writable: false, working_directory: /workspace, readonly_mounts: [], tmp_mounts: [{target: /tmp, size_mb: 64}]}
+healthcheck: {enabled: true, interval_seconds: 30}

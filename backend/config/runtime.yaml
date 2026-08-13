@@ -1,0 +1,7 @@
+runtime:
+  manifest_directory: ../../agents
+  evidence_directory: ./data/evidence
+  allowed_task_types:
+    - data-acquisition
+  playwright:
+    headless: true

@@ -1,0 +1,20 @@
+version: 1
+disable_existing_loggers: false
+formatters:
+  cap:
+    format: '%(timestamp)s %(levelname)s trace_id=%(trace_id)s task_id=%(task_id)s agent_id=%(agent_id)s %(name)s %(message)s'
+filters:
+  correlation_fields:
+    '()': app.logging.context.CorrelationFieldsFilter
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: cap
+    filters:
+      - correlation_fields
+    level: INFO
+    stream: ext://sys.stdout
+root:
+  level: INFO
+  handlers:
+    - console

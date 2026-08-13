@@ -1,0 +1,8 @@
+dispatcher:
+  eligible_agent_statuses: [ONLINE]
+  scheduling_strategy: first_available
+  task_timeout_seconds: 120
+  queue_on_dispatch: true
+  fail_when_no_agent: true
+security:
+  deny_high_risk_without_approval: true

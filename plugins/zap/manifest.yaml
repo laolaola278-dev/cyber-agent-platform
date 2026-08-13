@@ -1,0 +1,42 @@
+name: zap-assessment
+version: 1.0.0
+sdk_version: 1.0.0
+description: Governed OWASP ZAP DAST Plugin using a daemon API Adapter and unified Finding.
+entrypoint: app.plugins.zap:ZapAssessmentPlugin
+permissions:
+  - assessment.execute
+  - tool.invoke
+  - evidence.write
+capabilities:
+  - web.dast
+  - web.spider
+  - web.passive_scan
+  - web.active_scan
+tool: owasp-zap
+security:
+  arbitrary_targets: false
+  asset_reference_required: true
+  passive_scan_default: true
+  active_scan_default: false
+  active_scan_requires_policy: true
+  active_scan_requires_asset_authorization: true
+  sandbox_required: true
+runtime_version: phase-18
+sandbox:
+  name: zap-default
+  cpu_millicores: 1000
+  memory_mb: 1024
+  filesystem_writable: false
+  network_enabled: true
+  allowed_networks: [asset-scope, "http://127.0.0.1:8080"]
+  environment: {}
+  secret_references: [zap-api-key]
+  timeout_seconds: 600
+  working_directory: /workspace
+  readonly_mounts: []
+  tmp_mounts: [{target: /tmp, size_mb: 128}]
+worker: {runtime_version: phase-18, max_concurrency: 2, heartbeat_seconds: 30, lease_ttl_seconds: 660}
+secret: {provider: memory, references: [zap-api-key]}
+network: {enabled: true, allowlist: [asset-scope, "http://127.0.0.1:8080"]}
+filesystem: {writable: false, working_directory: /workspace, readonly_mounts: [], tmp_mounts: [{target: /tmp, size_mb: 128}]}
+healthcheck: {enabled: true, interval_seconds: 30}

@@ -1,0 +1,7 @@
+heartbeat:
+  stale_after_seconds: 90
+  default_health_status: UNKNOWN
+registration:
+  default_agent_status: OFFLINE
+  default_tool_status: ENABLED
+  require_unique_name_version: true

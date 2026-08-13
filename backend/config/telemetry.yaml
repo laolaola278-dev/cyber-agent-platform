@@ -1,0 +1,17 @@
+telemetry:
+  allowed_plugins:
+    - synthetic-telemetry
+    - zeek-telemetry
+  allowed_streams:
+    - synthetic
+    - zeek
+  timeout_seconds: 30
+  max_records: 1000
+  max_record_size_bytes: 262144
+  batch_size: 100
+  window_seconds: 60
+  queue_capacity: 1000
+  backpressure_action: REJECT
+  retry_attempts: 3
+  pause_seconds: 0.05
+  checkpoint_provider: memory

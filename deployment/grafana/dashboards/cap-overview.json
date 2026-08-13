@@ -1,0 +1,16 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "panels": [
+    {"id": 1, "title": "Request rate", "type": "timeseries", "targets": [{"expr": "sum(rate(cap_http_requests_total[5m])) by (route)", "legendFormat": "{{route}}"}], "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}},
+    {"id": 2, "title": "5xx rate", "type": "timeseries", "targets": [{"expr": "sum(rate(cap_http_requests_total{status_class=\"5xx\"}[5m]))", "legendFormat": "5xx"}], "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}},
+    {"id": 3, "title": "p95 latency", "type": "timeseries", "targets": [{"expr": "histogram_quantile(0.95, sum(rate(cap_http_request_duration_seconds_bucket[5m])) by (le, route))", "legendFormat": "{{route}}"}], "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}}
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["cap", "v1.0"],
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "CAP v1.0 Overview",
+  "uid": "cap-v1-overview",
+  "version": 1
+}

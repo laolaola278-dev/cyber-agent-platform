@@ -1,0 +1,397 @@
+{
+ "provider": "deepseek-v4-flash",
+ "base_url": "https://token.sensenova.cn/v1",
+ "prompt_version": "phase26-triage-v1",
+ "dataset_sha256": "c94930ae7197c7f976adff15bb11bd7f81c746d6892160dc6aec872da12e356e",
+ "frozen_scenario_count": 164,
+ "attack_chain_benchmark": {
+  "total_cases": 20,
+  "failed_cases": 0,
+  "error_sample": [],
+  "technique_mapping_recall": 0.0,
+  "grounded_rate": 0.0,
+  "stage_order_ok": 0.0,
+  "cases": [
+   {
+    "case": "chain-0",
+    "stages": 2,
+    "expected_techniques": [
+     "T1566",
+     "T1059"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-1",
+    "stages": 3,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 3,
+    "gaps": 3
+   },
+   {
+    "case": "chain-2",
+    "stages": 4,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078",
+     "T1021"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-3",
+    "stages": 5,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078",
+     "T1021",
+     "T1219"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-4",
+    "stages": 6,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078",
+     "T1021",
+     "T1219",
+     "T1498"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-5",
+    "stages": 2,
+    "expected_techniques": [
+     "T1566",
+     "T1059"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-6",
+    "stages": 3,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-7",
+    "stages": 4,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078",
+     "T1021"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 3,
+    "gaps": 4
+   },
+   {
+    "case": "chain-8",
+    "stages": 5,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078",
+     "T1021",
+     "T1219"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-9",
+    "stages": 6,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078",
+     "T1021",
+     "T1219",
+     "T1498"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-10",
+    "stages": 2,
+    "expected_techniques": [
+     "T1566",
+     "T1059"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 3,
+    "gaps": 0
+   },
+   {
+    "case": "chain-11",
+    "stages": 3,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-12",
+    "stages": 4,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078",
+     "T1021"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-13",
+    "stages": 5,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078",
+     "T1021",
+     "T1219"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-14",
+    "stages": 6,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078",
+     "T1021",
+     "T1219",
+     "T1498"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-15",
+    "stages": 2,
+    "expected_techniques": [
+     "T1566",
+     "T1059"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-16",
+    "stages": 3,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-17",
+    "stages": 4,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078",
+     "T1021"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-18",
+    "stages": 5,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078",
+     "T1021",
+     "T1219"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   },
+   {
+    "case": "chain-19",
+    "stages": 6,
+    "expected_techniques": [
+     "T1566",
+     "T1059",
+     "T1078",
+     "T1021",
+     "T1219",
+     "T1498"
+    ],
+    "actual_techniques": [],
+    "technique_hit": 0,
+    "grounded": false,
+    "alternative_hypotheses": 0,
+    "gaps": 0
+   }
+  ]
+ },
+ "grounding_report": {
+  "checked": 40,
+  "supported": 29,
+  "unsupported": 11,
+  "failed": 0,
+  "support_rate": 0.725,
+  "samples": [
+   {
+    "id": "normal_investigation-1",
+    "status": "SUPPORTED",
+    "refs": [
+     "evidence:1"
+    ]
+   },
+   {
+    "id": "normal_investigation-2",
+    "status": "SUPPORTED",
+    "refs": [
+     "evidence:2"
+    ]
+   },
+   {
+    "id": "normal_investigation-3",
+    "status": "SUPPORTED",
+    "refs": [
+     "evidence:3"
+    ]
+   },
+   {
+    "id": "normal_investigation-4",
+    "status": "SUPPORTED",
+    "refs": [
+     "evidence:4"
+    ]
+   },
+   {
+    "id": "normal_investigation-5",
+    "status": "SUPPORTED",
+    "refs": [
+     "evidence:5"
+    ]
+   },
+   {
+    "id": "normal_investigation-6",
+    "status": "SUPPORTED",
+    "refs": [
+     "evidence:6"
+    ]
+   },
+   {
+    "id": "normal_investigation-7",
+    "status": "SUPPORTED",
+    "refs": [
+     "evidence:7"
+    ]
+   },
+   {
+    "id": "normal_investigation-8",
+    "status": "SUPPORTED",
+    "refs": [
+     "evidence:8"
+    ]
+   },
+   {
+    "id": "normal_investigation-9",
+    "status": "SUPPORTED",
+    "refs": [
+     "evidence:9"
+    ]
+   },
+   {
+    "id": "normal_investigation-10",
+    "status": "SUPPORTED",
+    "refs": [
+     "evidence:10"
+    ]
+   }
+  ]
+ },
+ "note": "Measurement-fix re-run: attack chain max_tokens 4096 (was 2048, truncated JSON), all calls throttled 1.5s + 429 backoff. Frozen scenarios/expected answers unchanged."
+}

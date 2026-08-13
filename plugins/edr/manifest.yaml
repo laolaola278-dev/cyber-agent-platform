@@ -1,0 +1,55 @@
+schema_version: v2
+name: edr-response
+version: 1.0.0
+entrypoint: app.plugins.edr:EDRResponsePlugin
+runtime_version: phase-18.1
+capabilities:
+  - response.edr
+permissions:
+  - response.execute
+  - response.verify
+  - response.rollback
+sandbox:
+  name: edr-response-default
+  cpu_millicores: 250
+  memory_mb: 128
+  filesystem_writable: false
+  network_enabled: false
+  allowed_networks: []
+  environment: {}
+  secret_references: []
+  timeout_seconds: 60
+  working_directory: /workspace
+  readonly_mounts: []
+  tmp_mounts:
+    - target: /tmp
+      size_mb: 32
+worker:
+  runtime_version: phase-18.1
+  max_concurrency: 1
+  heartbeat_seconds: 30
+  lease_ttl_seconds: 120
+secret:
+  provider: memory
+  references: []
+network:
+  enabled: false
+  allowlist: []
+filesystem:
+  writable: false
+  working_directory: /workspace
+  readonly_mounts: []
+  tmp_mounts:
+    - target: /tmp
+      size_mb: 32
+healthcheck:
+  enabled: true
+  interval_seconds: 30
+provider_requirements:
+  network: false
+  filesystem: false
+  secret: false
+  timeout: true
+  container: false
+  vm: false
+  snapshot: false

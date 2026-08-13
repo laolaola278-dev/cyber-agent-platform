@@ -1,0 +1,175 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  color: #eef3ff;
+  background:
+    radial-gradient(circle at 75% 0%, rgba(66, 99, 235, 0.18), transparent 32rem),
+    #0b1020;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: transparent;
+}
+
+.app-sider {
+  position: sticky !important;
+  top: 0;
+  height: 100vh;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(12, 18, 35, 0.96) !important;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 88px;
+  padding: 20px 24px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 12px;
+  color: white;
+  background: linear-gradient(135deg, #5b8ff9, #6c5ce7);
+  box-shadow: 0 10px 30px rgba(91, 143, 249, 0.32);
+  font-weight: 800;
+}
+
+.brand strong,
+.brand span {
+  display: block;
+}
+
+.brand span {
+  margin-top: 2px;
+  color: #8190ad;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.app-sider .ant-menu {
+  max-height: calc(100vh - 190px);
+  padding: 10px 12px;
+  overflow-y: auto;
+  background: transparent;
+}
+
+.app-sider .ant-menu-item-group-title {
+  padding-top: 18px;
+  color: #53617e;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.phase-badge {
+  position: absolute;
+  right: 18px;
+  bottom: 20px;
+  left: 18px;
+  padding: 15px 16px;
+  border: 1px solid rgba(91, 143, 249, 0.2);
+  border-radius: 12px;
+  background: rgba(91, 143, 249, 0.08);
+}
+
+.phase-badge span,
+.phase-badge small {
+  display: block;
+}
+
+.phase-badge small {
+  margin-top: 3px;
+  color: #8190ad;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 72px;
+  padding: 0 30px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(11, 16, 32, 0.78) !important;
+  backdrop-filter: blur(16px);
+}
+
+.app-header > div {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.app-content {
+  padding: 32px;
+  overflow: auto;
+}
+
+.app-content .ant-card {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.eyebrow {
+  color: #7fa5ff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.metric-card,
+.boundary-card {
+  height: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(145deg, rgba(24, 33, 56, 0.92), rgba(17, 24, 43, 0.92));
+}
+
+.metric-card .ant-statistic-title {
+  color: #8e9ab2;
+}
+
+.boundary-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 14px;
+  color: #7fa5ff;
+  background: rgba(91, 143, 249, 0.12);
+  font-size: 22px;
+}
+
+.ant-card,
+.ant-table-wrapper {
+  box-shadow: 0 16px 44px rgba(2, 7, 20, 0.17);
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    padding: 0 16px;
+  }
+
+  .app-header > span {
+    display: none;
+  }
+
+  .app-content {
+    padding: 18px;
+  }
+}

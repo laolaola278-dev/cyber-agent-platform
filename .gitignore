@@ -1,0 +1,62 @@
+.env
+.env.*.local
+
+# Python
+.venv/
+backend/.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.egg-info/
+.pytest-tmp-*
+
+# Node
+node_modules/
+dist/
+.vite/
+playwright-report/
+test-results/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Local runtime data
+_minio*/
+_pgdata*/
+_pg*.log
+.uv-cache/
+.workbuddy/
+
+# Build artifacts
+*.exe
+*.out
+*.test
+*.pid
+
+# Logs
+*.log
+*.pid
+*.dump
+
+# Temporary / _待删
+_待删_*/
+tmp-*/

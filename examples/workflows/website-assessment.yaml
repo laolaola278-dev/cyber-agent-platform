@@ -1,0 +1,46 @@
+name: website-assessment
+version: 1.0.0
+description: Capability-first public website collection workflow.
+
+nodes:
+  - id: start
+    type: start
+
+  - id: crawl
+    type: agent
+    capability: crawl.html
+    timeout_seconds: 60
+    retry:
+      max_attempts: 2
+      delay_seconds: 1
+
+  - id: render
+    type: agent
+    capability: browser.render
+    timeout_seconds: 60
+    retry:
+      max_attempts: 2
+      delay_seconds: 1
+
+  - id: evidence
+    type: agent
+    capability: evidence.generate
+
+  - id: report
+    type: agent
+    capability: report.generate
+
+  - id: end
+    type: end
+
+edges:
+  - source: start
+    target: crawl
+  - source: crawl
+    target: render
+  - source: render
+    target: evidence
+  - source: evidence
+    target: report
+  - source: report
+    target: end

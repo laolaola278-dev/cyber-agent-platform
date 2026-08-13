@@ -1,0 +1,23 @@
+policy:
+  automatic_creation_enabled: true
+  automatic_escalation_enabled: true
+  duplicate_merge_enabled: true
+  automatic_close_enabled: false
+  reopen_enabled: true
+  allowed_sources:
+    - MANUAL
+    - ASSESSMENT
+    - DETECTION
+  minimum_severity: HIGH
+  minimum_confidence: MEDIUM
+  event_threshold: 2
+  correlation_window_seconds: 300
+  duplicate_window_seconds: 86400
+  default_priority: P3
+  default_queue: security-operations
+  max_artifacts: 1000
+  sla_targets_minutes:
+    P1: 15
+    P2: 60
+    P3: 240
+    P4: 1440

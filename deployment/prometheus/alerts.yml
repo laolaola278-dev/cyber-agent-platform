@@ -1,0 +1,30 @@
+groups:
+  - name: cap-v1-readiness
+    rules:
+      - alert: CAPBackendDown
+        expr: up{job="cap-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: CAP backend scrape target is unavailable
+      - alert: CAPHighServerErrorRate
+        expr: |
+          sum(rate(cap_http_requests_total{status_class="5xx"}[5m]))
+          /
+          clamp_min(sum(rate(cap_http_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: CAP HTTP 5xx rate exceeds 5 percent
+      - alert: CAPHighP95Latency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(cap_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: CAP p95 API latency exceeds 2 seconds

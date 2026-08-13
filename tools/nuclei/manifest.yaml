@@ -1,0 +1,20 @@
+name: nuclei
+version: 1.0.0
+tool_type: nuclei-cli
+description: Sandboxed Nuclei CLI adapter with approved local templates.
+required_permissions:
+  - tool.invoke
+runtime_requirements:
+  adapter: nuclei
+  sandbox: local-process
+  future_sandboxes:
+    - docker
+    - firecracker
+    - remote-worker
+security:
+  shell: false
+  stdin: false
+  dynamic_updates: false
+  cloud_upload: false
+  interactsh: false
+  approved_templates_only: true

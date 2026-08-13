@@ -1,0 +1,169 @@
+> """Acquisition production path -- execute runs through the Worker/Sandbox boundary.
+  
+> The API/service NEVER constructs acquisition adapters or touches the network
+> directly. The whole acquisition execution (adapter construction + the agent
+> loop) happens inside an operation that runs under:
+  
+>     PluginWorkerRuntime -> WorkerRuntime -> SandboxRuntime
+  
+> and the resulting worker/lease/sandbox identities are recorded on the run for
+> end-to-end tracing.
+> """
+  
+> from __future__ import annotations
+  
+> from typing import Any
+> from uuid import UUID
+  
+> from pydantic import BaseModel, Field
+  
+> from app.acquisition.checkpoint import AcquisitionCheckpoint
+> from app.repositories.worker import WorkerLeaseRepository
+  
+  
+> class AcquisitionRunPayload(BaseModel):
+>     """Serializable result crossing the worker boundary."""
+  
+>     status: str = "RUNNING"
+>     source_type: str = "UNKNOWN"
+>     strategy: str = ""
+>     blocked_reason: str = "NONE"
+>     blocked_detail: str = ""
+>     replans: int = 0
+>     retries: int = 0
+>     total_bytes: int = 0
+>     total_requests: int = 0
+>     duration_seconds: float = 0.0
+>     strategy_history: list[str] = Field(default_factory=list)
+>     visited_urls: list[str] = Field(default_factory=list)
+>     evidence_ids: list[str] = Field(default_factory=list)
+>     documents_captured: int = 0
+>     record_count: int = 0
+>     checkpoint: dict[str, Any] = Field(default_factory=dict)
+>     error: str = ""
+  
+  
+> class AcquisitionWorkerPath:
+>     """Runs acquisitions only through the injected Worker boundary."""
+  
+>     PLUGIN_NAME = "acquisition"
+>     PLUGIN_VERSION = "28.1"
+>     CAPABILITY = "acquisition.http"
+  
+>     def __init__(self, plugin: Any, service: Any) -> None:
+>         self._plugin = plugin
+>         self._service = service
+  
+      # -- execution -----------------------------------------------------------
+  
+>     async def execute(self, run_id: UUID) -> AcquisitionRunPayload:
+>         """Run (or resume) one AcquisitionRun through the Worker chain."""
+>         run = await self._service.get_run(run_id)
+>         checkpoint = AcquisitionCheckpoint.from_dict(run.checkpoint or {})
+>         if checkpoint.status in ("COMPLETE", "BLOCKED", "CANCELLED", "FAILED"):
+!             return self._payload_from_run(run, checkpoint, "already terminal")
+  
+>         payload = await self._plugin.execute(
+>             plugin_name=self.PLUGIN_NAME,
+>             plugin_version=self.PLUGIN_VERSION,
+>             capability=self.CAPABILITY,
+>             operation_name="acquire",
+>             owner=f"acquisition:{run_id}",
+>             operation=lambda: self._service.run_agent_operation(run, checkpoint),
+>             result_type=AcquisitionRunPayload,
+>             timeout_seconds=300,
+>         )
+>         await self._record_worker_identity(run, checkpoint)
+>         await self._apply_payload(run, payload)
+>         await self._service.commit()
+>         return payload
+  
+>     async def cancel(self, run_id: UUID) -> AcquisitionRunPayload:
+>         """Request cancellation: stop work, release lease + sandbox resources."""
+>         run = await self._service.get_run(run_id)
+>         checkpoint = AcquisitionCheckpoint.from_dict(run.checkpoint or {})
+>         if checkpoint.status in ("COMPLETE", "BLOCKED", "CANCELLED", "FAILED"):
+>             return self._payload_from_run(run, checkpoint, "already terminal")
+  
+          # release sandbox execution if one is active
+>         if run.sandbox_execution_id is not None:
+!             try:
+!                 await self._plugin.terminate(run.sandbox_execution_id)
+!             except Exception:  # noqa: BLE001 -- release is best-effort
+!                 pass
+          # release the lease held for this run
+>         if run.lease_id is not None:
+!             try:
+!                 leases = WorkerLeaseRepository(self._service.session)
+!                 lease = await leases.get(run.lease_id)
+!                 if lease is not None:
+!                     await leases.update(lease, {"status": "RELEASED", "released_at": None})
+!             except Exception:  # noqa: BLE001 -- release is best-effort
+!                 pass
+  
+>         checkpoint.status = "CANCELLED"
+>         run.status = "CANCELLED"
+>         run.checkpoint = checkpoint.to_dict()
+>         await self._service.commit()
+>         return self._payload_from_run(run, checkpoint, "cancelled")
+  
+      # -- internals -----------------------------------------------------------
+  
+>     async def _record_worker_identity(
+>         self, run: Any, checkpoint: AcquisitionCheckpoint
+>     ) -> None:
+>         execution = getattr(self._plugin, "last_execution", None)
+>         if execution is None:
+!             return
+>         run.worker_id = execution.worker_id
+>         run.sandbox_execution_id = execution.sandbox_execution_id
+>         run.worker_execution_id = execution.execution_id
+>         try:
+>             leases = WorkerLeaseRepository(self._service.session)
+>             lease = await leases.get_by_execution_id(execution.execution_id)
+>             if lease is not None:
+>                 run.lease_id = lease.id
+!         except Exception:  # noqa: BLE001 -- identity is best-effort
+!             pass
+  
+>     async def _apply_payload(self, run: Any, payload: AcquisitionRunPayload) -> None:
+>         run.status = payload.status
+>         run.source_type = payload.source_type
+>         run.strategy = payload.strategy
+>         run.blocked_reason = payload.blocked_reason
+>         run.blocked_detail = payload.blocked_detail
+>         run.replans = payload.replans
+>         run.retries = payload.retries
+>         run.total_bytes = payload.total_bytes
+>         run.total_requests = payload.total_requests
+>         run.duration_seconds = payload.duration_seconds
+>         run.strategy_history = payload.strategy_history
+>         run.checkpoint = payload.checkpoint
+>         if run.started_at is None:
+!             from datetime import UTC, datetime
+  
+!             run.started_at = datetime.now(UTC)
+>         if payload.status in ("COMPLETE", "BLOCKED", "CANCELLED", "FAILED"):
+>             from datetime import UTC, datetime
+  
+>             run.finished_at = datetime.now(UTC)
+  
+>     @staticmethod
+>     def _payload_from_run(
+>         run: Any, checkpoint: AcquisitionCheckpoint, note: str
+>     ) -> AcquisitionRunPayload:
+>         return AcquisitionRunPayload(
+>             status=run.status,
+>             source_type=run.source_type,
+>             strategy=run.strategy,
+>             blocked_reason=run.blocked_reason,
+>             blocked_detail=run.blocked_detail or "",
+>             replans=run.replans,
+>             retries=run.retries,
+>             total_bytes=run.total_bytes,
+>             total_requests=run.total_requests,
+>             duration_seconds=run.duration_seconds,
+>             strategy_history=list(run.strategy_history or []),
+>             checkpoint=checkpoint.to_dict(),
+>             error=note,
+>         )

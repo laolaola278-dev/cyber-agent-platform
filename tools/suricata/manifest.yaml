@@ -1,0 +1,24 @@
+name: suricata
+version: 8.0.6
+tool_type: suricata-eve-adapter
+description: Version-pinned read-only Suricata EVE JSON Adapter.
+required_permissions:
+  - eve.read
+runtime_requirements:
+  adapter: suricata-eve-jsonl
+  mode: read-only
+  sandbox: container-or-restricted-worker
+security:
+  arbitrary_paths: false
+  shell: false
+  network_access: false
+  eve_json_only: true
+  configured_sources_only: true
+sandbox_profile:
+  cpu_limit: 0.5
+  memory_limit_mb: 256
+  timeout_seconds: 30
+  max_input_bytes: 5000000
+  max_records: 1000
+  filesystem_policy: configured-read-only-sources
+  network_policy: none

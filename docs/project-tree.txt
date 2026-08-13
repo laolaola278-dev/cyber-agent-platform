@@ -1,0 +1,113 @@
+cyber-agent-platform/
+├── .env.example
+├── .gitignore
+├── Makefile
+├── README.md
+├── docker-compose.yml
+├── agents/
+│   └── README.md
+├── backend/
+│   ├── .dockerignore
+│   ├── Dockerfile
+│   ├── README.md
+│   ├── alembic.ini
+│   ├── pyproject.toml
+│   ├── alembic/
+│   │   ├── env.py
+│   │   ├── script.py.mako
+│   │   └── versions/
+│   │       └── 20260729_0001_initial_schema.py
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── api/
+│   │   │   ├── __init__.py
+│   │   │   ├── router.py
+│   │   │   └── routes/
+│   │   │       ├── __init__.py
+│   │   │       ├── agents.py
+│   │   │       ├── health.py
+│   │   │       └── tasks.py
+│   │   ├── audit/__init__.py
+│   │   ├── auth/__init__.py
+│   │   ├── config/
+│   │   │   ├── __init__.py
+│   │   │   └── settings.py
+│   │   ├── core/__init__.py
+│   │   ├── database/
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py
+│   │   │   └── session.py
+│   │   ├── dependencies/
+│   │   │   ├── __init__.py
+│   │   │   └── services.py
+│   │   ├── middleware/
+│   │   │   ├── __init__.py
+│   │   │   └── request_id.py
+│   │   ├── models/
+│   │   │   ├── __init__.py
+│   │   │   ├── agent.py
+│   │   │   ├── audit_log.py
+│   │   │   ├── task.py
+│   │   │   ├── task_execution.py
+│   │   │   └── tool.py
+│   │   ├── orchestrator/__init__.py
+│   │   ├── registry/__init__.py
+│   │   ├── repositories/
+│   │   │   ├── __init__.py
+│   │   │   ├── agent.py
+│   │   │   ├── base.py
+│   │   │   └── task.py
+│   │   ├── schemas/
+│   │   │   ├── __init__.py
+│   │   │   ├── agent.py
+│   │   │   ├── common.py
+│   │   │   └── task.py
+│   │   ├── services/
+│   │   │   ├── __init__.py
+│   │   │   ├── agent.py
+│   │   │   ├── errors.py
+│   │   │   └── task.py
+│   │   ├── utils/__init__.py
+│   │   └── workflow/__init__.py
+│   └── tests/
+│       ├── __init__.py
+│       ├── conftest.py
+│       ├── test_agents.py
+│       ├── test_health.py
+│       └── test_tasks.py
+├── deployment/
+│   └── README.md
+├── docs/
+│   ├── database-er.md
+│   ├── phase-0-engineering-report.md
+│   └── project-tree.txt
+├── examples/
+│   └── README.md
+├── frontend/
+│   ├── .dockerignore
+│   ├── .env.example
+│   ├── Dockerfile
+│   ├── eslint.config.js
+│   ├── index.html
+│   ├── nginx.conf
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── tsconfig.app.json
+│   ├── tsconfig.json
+│   ├── tsconfig.node.json
+│   ├── vite.config.ts
+│   └── src/
+│       ├── App.tsx
+│       ├── main.tsx
+│       ├── styles.css
+│       ├── types.ts
+│       ├── vite-env.d.ts
+│       └── api/
+│           └── client.ts
+├── scripts/
+│   └── README.md
+├── sdk/
+│   └── README.md
+└── tools/
+    └── README.md

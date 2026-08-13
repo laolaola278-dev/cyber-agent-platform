@@ -1,0 +1,33 @@
+name: data-acquisition-agent
+version: 1.0.0
+minimum_runtime_version: 1.0.0
+platform_version: 0.2.1
+sdk_version: 1.0.0
+description: Captures one publicly accessible HTTP(S) page through a managed browser Tool.
+author: cap
+permissions:
+  - crawl.public
+  - tool.playwright
+  - evidence.write
+  - report.write
+capabilities:
+  - crawl.html
+  - browser.render
+  - evidence.generate
+tools:
+  - playwright
+runtime:
+  entrypoint: agent:DataAcquisitionAgent
+  config:
+    headless: true
+network_policy:
+  allowed_methods:
+    - GET
+  public_web_only: true
+  allowed_origins: []
+resource_limit:
+  max_pages_per_task: 1
+approval_policy:
+  required: false
+healthcheck:
+  type: internal

@@ -1,0 +1,41 @@
+policy:
+  max_concurrency: 2
+  max_requests: 100
+  rate_limit_per_second: 1.0
+  scan_depth: 1
+  timeout_seconds: 60
+  asset_allowlist: []
+  asset_denylist: []
+  capability_allowlist:
+    - web.scan
+    - web.dast
+    - web.spider
+    - web.passive_scan
+    - port.scan
+    - template.scan
+    - host.scan
+    - container.scan
+    - dependency.scan
+    - ssl.scan
+    - header.scan
+    - dns.scan
+nuclei:
+  executable: nuclei
+  template_root: ../../tools/nuclei/templates
+  max_output_bytes: 5000000
+  approved_templates:
+    cap-http-missing-content-type-options:
+      path: cap-http-missing-content-type-options.yaml
+      sha256: 3dc8714f03b5a39e9c25112b1bae272069d8524312d7b77f1e38e27c478ec4e2
+      max_requests: 1
+zap:
+  api_url: http://127.0.0.1:8080
+  api_key_secret_reference: zap-api-key
+  allowed_scan_policies:
+    - cap-passive-baseline
+    - cap-active-controlled
+  sandbox:
+    cpu_limit: 1.0
+    memory_limit_mb: 1024
+    timeout_seconds: 600
+    network_policy: asset-scope-only

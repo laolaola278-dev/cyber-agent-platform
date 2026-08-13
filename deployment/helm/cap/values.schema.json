@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["backend", "frontend"],
+  "properties": {
+    "backend": {
+      "type": "object",
+      "required": ["replicaCount", "image", "existingSecret"],
+      "properties": {
+        "replicaCount": {"type": "integer", "minimum": 1},
+        "existingSecret": {"type": "string", "minLength": 1},
+        "image": {
+          "type": "object",
+          "required": ["repository", "tag"],
+          "properties": {
+            "repository": {"type": "string", "minLength": 1},
+            "tag": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"}
+          }
+        }
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "required": ["replicaCount", "image", "existingSecret"],
+      "properties": {
+        "replicaCount": {"type": "integer", "minimum": 1},
+        "existingSecret": {"type": "string", "minLength": 1}
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "host": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

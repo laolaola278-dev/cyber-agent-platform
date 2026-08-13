@@ -1,0 +1,47 @@
+policy:
+  policy_name: default-response-policy
+  enabled: true
+  allowed_capabilities:
+    - response.notify
+    - response.ticket
+    - response.block
+    - response.isolate
+    - response.rollback
+    - response.custom
+    - response.waf
+    - response.firewall
+    - response.edr
+  denied_capabilities: []
+  allowed_incident_types:
+    - "*"
+  allowed_asset_types:
+    - DOMAIN
+    - IP
+    - HOST
+    - WEBSITE
+    - APPLICATION
+    - CONTAINER
+    - CLOUD_RESOURCE
+    - REPOSITORY
+    - DOCUMENT
+    - USER
+    - AGENT
+  approval_required_capabilities:
+    - response.block
+    - response.isolate
+    - response.rollback
+    - response.custom
+    - response.waf
+    - response.firewall
+    - response.edr
+  automatic_execution_max_risk: LOW
+  automatic_execution_max_incident_severity: LOW
+  business_hours_start: 0
+  business_hours_end: 23
+  maintenance_windows:
+    - "*"
+  approval_ttl_seconds: 3600
+  execution_timeout_seconds: 60
+  max_evidence_items: 100
+  require_distinct_approver: true
+  required_approval_levels: 1

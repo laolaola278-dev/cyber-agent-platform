@@ -1,0 +1,27 @@
+name: edr-adapter
+version: 1.0.0
+description: Provider-neutral mock-only EDR host action adapter
+capabilities:
+  - response.edr
+actions:
+  implemented:
+    - host.isolate
+    - host.unisolate
+  reserved:
+    - process.terminate
+    - collect.package
+provider: mock-edr
+security:
+  network_access: false
+  production_access: false
+  filesystem_write: false
+  shell_execute: false
+  database_access: false
+  incident_write: false
+verification:
+  read_back: true
+  desired_observed_comparison: true
+  evidence: true
+rollback:
+  action: host.unisolate
+  read_back: true

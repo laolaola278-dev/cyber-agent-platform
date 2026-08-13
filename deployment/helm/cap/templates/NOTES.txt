@@ -1,0 +1,8 @@
+CAP {{ .Chart.AppVersion }} is installed.
+
+Verify the rollout:
+  kubectl rollout status deployment/{{ include "cap.fullname" . }}-backend -n {{ .Release.Namespace }}
+  kubectl rollout status deployment/{{ include "cap.fullname" . }}-frontend -n {{ .Release.Namespace }}
+
+The chart expects Secret {{ .Values.backend.existingSecret }} to exist before install.
+See docs/deployment/production-checklist.md before exposing the service.

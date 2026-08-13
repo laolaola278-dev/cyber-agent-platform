@@ -1,0 +1,92 @@
+{
+ "dataset": {
+  "version": "cap-sib-v1",
+  "sha256": "d06c7d3eb32b103bba7e17ccb9b3484e004b3f8cfbfed32362e0b0ac7223e0d7",
+  "total": 300
+ },
+ "splits": [
+  "holdout"
+ ],
+ "model_config": {
+  "provider": "deepseek-v4-flash",
+  "prompt_version": "phase26-triage-v1",
+  "throttle_seconds": 15.0
+ },
+ "groups": {
+  "llm_only": {
+   "holdout_A": {
+    "scenarios": 25,
+    "classification_accuracy": 0.0,
+    "classification_ci": [
+     0.0,
+     0.1332
+    ],
+    "severity_exact": 0.0,
+    "severity_within_one": 0.0,
+    "fp_precision": 0.0,
+    "fp_recall": 0.0,
+    "fp_f1": 0.0,
+    "fp_auroc": 0.0,
+    "fp_ci": [
+     0.0,
+     0.3543
+    ],
+    "attck_precision": 0.0,
+    "attck_recall": 0.0,
+    "attck_f1": 0.0,
+    "attck_top1": 0.0,
+    "attck_top3": 0.0,
+    "candidate_recall": 0.0,
+    "stage_accuracy": 0.0,
+    "entity_accuracy": 0.0,
+    "evidence_grounding": 0.2,
+    "incomplete_handled": 1.0,
+    "hard_negative_accuracy": 0.0
+   },
+   "holdout_B": {
+    "scenarios": 75,
+    "classification_accuracy": 0.0,
+    "classification_ci": [
+     0.0,
+     0.0487
+    ],
+    "severity_exact": 0.0,
+    "severity_within_one": 0.0,
+    "fp_precision": 0.0,
+    "fp_recall": 0.0,
+    "fp_f1": 0.0,
+    "fp_auroc": 0.0,
+    "fp_ci": [
+     0.0,
+     0.1431
+    ],
+    "attck_precision": 0.0,
+    "attck_recall": 0.0,
+    "attck_f1": 0.0,
+    "attck_top1": 0.0,
+    "attck_top3": 0.0,
+    "candidate_recall": 0.0,
+    "stage_accuracy": 0.0,
+    "entity_accuracy": 0.0,
+    "evidence_grounding": 0.0,
+    "incomplete_handled": 1.0,
+    "hard_negative_accuracy": 0.0
+   }
+  }
+ },
+ "llm_only_wall_seconds": 1492.0,
+ "llm_only_llm_calls": {
+  "complete": 100,
+  "success": 6,
+  "failures": 94
+ },
+ "llm_only_success_rate": 0.06,
+ "llm_only_explainability": {
+  "samples": 100,
+  "evidence_coverage": 0.0,
+  "factor_coverage": 0.0,
+  "knowledge_citation": 0.0,
+  "unsupported_rate": 0.0,
+  "readability": 0.0
+ }
+}

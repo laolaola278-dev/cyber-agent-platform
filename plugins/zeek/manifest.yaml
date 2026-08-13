@@ -1,0 +1,34 @@
+name: zeek-detection
+version: 1.0.0
+sdk_version: 1.0.0
+description: Governed Zeek Detection Plugin consuming only Telemetry-validated records.
+entrypoint: app.plugins.zeek:ZeekDetectionPlugin
+permissions:
+  - detection.execute
+  - evidence.read
+capabilities:
+  - network.detect
+  - log.detect
+  - traffic.detect
+  - event.detect
+  - ioc.detect
+  - rule.detect
+tool: zeek
+telemetry:
+  required: true
+  plugin: zeek-telemetry
+  stream: zeek
+security:
+  arbitrary_paths: false
+  database_access: false
+  incident_creation: false
+  direct_detection_runtime_call: false
+  jsonl_only: true
+  sandbox_required: true
+runtime_version: phase-18
+sandbox: {name: zeek-default, cpu_millicores: 500, memory_mb: 256, filesystem_writable: false, network_enabled: false, allowed_networks: [], environment: {}, secret_references: [], timeout_seconds: 30, working_directory: /workspace, readonly_mounts: [], tmp_mounts: [{target: /tmp, size_mb: 64}]}
+worker: {runtime_version: phase-18, max_concurrency: 4, heartbeat_seconds: 30, lease_ttl_seconds: 90}
+secret: {provider: memory, references: []}
+network: {enabled: false, allowlist: []}
+filesystem: {writable: false, working_directory: /workspace, readonly_mounts: [], tmp_mounts: [{target: /tmp, size_mb: 64}]}
+healthcheck: {enabled: true, interval_seconds: 30}

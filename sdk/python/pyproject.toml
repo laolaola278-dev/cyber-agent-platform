@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cap-agent-sdk"
+version = "1.0.0-rc1"
+description = "Standalone Python SDK contracts for Cyber Agent Platform Agents"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.9.2,<3.0.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["cap_agent_sdk"]

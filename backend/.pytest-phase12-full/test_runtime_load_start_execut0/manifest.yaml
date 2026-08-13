@@ -1,0 +1,4 @@
+name: runtime-agent
+version: 1.0.0
+runtime:
+  entrypoint: runtime_test_agent:RuntimeTestAgent

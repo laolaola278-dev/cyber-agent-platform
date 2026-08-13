@@ -1,0 +1,6 @@
+{"_log":"conn","ts":"2026-08-01T04:00:00+00:00","uid":"Cabc123","id.orig_h":"10.0.0.10","id.orig_p":51514,"id.resp_h":"192.0.2.10","id.resp_p":443,"proto":"tcp","service":"ssl","conn_state":"SF"}
+{"_log":"dns","ts":"2026-08-01T04:00:01+00:00","uid":"Cdns123","id.orig_h":"10.0.0.10","id.resp_h":"192.0.2.53","query":"c2.example.test","qtype_name":"A","rcode_name":"NOERROR"}
+{"_log":"http","ts":"2026-08-01T04:00:02+00:00","uid":"Chttp123","id.orig_h":"10.0.0.10","id.resp_h":"192.0.2.20","method":"GET","host":"example.test","uri":"/health","status_code":200}
+{"_log":"ssl","ts":"2026-08-01T04:00:03+00:00","uid":"Cssl123","id.orig_h":"10.0.0.10","id.resp_h":"192.0.2.30","server_name":"example.test","version":"TLSv1.3","cipher":"TLS_AES_128_GCM_SHA256"}
+{"_log":"files","ts":"2026-08-01T04:00:04+00:00","fuid":"Ffile123","uid":"Cfile123","id.orig_h":"10.0.0.10","id.resp_h":"192.0.2.40","mime_type":"application/pdf","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+{"_log":"notice","ts":"2026-08-01T04:00:05+00:00","uid":"Cnotice123","note":"Scan::Address_Scan","msg":"Potential scan detected","src":"10.0.0.10","dst":"192.0.2.50","p":80}
