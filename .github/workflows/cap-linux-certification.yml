@@ -59,6 +59,12 @@ jobs:
       CAP_SANDBOX_NETWORK: cap-sandbox-egress
       CAP_SANDBOX_IMAGE: cap-sandbox-http:latest
       EGRESS_PROXY_URL: http://capcert-pr-${{ github.run_id }}-egress:8080
+      CAP_CERT_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
+      CAP283_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
+      CAP283_PG_SYNC: postgresql://cap:cap@127.0.0.1:55432/cap283
+      CAP283_S3_ENDPOINT: 127.0.0.1:9000
+      CAP283_S3_ACCESS: capadmin
+      CAP283_S3_SECRET: capadmin123
     services:
       postgres:
         image: postgres:16-alpine
@@ -124,6 +130,14 @@ jobs:
       CAP_SANDBOX_NETWORK: cap-sandbox-egress
       CAP_SANDBOX_IMAGE: cap-sandbox-http:latest
       EGRESS_PROXY_URL: http://capcert-main-egress:8080
+      # PG / S3 test-credentials shared with phase 28.3/28.4 tests (CAP283_* read
+      # by HA/benchmark/object-store suites; asyncpg DSN must carry the password).
+      CAP_CERT_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
+      CAP283_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
+      CAP283_PG_SYNC: postgresql://cap:cap@127.0.0.1:55432/cap283
+      CAP283_S3_ENDPOINT: 127.0.0.1:9000
+      CAP283_S3_ACCESS: capadmin
+      CAP283_S3_SECRET: capadmin123
     services:
       postgres:
         image: postgres:16-alpine
@@ -186,6 +200,12 @@ jobs:
       CAP_SANDBOX_BROWSER_IMAGE: cap-sandbox-browser:latest
       EGRESS_PROXY_URL: http://capcert-rel-${{ github.ref_name }}-egress:8080
       CAP284_BENCH_N: "500"
+      CAP_CERT_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
+      CAP283_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
+      CAP283_PG_SYNC: postgresql://cap:cap@127.0.0.1:55432/cap283
+      CAP283_S3_ENDPOINT: 127.0.0.1:9000
+      CAP283_S3_ACCESS: capadmin
+      CAP283_S3_SECRET: capadmin123
       CAP284_BENCH_LAB: "40"
     services:
       postgres:
