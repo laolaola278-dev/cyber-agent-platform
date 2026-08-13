@@ -85,13 +85,17 @@ def _daemon_env(name: str, **extra: str) -> dict[str, str]:
 
 def _start_daemon(name: str, run_seconds: float = 0.0):
     env = _daemon_env(name, ACQ_RUN_SECONDS=str(run_seconds))
+    log_path = str(BACKEND_DIR / f"worker-{name}.log")
+    logf = open(log_path, "w")
+    env["ACQ_LOG_FILE"] = log_path
     proc = subprocess.Popen(
         [sys.executable, "-m", "app.acquisition.worker_main"],
         cwd=str(BACKEND_DIR),
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=logf,
+        stderr=subprocess.STDOUT,
     )
+    proc._cap_log_path = log_path  # type: ignore[attr-defined]
     return proc
 
 
@@ -223,6 +227,19 @@ class TestMultiWorkerHA:
             terminal = {
                 s for s in statuses.values() if s in ("COMPLETE", "BLOCKED", "PARTIAL", "FAILED")
             }
+            if not terminal:
+                # diagnostic: surface both worker daemon logs so a stuck-QUEUED
+                # worker (crash / DB / S3 / sandbox init error) is visible.
+                import pathlib as _pl
+                for nm, p in (("A", proc_a), ("B", proc_b)):
+                    lp = getattr(p, "_cap_log_path", None)
+                    if not lp:
+                        continue
+                    print(f"----- worker {nm} log ({lp}) rc={p.poll()} -----", file=sys.stderr)
+                    try:
+                        print(_pl.Path(lp).read_text(errors="replace")[-4000:], file=sys.stderr)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"<no log: {e}>", file=sys.stderr)
             assert terminal, f"no terminal runs: {set(statuses.values())}"
             assert len(statuses) == n, "terminal count != submitted count"
         finally:
