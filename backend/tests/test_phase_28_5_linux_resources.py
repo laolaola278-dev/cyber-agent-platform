@@ -150,7 +150,7 @@ def test_filesystem_isolation_real(tmp_path) -> None:
         cases = {
             "write_rootfs": "touch /forbidden",
             "write_etc": "echo x >> /etc/passwd",
-            "read_host_shadow": "cat /etc/shadow 2>&1 | head -c 1",
+            "read_host_shadow": "cat /etc/shadow >/dev/null 2>&1",
             "docker_socket": "ls /var/run/docker.sock",
             "mount": "mount /dev/sda1 /mnt",
             "proc_sys": "echo 1 > /proc/sys/kernel/panic",

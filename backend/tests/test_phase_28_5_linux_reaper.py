@@ -81,6 +81,7 @@ def test_reaper_fencing_on_real_containers() -> None:
         # real DB-backed reaper with a session factory that finds the run
         # owned through lease_b (current owner) and worker_b ONLINE
         from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+        from sqlalchemy.pool import NullPool
 
         from app.acquisition.models_db import AcquisitionRun
         from app.database import Base
@@ -88,7 +89,10 @@ def test_reaper_fencing_on_real_containers() -> None:
         from app.worker.registry import WorkerRegistry
 
         pg = os.environ.get("CAP_CERT_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283")
-        engine = create_async_engine(pg, pool_size=3)
+        # NullPool: no pooled connections cached across the per-section asyncio.run
+        # event loops, so asyncpg transports are closed per-session and no
+        # unclosed-socket/resource warnings leak into later test teardowns.
+        engine = create_async_engine(pg, poolclass=NullPool)
         factory = async_sessionmaker(engine, expire_on_commit=False)
         import asyncio
 
@@ -127,7 +131,7 @@ def test_reaper_fencing_on_real_containers() -> None:
                 await s.flush()
                 s.add(
                     AcquisitionRun(
-                        id=uuid.uuid4(),  # run row exists; reaper keys on lease
+                        id=uuid.UUID(run_id),  # run row; reaper keys on lease
                         idempotency_key=f"r-{uuid.uuid4().hex}",
                         request_fingerprint=f"f-{uuid.uuid4().hex}",
                         status="RUNNING",

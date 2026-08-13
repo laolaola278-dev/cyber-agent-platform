@@ -113,12 +113,18 @@ def test_containerized_fetch_executes_in_isolated_domain(lab) -> None:
         subprocess.run(["docker", "rm", "-f", lab_name], capture_output=True, timeout=30)
         pytest.skip(f"could not start lab container: {lab_lc.stderr[-200:]}")
     try:
+        # resolve the lab container's sandbox-network IP (address Docker's
+        # embedded DNS may not answer on an --internal net) and target that.
+        lab_ip = subprocess.run(
+            ["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", lab_name],
+            capture_output=True, text=True, timeout=20,
+        ).stdout.strip()
         # shim runs on the same sandbox network (NOT host loopback / NOT public)
         request = SandboxRequest(
             operation="http_fetch",
             run_id=str(uuid4()),
             sandbox_execution_id=str(uuid4()),
-            url=f"http://{lab_name}:{lab_port}/page",
+            url=f"http://{lab_ip}:{lab_port}/page",
             policy={"allow_private": True},
         ).model_dump_json()
         run = _shim_request(request, network=net)

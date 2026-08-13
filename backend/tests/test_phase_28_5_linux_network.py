@@ -86,28 +86,34 @@ def _net_probe_container() -> str:
 
 
 def _direct_connect(cid: str, host: str, port: int) -> tuple[bool, str]:
-    """Raw socket connect from inside the container, proxy env fully unset."""
+    """Raw socket connect from inside the container, proxy env fully unset.
+
+    The probe script is base64-encoded so shell quoting inside `docker exec ...
+    sh -c` can never mangle it (a plain repr()/multi-line string broke the
+    python -c payload earlier and produced false REACHABLE reads).
+    """
     # diagnostics: how does the kernel route this target from inside the sandbox?
-    for what, addr in (("public", host), ("loopback", "127.0.0.1")):
-        rg = subprocess.run(
-            ["docker", "exec", cid, "sh", "-c",
-             f"ip route get {addr} 2>&1 | head -3"],
-            capture_output=True, text=True, timeout=20,
-        )
-        print(f"[net-diag] {what} {addr}: {(rg.stdout or rg.stderr).strip()}", flush=True)
-    script = (
-        "import socket,sys\n"
-        "s=socket.socket(); s.settimeout(6)\n"
-        "try:\n"
-        f" s.connect(('{host}',{port})); print('REACHABLE'); print('peer', s.getpeername()[0])\n"
-        "except Exception as e:\n"
-        " print('BLOCKED', type(e).__name__, repr(e))\n"
+    import base64
+
+    rg = subprocess.run(
+        ["docker", "exec", cid, "sh", "-c", f"ip route get {host} 2>&1 | head -3"],
+        capture_output=True, text=True, timeout=20,
     )
+    print(f"[net-diag] {host}:{(rg.stdout or rg.stderr).strip()}", flush=True)
+    script = (
+        "import socket,sys;\n"
+        "s=socket.socket(); s.settimeout(6);\n"
+        "try:\n"
+        f" s.connect(('{host}',{port})); print('REACHABLE')\n"
+        "except Exception as e:\n"
+        " print('BLOCKED', type(e).__name__)\n"
+    )
+    b64 = base64.b64encode(script.encode()).decode()
     proc = subprocess.run(
         [
             "docker", "exec", cid, "sh", "-c",
             "env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY "
-            "python -c " + repr(script),
+            f"python -c \"import base64;exec(base64.b64decode('{b64}'))\"",
         ],
         capture_output=True, text=True, timeout=30,
     )
