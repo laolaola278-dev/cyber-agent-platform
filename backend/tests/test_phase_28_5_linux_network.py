@@ -60,8 +60,8 @@ def _net_probe_container() -> str:
     subprocess.run(
         [
             "docker", "run", "-d", "--rm", "--name", name,
-            "--network", NETWORK, IMAGE,
-            "sh", "-c", "sleep 600",
+            "--network", NETWORK, "--entrypoint", "sh", IMAGE,
+            "-c", "sleep 600",
         ],
         capture_output=True, text=True, timeout=60,
     )

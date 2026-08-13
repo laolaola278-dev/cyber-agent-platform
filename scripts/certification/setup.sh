@@ -12,8 +12,17 @@ NET="${CAP_SANDBOX_NETWORK:-cap-sandbox-egress}"
 OUT_DIR="${CAP_CERT_OUT:-outputs/cap-cert}"
 mkdir -p "$OUT_DIR"
 
-# sandbox egress network (isolated bridge)
-docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET"
+# sandbox egress network (isolated bridge -- NO external route; the sandbox
+# can only reach the egress proxy on this network. Docker --internal drops the
+# network's default gateway so containers cannot reach the public Internet or
+# the host loopback directly.)
+if docker network inspect "$NET" >/dev/null 2>&1; then
+  if ! docker network inspect "$NET" --format '{{.Internal}}' 2>/dev/null | grep -qi "true"; then
+    # pre-existing non-internal network (e.g. a prior run); recreate as internal
+    docker network rm "$NET" >/dev/null 2>&1 || true
+  fi
+fi
+docker network inspect "$NET" >/dev/null 2>&1 || docker network create --internal "$NET"
 
 # On GitHub Actions, PG and MinIO are already running as service containers.
 # Skip the container startup to avoid port conflicts.
@@ -36,15 +45,20 @@ if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
     minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address :9001 >/dev/null
 fi
 
-# egress proxy (the sandbox's ONLY route out; on BOTH networks so it can
-# forward to the public Internet while being reachable from the sandbox net)
-docker rm -f "${PREFIX}-egress" >/dev/null 2>&1 || true
+# egress proxy (the sandbox's ONLY route out). It sits on the isolated
+# sandbox network so sandbox containers can reach it, AND it joins the
+# default bridge so it can forward to the public Internet. No direct external
+# route exists on the sandbox network itself.
+# (re)create the proxy on the isolated sandbox network with an external uplink
 docker build -q -t cap-egress-proxy:latest \
   -f backend/docker/egress-proxy/Dockerfile backend/ >/dev/null 2>&1 || true
+docker rm -f "${PREFIX}-egress" >/dev/null 2>&1 || true
 docker run -d --name "${PREFIX}-egress" \
-  --network "$NET" \
+  --network "$NET" --network-alias "${PREFIX}-egress" \
   -e CAP_EGRESS_ALLOW="${CAP_EGRESS_ALLOW:-}" \
-  cap-egress-proxy:latest >/dev/null
+  cap-egress-proxy:latest \
+  >/dev/null
+docker network connect bridge "${PREFIX}-egress" >/dev/null 2>&1 || true
 
 # wait for readiness (GHA: PG/MinIO are service containers, already healthy)
 if [ "${GITHUB_ACTIONS:-}" != "true" ]; then

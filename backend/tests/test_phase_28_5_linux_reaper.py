@@ -95,6 +95,10 @@ def test_reaper_fencing_on_real_containers() -> None:
         async def seed() -> None:
             from datetime import UTC, datetime
 
+            # ensure schema exists in the PG service container (create idempotently)
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+
             async with factory() as s:
                 s.add(
                     AcquisitionRun(

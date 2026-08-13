@@ -134,7 +134,7 @@ def test_build_http_image_and_inspect() -> None:
     ).model_dump_json()
     run = subprocess.run(
         [
-            "docker", "run", "--rm", "--network", "none",
+            "docker", "run", "--rm", "-i", "--network", "none",
             "--user", "capuser", tag,
         ],
         input=request, capture_output=True, text=True, timeout=60,

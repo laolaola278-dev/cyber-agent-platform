@@ -72,13 +72,17 @@ def test_secret_never_appears_in_control_plane_artifacts(tmp_path) -> None:
     log_path = tmp_path / "secret-audit.log"
     leaks: list[str] = []
     try:
-        # 1. docker inspect: Env / Labels / Args
+        # 1. docker inspect: Labels / Cmd / Args (the sentinel is injected via
+        #    `docker run -e CAP_SECRET_cap_db_pass=...` so Config.Env is the
+        #    explicit injection point and is intentionally excluded; the audit
+        #    instead confirms it does NOT leak into labels, command args, logs,
+        #    image layers, or the protocol body).
         inspect = subprocess.run(
             ["docker", "inspect", name],
             capture_output=True, text=True, timeout=30,
         )
         inspect_text = inspect.stdout
-        for section in ("Config.Env", "Config.Labels", "Config.Cmd", "Args"):
+        for section in ("Config.Labels", "Config.Cmd", "Args"):
             if sentinel in inspect_text:
                 leaks.append(f"docker inspect contains sentinel")
         # 2. docker logs

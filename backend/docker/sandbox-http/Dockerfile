@@ -14,6 +14,12 @@ ENV PYTHONUNBUFFERED=1 \
 # non-root execution user (fixed uid, no home, no shell)
 RUN adduser --system --uid 10001 --disabled-password --no-create-home --shell /usr/sbin/nologin capuser
 
+# network probes for certification (raw-socket/curl checks are run via exec;
+# the tools themselves do not grant egress -- network policy is applied at
+# the container/network layer)
+RUN apt-get update && apt-get install -y --no-install-recommends curl iproute2 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # minimal HTTP dependency (pinned to a known-good release)
 RUN pip install --no-cache-dir --disable-pip-version-check "httpx==0.27.2" "pydantic==2.9.2"
 

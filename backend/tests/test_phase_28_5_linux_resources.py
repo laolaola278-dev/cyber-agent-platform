@@ -54,33 +54,37 @@ def _inspect(name: str) -> dict:
 @_need_docker
 def test_memory_limit_real_and_oom(tmp_path) -> None:
     name = f"cap-cert-mem-{uuid.uuid4().hex[:8]}"
-    proc = subprocess.run(
-        [
-            "docker", "run", "--rm", "--name", name,
-            "--memory", "64m", "--memory-swap", "64m",
-            "--network", NETWORK, "--entrypoint", "python", IMAGE,
-            "-c", "x=bytearray(1024*1024*512); print('allocated')",
-        ],
-        capture_output=True, text=True, timeout=120,
-    )
-    # configured limit observable
-    data = _inspect(name) if proc.returncode == 0 else {}
-    configured = data.get("HostConfig", {}).get("Memory", 0)
-    assert configured == 64 * 1024 * 1024, f"memory limit not written: {configured}"
-    # hog must be OOM-killed (rc != 0)
-    assert proc.returncode != 0, "memory hog survived under a 64m limit"
-    # host worker/PG liveness is asserted at the workflow level (health probes)
+    try:
+        proc = subprocess.run(
+            [
+                "docker", "run", "--name", name,
+                "--memory", "64m", "--memory-swap", "64m",
+                "--network", NETWORK, "--entrypoint", "python", IMAGE,
+                "-c", "x=bytearray(1024*1024*512); print('allocated')",
+            ],
+            capture_output=True, text=True, timeout=120,
+        )
+        # configured limit observable (container persists without --rm so
+        # HostConfig can be inspected even after the OOM-killed process exits)
+        data = _inspect(name) if proc.returncode == 0 else {}
+        configured = data.get("HostConfig", {}).get("Memory", 0)
+        assert configured == 64 * 1024 * 1024, f"memory limit not written: {configured}"
+        # hog must be OOM-killed (rc != 0)
+        assert proc.returncode != 0, "memory hog survived under a 64m limit"
+        # host worker/PG liveness is asserted at the workflow level (health probes)
 
-    (tmp_path / "memory-cert.json").write_text(
-        json.dumps(
-            {
-                "configured_limit": configured,
-                "observed_exit": proc.returncode,
-                "stderr_tail": proc.stderr[-200:],
-            }
-        ),
-        encoding="utf-8",
-    )
+        (tmp_path / "memory-cert.json").write_text(
+            json.dumps(
+                {
+                    "configured_limit": configured,
+                    "observed_exit": proc.returncode,
+                    "stderr_tail": proc.stderr[-200:],
+                }
+            ),
+            encoding="utf-8",
+        )
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
 
 
 @_need_docker
@@ -112,19 +116,22 @@ def test_cpu_quota_real() -> None:
 def test_pids_limit_real() -> None:
     """Bounded spawn test: exceeding pids-limit must fail, not exhaust host."""
     name = f"cap-cert-pid-{uuid.uuid4().hex[:8]}"
-    proc = subprocess.run(
-        [
-            "docker", "run", "--rm", "--name", name,
-            "--pids-limit", "64", "--network", NETWORK,
-            "--entrypoint", "sh", IMAGE, "-c",
-            "i=0; while true; do sh -c 'sleep 5' & i=$((i+1)); done",
-        ],
-        capture_output=True, text=True, timeout=90,
-    )
-    # the bomb must be stopped (non-zero) and the run must end
-    assert proc.returncode != 0, "pid bomb exceeded the limit and the container survived"
-    data = _inspect(name) if proc.returncode == 0 else {}
-    assert data.get("HostConfig", {}).get("PidsLimit", 0) == 64
+    try:
+        proc = subprocess.run(
+            [
+                "docker", "run", "--name", name,
+                "--pids-limit", "64", "--network", NETWORK,
+                "--entrypoint", "sh", IMAGE, "-c",
+                "i=0; while true; do sh -c 'sleep 5' & i=$((i+1)); done",
+            ],
+            capture_output=True, text=True, timeout=90,
+        )
+        # the bomb must be stopped (non-zero) and the run must end
+        assert proc.returncode != 0, "pid bomb exceeded the limit and the container survived"
+        data = _inspect(name)
+        assert data.get("HostConfig", {}).get("PidsLimit", 0) == 64
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
 
 
 @_need_docker
@@ -134,7 +141,8 @@ def test_filesystem_isolation_real(tmp_path) -> None:
         [
             "docker", "run", "-d", "--rm", "--name", name,
             "--read-only", "--tmpfs", "/tmp",
-            "--network", NETWORK, "--entrypoint", "sh", IMAGE, "-c", "sleep 120",
+            "--network", NETWORK, "--user", "capuser",
+            "--entrypoint", "sh", IMAGE, "-c", "sleep 120",
         ],
         capture_output=True, text=True, timeout=60,
     )

@@ -68,7 +68,7 @@ def lab():
 
 
 def _shim_request(payload: str, *, image: str = "cap-sandbox-http:latest", extra_args=None) -> subprocess.CompletedProcess:
-    args = ["docker", "run", "--rm", "--network", "none", "--user", "capuser"]
+    args = ["docker", "run", "--rm", "-i", "--network", "none", "--user", "capuser"]
     args += (extra_args or [])
     args += [image]
     return subprocess.run(
