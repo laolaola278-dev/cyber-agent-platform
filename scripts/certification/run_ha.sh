@@ -16,6 +16,12 @@ export CAP283_S3_ENDPOINT="${CAP283_S3_ENDPOINT:-127.0.0.1:9000}"
 export CAP283_S3_ACCESS="${CAP283_S3_ACCESS:-capadmin}"
 export CAP283_S3_SECRET="${CAP283_S3_SECRET:-capadmin123}"
 cd backend
+# GATE 15 (health._check_schema): the worker only starts claiming when the
+# real cap283 schema has an alembic_version row. security/cert tests create
+# tables via Base.metadata.create_all, which does NOT create alembic_version,
+# so worker readiness would be permanently false and the queue never drains.
+# Ensure the version table exists + has a row (idempotent) before HA runs.
+uv run python ../scripts/certification/ensure_schema_version.py
 uv run pytest \
   tests/test_phase_28_4_multi_worker_ha.py \
   --junitxml="$OUT_DIR/junit-ha.xml" \
