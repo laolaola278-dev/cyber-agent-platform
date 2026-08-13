@@ -95,7 +95,7 @@ jobs:
       - name: OCI smoke + network isolation + secret audit
         working-directory: backend
         run: |
-          uv run --project backend pytest \
+          uv run pytest \
             tests/test_phase_28_5_linux_network.py \
             tests/test_phase_28_5_linux_secrets.py \
             tests/test_phase_28_5_oci_provider.py \
@@ -105,14 +105,14 @@ jobs:
       - name: SQLite + PG regression subset
         working-directory: backend
         run: |
-          uv run --project backend pytest \
+          uv run pytest \
             tests/test_phase_28_1_worker_path.py tests/test_phase_28_2_claim_fencing.py \
             tests/test_phase_28_2_cancellation.py tests/test_phase_28_3_recovery_loop.py \
             tests/test_phase_28_4_object_store.py tests/test_phase_28_4_orphan_gc.py \
             -p no:cacheprovider
       - name: 20-run HA
         working-directory: backend
-        run: CAP284_HA_N=20 uv run --project backend pytest tests/test_phase_28_4_multi_worker_ha.py -p no:cacheprovider
+        run: CAP284_HA_N=20 uv run pytest tests/test_phase_28_4_multi_worker_ha.py -p no:cacheprovider
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -172,7 +172,7 @@ jobs:
       - name: Full regression
         working-directory: backend
         run: |
-          uv run --project backend pytest tests/test_phase_28_1_worker_path.py \
+          uv run pytest tests/test_phase_28_1_worker_path.py \
             tests/test_phase_28_2_*.py tests/test_phase_28_3_*.py tests/test_phase_28_4_*.py \
             tests/test_phase_28_5_*.py -p no:cacheprovider \
             --junitxml=outputs/cap-cert/junit-regression.xml
@@ -244,7 +244,7 @@ jobs:
       - name: Full regression (28.1 - 28.5)
         working-directory: backend
         run: |
-          uv run --project backend pytest tests/test_phase_28_1_worker_path.py \
+          uv run pytest tests/test_phase_28_1_worker_path.py \
             tests/test_phase_28_2_*.py tests/test_phase_28_3_*.py tests/test_phase_28_4_*.py \
             tests/test_phase_28_5_*.py -p no:cacheprovider \
             --junitxml=outputs/cap-cert/junit-regression.xml
