@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir --disable-pip-version-check "httpx==0.27.2" "pyda
 WORKDIR /sandbox
 COPY sandbox/__init__.py /sandbox/__init__.py
 COPY sandbox/oci_protocol.py /sandbox/oci_protocol.py
-COPY sandbox/oci_shim.py /sandbox/shim.py
+COPY sandbox/shim.py /sandbox/shim.py
 ENV PYTHONPATH=/sandbox
 
 # no source tree, no host paths, no credentials
