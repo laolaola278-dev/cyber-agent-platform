@@ -238,12 +238,11 @@ class DockerCLIDriver:
 
     async def list_by_labels(self, labels: dict[str, str]) -> list[dict[str, Any]]:
         # empty value = "label key exists" filter (docker syntax)
-        filters = ",".join(
-            f"label={k}" if v == "" else f"label={k}={v}"
-            for k, v in labels.items()
-        )
+        filter_args = []
+        for k, v in labels.items():
+            filter_args += ["--filter", f"label={k}" if v == "" else f"label={k}={v}"]
         proc = await self._run(
-            ["ps", "-a", "--filter", f"label={filters}", "--format", "{{.ID}}"]
+            ["ps", "-a", *filter_args, "--format", "{{.ID}}"]
         )
         ids = [
             line.strip()

@@ -11,6 +11,8 @@ reported accordingly (no fake PASS).
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import os
 import subprocess
 import threading
@@ -144,7 +146,11 @@ def test_containerized_fetch_executes_in_isolated_domain(lab) -> None:
         run = _shim_request(request, network=net)
         assert run.returncode == 0, run.stderr[-500:]
         assert '"status":"ok"' in run.stdout, run.stdout[-500:]
-        assert "container-lab-ok" in run.stdout, run.stdout[-500:]
+        payload = json.loads(run.stdout)
+        body = base64.b64decode(payload["result"]["content_b64"] or "").decode(
+            "utf-8", "replace"
+        )
+        assert "container-lab-ok" in body, run.stdout[-500:]
     finally:
         subprocess.run(["docker", "rm", "-f", lab_name], capture_output=True, timeout=30)
 
