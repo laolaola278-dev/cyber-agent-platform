@@ -93,6 +93,7 @@ jobs:
           docker run -d --name capcert-pr-${{ github.run_id }}-egress --network cap-sandbox-egress \
             -e CAP_EGRESS_ALLOW= cap-egress-proxy:latest
       - name: OCI smoke + network isolation + secret audit
+        working-directory: backend
         run: |
           uv run --project backend pytest \
             tests/test_phase_28_5_linux_network.py \
@@ -102,6 +103,7 @@ jobs:
             -m "certification or oci or security" \
             --junitxml=outputs/cap-cert/junit-security.xml -p no:cacheprovider
       - name: SQLite + PG regression subset
+        working-directory: backend
         run: |
           uv run --project backend pytest \
             tests/test_phase_28_1_worker_path.py tests/test_phase_28_2_claim_fencing.py \
@@ -109,6 +111,7 @@ jobs:
             tests/test_phase_28_4_object_store.py tests/test_phase_28_4_orphan_gc.py \
             -p no:cacheprovider
       - name: 20-run HA
+        working-directory: backend
         run: CAP284_HA_N=20 uv run --project backend pytest tests/test_phase_28_4_multi_worker_ha.py -p no:cacheprovider
       - uses: actions/upload-artifact@v4
         if: always()
@@ -167,6 +170,7 @@ jobs:
       - name: 100-run HA
         run: CAP284_HA_N=100 bash scripts/certification/run_ha.sh
       - name: Full regression
+        working-directory: backend
         run: |
           uv run --project backend pytest tests/test_phase_28_1_worker_path.py \
             tests/test_phase_28_2_*.py tests/test_phase_28_3_*.py tests/test_phase_28_4_*.py \
@@ -238,6 +242,7 @@ jobs:
       - name: 500-run OCI correctness benchmark (release-blocking)
         run: bash scripts/certification/run_benchmark.sh
       - name: Full regression (28.1 - 28.5)
+        working-directory: backend
         run: |
           uv run --project backend pytest tests/test_phase_28_1_worker_path.py \
             tests/test_phase_28_2_*.py tests/test_phase_28_3_*.py tests/test_phase_28_4_*.py \
