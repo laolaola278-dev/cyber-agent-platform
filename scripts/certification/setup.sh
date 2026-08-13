@@ -15,9 +15,9 @@ mkdir -p "$OUT_DIR"
 # sandbox egress network (isolated bridge)
 docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET"
 
-# In GitHub Actions, PG and MinIO are already running as service containers.
-# Only start them if they are not yet running (self-hosted runner fallback).
-if ! docker ps --format '{{.Names}}' | grep -q "${PREFIX}-pg" 2>/dev/null; then
+# On GitHub Actions, PG and MinIO are already running as service containers.
+# Skip the container startup to avoid port conflicts.
+if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
   # control network for PG/MinIO (shared with worker, NOT sandbox)
   docker network inspect cap-network >/dev/null 2>&1 || docker network create cap-network
 
@@ -46,14 +46,16 @@ docker run -d --name "${PREFIX}-egress" \
   -e CAP_EGRESS_ALLOW="${CAP_EGRESS_ALLOW:-}" \
   cap-egress-proxy:latest >/dev/null
 
-# wait for readiness
-for i in $(seq 1 60); do
-  if docker exec "${PREFIX}-pg" pg_isready -U cap >/dev/null 2>&1 && \
-     curl -sf http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
-    break
-  fi
-  sleep 2
-done
+# wait for readiness (GHA: PG/MinIO are service containers, already healthy)
+if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
+  for i in $(seq 1 60); do
+    if docker exec "${PREFIX}-pg" pg_isready -U cap >/dev/null 2>&1 && \
+       curl -sf http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+fi
 
 echo "SETUP OK (prefix=${PREFIX} net=${NET})"
 echo "PG=127.0.0.1:55432 MINIO=127.0.0.1:9000 EGRESS=${PREFIX}-egress" | tee "$OUT_DIR/infra.txt"
