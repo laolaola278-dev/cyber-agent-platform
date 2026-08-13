@@ -105,6 +105,8 @@ def test_reaper_fencing_on_real_containers() -> None:
             async with factory() as s:
                 # FK targets must exist before AcquisitionRun references them
                 # (agents.id RESTRICT, tasks.id CASCADE are enforced by PG).
+                # Explicitly flush Task/Agent first so PG sees them before the
+                # AcquisitionRun insert (avoids autoflush ordering surprises).
                 from app.models.agent import Agent
                 from app.models.task import Task
 
@@ -122,6 +124,7 @@ def test_reaper_fencing_on_real_containers() -> None:
                         tools=[], status="ONLINE", platform_version="0.2.1",
                     )
                 )
+                await s.flush()
                 s.add(
                     AcquisitionRun(
                         id=uuid.uuid4(),  # run row exists; reaper keys on lease

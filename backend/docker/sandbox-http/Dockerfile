@@ -12,7 +12,11 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
 # non-root execution user (fixed uid, no home, no shell)
-RUN adduser --system --uid 10001 --disabled-password --no-create-home --shell /usr/sbin/nologin capuser
+RUN adduser --system --uid 10001 --disabled-password --no-create-home --shell /usr/sbin/nologin capuser \
+    # harden credential files so the non-root user cannot read host-style
+    # password databases even inside the container (root:shadow 0640)
+    && chown root:shadow /etc/shadow /etc/gshadow 2>/dev/null || true \
+    && chmod 640 /etc/shadow /etc/gshadow 2>/dev/null || true
 
 # network probes for certification (raw-socket/curl checks are run via exec;
 # the tools themselves do not grant egress -- network policy is applied at

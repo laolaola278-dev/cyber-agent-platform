@@ -87,13 +87,21 @@ def _net_probe_container() -> str:
 
 def _direct_connect(cid: str, host: str, port: int) -> tuple[bool, str]:
     """Raw socket connect from inside the container, proxy env fully unset."""
+    # diagnostics: how does the kernel route this target from inside the sandbox?
+    for what, addr in (("public", host), ("loopback", "127.0.0.1")):
+        rg = subprocess.run(
+            ["docker", "exec", cid, "sh", "-c",
+             f"ip route get {addr} 2>&1 | head -3"],
+            capture_output=True, text=True, timeout=20,
+        )
+        print(f"[net-diag] {what} {addr}: {(rg.stdout or rg.stderr).strip()}", flush=True)
     script = (
         "import socket,sys\n"
         "s=socket.socket(); s.settimeout(6)\n"
         "try:\n"
-        f" s.connect(('{host}',{port})); print('REACHABLE')\n"
+        f" s.connect(('{host}',{port})); print('REACHABLE'); print('peer', s.getpeername()[0])\n"
         "except Exception as e:\n"
-        " print('BLOCKED', type(e).__name__)\n"
+        " print('BLOCKED', type(e).__name__, repr(e))\n"
     )
     proc = subprocess.run(
         [
@@ -104,7 +112,7 @@ def _direct_connect(cid: str, host: str, port: int) -> tuple[bool, str]:
         capture_output=True, text=True, timeout=30,
     )
     out = proc.stdout + proc.stderr
-    return ("REACHABLE" in out), out.strip()[:200]
+    return ("REACHABLE" in out), out.strip()[:300]
 
 
 @_need_docker
