@@ -8,7 +8,7 @@ export CAP_CERTIFICATION_STRICT=1
 export CAP_SANDBOX_NETWORK="${CAP_SANDBOX_NETWORK:-cap-sandbox-egress}"
 export CAP284_HA_N="${CAP284_HA_N:-100}"
 cd backend
-uv run --project backend pytest \
+uv run pytest \
   tests/test_phase_28_4_multi_worker_ha.py \
   --junitxml="$OUT_DIR/junit-ha.xml" \
   -p no:cacheprovider

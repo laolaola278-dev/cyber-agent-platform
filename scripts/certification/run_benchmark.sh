@@ -8,7 +8,7 @@ export CAP_CERTIFICATION_STRICT=1
 export CAP284_BENCH_N="${CAP284_BENCH_N:-500}"
 export CAP284_BENCH_LAB="${CAP284_BENCH_LAB:-40}"
 cd backend
-uv run --project backend pytest \
+uv run pytest \
   tests/test_phase_28_4_benchmark.py \
   --junitxml="$OUT_DIR/junit-benchmark.xml" \
   -p no:cacheprovider -s

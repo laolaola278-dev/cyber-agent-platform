@@ -11,7 +11,7 @@ export EGRESS_PROXY_URL="${EGRESS_PROXY_URL:-http://${CAP_CERT_PREFIX:-capcert}-
 export CAP_SANDBOX_NETWORK="${CAP_SANDBOX_NETWORK:-cap-sandbox-egress}"
 
 cd backend
-uv run --project backend pytest \
+uv run pytest \
   tests/test_phase_28_5_linux_network.py \
   tests/test_phase_28_5_linux_secrets.py \
   tests/test_phase_28_5_linux_resources.py \
