@@ -15,21 +15,26 @@ mkdir -p "$OUT_DIR"
 # sandbox egress network (isolated bridge)
 docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET"
 
-# PostgreSQL (dedicated container, only on the control network)
-docker rm -f "${PREFIX}-pg" >/dev/null 2>&1 || true
-docker run -d --name "${PREFIX}-pg" \
-  --network cap-network \
-  -e POSTGRES_USER=cap -e POSTGRES_PASSWORD=cap -e POSTGRES_DB=cap283 \
-  -p 55432:5432 \
-  postgres:16-alpine >/dev/null
+# In GitHub Actions, PG and MinIO are already running as service containers.
+# Only start them if they are not yet running (self-hosted runner fallback).
+if ! docker ps --format '{{.Names}}' | grep -q "${PREFIX}-pg" 2>/dev/null; then
+  # control network for PG/MinIO (shared with worker, NOT sandbox)
+  docker network inspect cap-network >/dev/null 2>&1 || docker network create cap-network
 
-# MinIO (dedicated; control network + host port for tests)
-docker rm -f "${PREFIX}-minio" >/dev/null 2>&1 || true
-docker run -d --name "${PREFIX}-minio" \
-  --network cap-network \
-  -e MINIO_ROOT_USER=capadmin -e MINIO_ROOT_PASSWORD=capadmin123 \
-  -p 9000:9000 -p 9001:9001 \
-  minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address :9001 >/dev/null
+  docker rm -f "${PREFIX}-pg" >/dev/null 2>&1 || true
+  docker run -d --name "${PREFIX}-pg" \
+    --network cap-network \
+    -e POSTGRES_USER=cap -e POSTGRES_PASSWORD=cap -e POSTGRES_DB=cap283 \
+    -p 55432:5432 \
+    postgres:16-alpine >/dev/null
+
+  docker rm -f "${PREFIX}-minio" >/dev/null 2>&1 || true
+  docker run -d --name "${PREFIX}-minio" \
+    --network cap-network \
+    -e MINIO_ROOT_USER=capadmin -e MINIO_ROOT_PASSWORD=capadmin123 \
+    -p 9000:9000 -p 9001:9001 \
+    minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address :9001 >/dev/null
+fi
 
 # egress proxy (the sandbox's ONLY route out; on BOTH networks so it can
 # forward to the public Internet while being reachable from the sandbox net)
