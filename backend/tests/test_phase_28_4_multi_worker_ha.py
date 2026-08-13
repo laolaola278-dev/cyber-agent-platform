@@ -83,8 +83,9 @@ def _daemon_env(name: str, **extra: str) -> dict[str, str]:
     return env
 
 
-def _start_daemon(name: str, run_seconds: float = 0.0):
+def _start_daemon(name: str, run_seconds: float = 0.0, metrics_port: int = 9100):
     env = _daemon_env(name, ACQ_RUN_SECONDS=str(run_seconds))
+    env["ACQ_METRICS_PORT"] = str(metrics_port)
     log_path = str(BACKEND_DIR / f"worker-{name}.log")
     logf = open(log_path, "w")
     env["ACQ_LOG_FILE"] = log_path
@@ -189,8 +190,8 @@ class TestMultiWorkerHA:
 
         name_a = f"ha-a-{uuid4().hex[:6]}"
         name_b = f"ha-b-{uuid4().hex[:6]}"
-        proc_a = _start_daemon(name_a)
-        proc_b = _start_daemon(name_b)
+        proc_a = _start_daemon(name_a, metrics_port=19100)
+        proc_b = _start_daemon(name_b, metrics_port=19101)
         try:
             # let both workers drain; once RUNNING runs exist, hard-kill A
             factory = async_sessionmaker(engine, expire_on_commit=False)
