@@ -7,6 +7,10 @@
 
 FROM cap-sandbox-http:latest
 
+# Switch back to root for installation (the http sandbox ends with USER capuser).
+# We need root to install system packages and pip packages globally.
+USER root
+
 # Playwright + pinned Chromium build. Browsers live under /opt (read-only at
 # runtime, executable is fine); the Chromium PROFILE goes to /tmp (tmpfs).
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
