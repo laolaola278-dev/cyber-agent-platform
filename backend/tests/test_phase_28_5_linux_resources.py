@@ -65,8 +65,8 @@ def test_memory_limit_real_and_oom(tmp_path) -> None:
             capture_output=True, text=True, timeout=120,
         )
         # configured limit observable (container persists without --rm so
-        # HostConfig can be inspected even after the OOM-killed process exits)
-        data = _inspect(name) if proc.returncode == 0 else {}
+        # HostConfig can be inspected even when the process is OOM-killed)
+        data = _inspect(name)
         configured = data.get("HostConfig", {}).get("Memory", 0)
         assert configured == 64 * 1024 * 1024, f"memory limit not written: {configured}"
         # hog must be OOM-killed (rc != 0)

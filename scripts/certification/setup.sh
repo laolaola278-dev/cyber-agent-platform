@@ -16,13 +16,11 @@ mkdir -p "$OUT_DIR"
 # can only reach the egress proxy on this network. Docker --internal drops the
 # network's default gateway so containers cannot reach the public Internet or
 # the host loopback directly.)
-if docker network inspect "$NET" >/dev/null 2>&1; then
-  if ! docker network inspect "$NET" --format '{{.Internal}}' 2>/dev/null | grep -qi "true"; then
-    # pre-existing non-internal network (e.g. a prior run); recreate as internal
-    docker network rm "$NET" >/dev/null 2>&1 || true
-  fi
-fi
-docker network inspect "$NET" >/dev/null 2>&1 || docker network create --internal "$NET"
+# Rebuild unconditionally so a stale Nnetbridge peer or a non-internal leftover
+# from a previous run can never leak outbound connectivity.
+docker network rm "$NET" >/dev/null 2>&1 || true
+docker network create --internal "$NET"
+echo "[setup] sandbox network $NET internal=$(docker network inspect "$NET" --format '{{.Internal}}')"
 
 # On GitHub Actions, PG and MinIO are already running as service containers.
 # Skip the container startup to avoid port conflicts.

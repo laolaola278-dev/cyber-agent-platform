@@ -59,32 +59,41 @@ def test_secret_never_appears_in_control_plane_artifacts(tmp_path) -> None:
     sentinel = _sentinel()
     name = f"cap-cert-secret-{uuid.uuid4().hex[:8]}"
 
-    # start a container with the sentinel delivered the CURRENT way (env)
+    # Secret delivered via a tmpfs file inside the container (the safe
+    # mechanism: never visible to `docker inspect` Env/Labels/Cmd/Args, never
+    # in logs or image history). The container reads it from /run/secrets.
     subprocess.run(
         [
             "docker", "run", "-d", "--rm", "--name", name,
             "--network", NETWORK,
-            "-e", f"CAP_SECRET_cap_db_pass={sentinel}",
+            "--tmpfs", "/run/secrets",
             "--entrypoint", "sh", IMAGE, "-c", "sleep 120",
         ],
         capture_output=True, text=True, timeout=60,
     )
+    # place the secret on a tmpfs file (runtime secret mechanism)
+    write = subprocess.run(
+        [
+            "docker", "exec", name, "sh", "-c",
+            f"umask 077; printf '%s' {sentinel!r} > /run/secrets/cap_db_pass",
+        ],
+        capture_output=True, text=True, timeout=20,
+    )
+    assert write.returncode == 0, f"secret placement failed: {write.stderr[-200:]}"
+
     log_path = tmp_path / "secret-audit.log"
     leaks: list[str] = []
     try:
-        # 1. docker inspect: Labels / Cmd / Args (the sentinel is injected via
-        #    `docker run -e CAP_SECRET_cap_db_pass=...` so Config.Env is the
-        #    explicit injection point and is intentionally excluded; the audit
-        #    instead confirms it does NOT leak into labels, command args, logs,
-        #    image layers, or the protocol body).
+        # 1. docker inspect: Env / Labels / Cmd / Args -- the sentinel must
+        #    NOT appear anywhere (it was never passed via -e / labels / cmd).
         inspect = subprocess.run(
             ["docker", "inspect", name],
             capture_output=True, text=True, timeout=30,
         )
         inspect_text = inspect.stdout
-        for section in ("Config.Labels", "Config.Cmd", "Args"):
+        for section in ("Config.Env", "Config.Labels", "Config.Cmd", "Args"):
             if sentinel in inspect_text:
-                leaks.append(f"docker inspect contains sentinel")
+                leaks.append(f"docker inspect contains sentinel ({section})")
         # 2. docker logs
         logs = subprocess.run(
             ["docker", "logs", name], capture_output=True, text=True, timeout=30

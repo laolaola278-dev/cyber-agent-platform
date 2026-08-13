@@ -53,7 +53,7 @@ def _start_managed_container(execution_id: str, lease_id: str, run_id: str, work
     name = f"cap-cert-reap-{uuid.uuid4().hex[:8]}"
     subprocess.run(
         [
-            "docker", "run", "-d", "--rm", "--name", name,
+            "docker", "run", "-d", "--name", name,
             "--network", NETWORK,
             "--label", f"{_LABEL_EXEC}={execution_id}",
             "--label", f"{_LABEL_LEASE}={lease_id}",
@@ -99,17 +99,39 @@ def test_reaper_fencing_on_real_containers() -> None:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
 
+            task_id = uuid.uuid4()
+            agent_id = uuid.uuid4()
+
             async with factory() as s:
+                # FK targets must exist before AcquisitionRun references them
+                # (agents.id RESTRICT, tasks.id CASCADE are enforced by PG).
+                from app.models.agent import Agent
+                from app.models.task import Task
+
+                s.add(
+                    Task(
+                        id=task_id, name="reaper-cert-task", task_type="acquisition.http",
+                        status="RUNNING", input={}, required_permissions=[],
+                        required_capabilities=["acquisition.http"],
+                    )
+                )
+                s.add(
+                    Agent(
+                        id=agent_id, name=f"reaper-agent-{agent_id.hex[:6]}",
+                        version="28.5", permissions=[], capabilities=["acquisition.http"],
+                        tools=[], status="ONLINE", platform_version="0.2.1",
+                    )
+                )
                 s.add(
                     AcquisitionRun(
                         id=uuid.uuid4(),  # run row exists; reaper keys on lease
                         idempotency_key=f"r-{uuid.uuid4().hex}",
                         request_fingerprint=f"f-{uuid.uuid4().hex}",
                         status="RUNNING",
-                        worker_id=uuid.uuid4(),  # updated below by lease check path
+                        worker_id=uuid.UUID(worker_b),
                         lease_id=uuid.UUID(lease_b),
                         goal="g", source_type="web", strategy="paged",
-                        task_id=uuid.uuid4(), agent_id=uuid.uuid4(),
+                        task_id=task_id, agent_id=agent_id,
                         trace_id=f"t-{uuid.uuid4().hex[:6]}",
                         created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
                     )
@@ -166,7 +188,7 @@ def test_cancellation_ordering_timestamps() -> None:
     name = f"cap-cert-cancel-{uuid.uuid4().hex[:8]}"
     subprocess.run(
         [
-            "docker", "run", "-d", "--rm", "--name", name,
+            "docker", "run", "-d", "--name", name,
             "--network", NETWORK,
             "--label", f"{_LABEL_EXEC}={exec_id}",
             "--entrypoint", "sh", IMAGE, "-c", "sleep 600",

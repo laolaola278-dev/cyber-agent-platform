@@ -57,7 +57,7 @@ _need_docker = pytest.mark.skipif(not _docker(), reason="docker daemon not avail
 
 def _net_probe_container() -> str:
     name = f"cap-cert-net-{uuid.uuid4().hex[:8]}"
-    subprocess.run(
+    run = subprocess.run(
         [
             "docker", "run", "-d", "--rm", "--name", name,
             "--network", NETWORK, "--entrypoint", "sh", IMAGE,
@@ -65,6 +65,23 @@ def _net_probe_container() -> str:
         ],
         capture_output=True, text=True, timeout=60,
     )
+    if run.returncode != 0:
+        raise RuntimeError(f"probe container start failed: {run.stderr[-300:]}")
+    # diagnostics: confirm which network(s) the probe actually joined and its
+    # default route, so network-enforcement failures are diagnosable in CI logs.
+    diag = subprocess.run(
+        ["docker", "inspect", name, "--format",
+         "{{json .NetworkSettings.Networks}}"],
+        capture_output=True, text=True, timeout=20,
+    )
+    route = subprocess.run(
+        ["docker", "exec", name, "ip", "route"],
+        capture_output=True, text=True, timeout=20,
+    )
+    nets = (diag.stdout or "").strip()
+    routes = (route.stdout or route.stderr or "").strip()
+    print(f"[net-probe] {name} networks={nets}", flush=True)
+    print(f"[net-probe] {name} routes={routes}", flush=True)
     return name
 
 

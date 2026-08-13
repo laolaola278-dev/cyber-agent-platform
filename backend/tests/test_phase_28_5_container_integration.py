@@ -67,8 +67,8 @@ def lab():
     srv.server_close()
 
 
-def _shim_request(payload: str, *, image: str = "cap-sandbox-http:latest", extra_args=None) -> subprocess.CompletedProcess:
-    args = ["docker", "run", "--rm", "-i", "--network", "none", "--user", "capuser"]
+def _shim_request(payload: str, *, image: str = "cap-sandbox-http:latest", extra_args=None, network: str = "none") -> subprocess.CompletedProcess:
+    args = ["docker", "run", "--rm", "-i", "--network", network, "--user", "capuser"]
     args += (extra_args or [])
     args += [image]
     return subprocess.run(
@@ -82,17 +82,51 @@ def test_containerized_fetch_executes_in_isolated_domain(lab) -> None:
         pytest.skip("sandbox image not built (run tests/test_phase_28_5_sandbox_image.py build first)")
     from app.sandbox.oci_protocol import SandboxRequest
 
-    request = SandboxRequest(
-        operation="http_fetch",
-        run_id=str(uuid4()),
-        sandbox_execution_id=str(uuid4()),
-        url=f"http://{lab}/page",
-        policy={"allow_private": True},
-    ).model_dump_json()
-    run = _shim_request(request)
-    assert run.returncode == 0, run.stderr[-500:]
-    assert '"status":"ok"' in run.stdout
-    assert "container-lab-ok" in run.stdout
+    # The lab target must live INSIDE the same isolated container network as
+    # the sandbox: with a true sandbox network the shim container cannot reach
+    # the host's 127.0.0.1 loopback (that is the isolation property we assert).
+    # So we run the target as a sibling container on the same (internal) net and
+    # reach it by container name -- proving end-to-end fetch works within the
+    # isolated domain.
+    net = os.environ.get("CAP_SANDBOX_NETWORK", "cap-sandbox-egress")
+    lab_name = f"cap-cert-lab-{uuid4().hex[:8]}"
+    lab_port = int(lab.rsplit(":", 1)[1])
+    lab_lc = subprocess.run(
+        [
+            "docker", "run", "-d", "--rm", "--name", lab_name,
+            "--network", net,
+            "--entrypoint", "python", "cap-sandbox-http:latest",
+            "-c",
+            "from http.server import BaseHTTPRequestHandler,HTTPServer;"
+            "import sys;"
+            "class H(BaseHTTPRequestHandler):"
+            " def do_GET(self):"
+            "  b=b'<html>container-lab-ok</html>';"
+            "  self.send_response(200);self.send_header('Content-Length',str(len(b)));"
+            "  self.end_headers();self.wfile.write(b)"
+            " def log_message(self,*a):pass"
+            f"HTTPServer(('0.0.0.0',{lab_port}),H).serve_forever()",
+        ],
+        capture_output=True, text=True, timeout=60,
+    )
+    if lab_lc.returncode != 0:
+        subprocess.run(["docker", "rm", "-f", lab_name], capture_output=True, timeout=30)
+        pytest.skip(f"could not start lab container: {lab_lc.stderr[-200:]}")
+    try:
+        # shim runs on the same sandbox network (NOT host loopback / NOT public)
+        request = SandboxRequest(
+            operation="http_fetch",
+            run_id=str(uuid4()),
+            sandbox_execution_id=str(uuid4()),
+            url=f"http://{lab_name}:{lab_port}/page",
+            policy={"allow_private": True},
+        ).model_dump_json()
+        run = _shim_request(request, network=net)
+        assert run.returncode == 0, run.stderr[-500:]
+        assert '"status":"ok"' in run.stdout, run.stdout[-500:]
+        assert "container-lab-ok" in run.stdout, run.stdout[-500:]
+    finally:
+        subprocess.run(["docker", "rm", "-f", lab_name], capture_output=True, timeout=30)
 
 
 @_need_docker
