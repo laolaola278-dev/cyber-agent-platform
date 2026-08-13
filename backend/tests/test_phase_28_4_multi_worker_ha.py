@@ -96,6 +96,7 @@ def _start_daemon(name: str, run_seconds: float = 0.0):
         stderr=subprocess.STDOUT,
     )
     proc._cap_log_path = log_path  # type: ignore[attr-defined]
+    proc._cap_log_f = logf  # type: ignore[attr-defined]
     return proc
 
 
@@ -250,6 +251,12 @@ class TestMultiWorkerHA:
                     p.wait(timeout=15)
                 except Exception:  # noqa: BLE001
                     pass
+                f = getattr(p, "_cap_log_f", None)
+                if f:
+                    try:
+                        f.close()
+                    except Exception:  # noqa: BLE001
+                        pass
             await engine.dispose()
 
     @pytest.mark.asyncio
