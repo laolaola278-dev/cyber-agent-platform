@@ -51,7 +51,7 @@ _LABEL_WORKER = "cap.sandbox.worker_id"
 
 def _start_managed_container(execution_id: str, lease_id: str, run_id: str, worker: str) -> str:
     name = f"cap-cert-reap-{uuid.uuid4().hex[:8]}"
-    subprocess.run(
+    run = subprocess.run(
         [
             "docker", "run", "-d", "--name", name,
             "--network", NETWORK,
@@ -63,6 +63,7 @@ def _start_managed_container(execution_id: str, lease_id: str, run_id: str, work
         ],
         capture_output=True, text=True, timeout=60,
     )
+    assert run.returncode == 0, f"managed container start failed: {run.stderr[-300:]}"
     return name
 
 
@@ -165,6 +166,15 @@ def test_reaper_fencing_on_real_containers() -> None:
         async def _cert() -> None:
             stats = await reaper.reconcile_once()
             remaining = await driver.list_by_labels({_LABEL_EXEC: ""})
+            for c in remaining:
+                labs = c.get("Config", {}).get("Labels", {})
+                print(
+                    f"[reaper-diag] remaining id={c.get('Id','')[:12]} "
+                    f"lease={labs.get(_LABEL_LEASE,'')[:8]} "
+                    f"worker={labs.get(_LABEL_WORKER,'')[:8]}",
+                    flush=True,
+                )
+            print(f"[reaper-diag] stats={stats}", flush=True)
             a_gone = all(
                 (c.get("Config", {}).get("Labels", {}).get(_LABEL_LEASE) != lease_a)
                 for c in remaining

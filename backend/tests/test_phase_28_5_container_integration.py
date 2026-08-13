@@ -90,28 +90,29 @@ def test_containerized_fetch_executes_in_isolated_domain(lab) -> None:
     # isolated domain.
     net = os.environ.get("CAP_SANDBOX_NETWORK", "cap-sandbox-egress")
     lab_name = f"cap-cert-lab-{uuid4().hex[:8]}"
-    lab_port = int(lab.rsplit(":", 1)[1])
+    lab_port = 28331  # fixed high port inside the lab container
+    lab_code = (
+        "from http.server import BaseHTTPRequestHandler,HTTPServer;\n"
+        "class H(BaseHTTPRequestHandler):\n"
+        " def do_GET(self):\n"
+        "  b=b'<html>container-lab-ok</html>';\n"
+        "  self.send_response(200);self.send_header('Content-Length',str(len(b)));\n"
+        "  self.end_headers();self.wfile.write(b);\n"
+        " def log_message(self,*a):pass\n"
+        f"HTTPServer(('0.0.0.0',{lab_port}),H).serve_forever()\n"
+    )
     lab_lc = subprocess.run(
         [
             "docker", "run", "-d", "--rm", "--name", lab_name,
             "--network", net,
             "--entrypoint", "python", "cap-sandbox-http:latest",
-            "-c",
-            "from http.server import BaseHTTPRequestHandler,HTTPServer;"
-            "import sys;"
-            "class H(BaseHTTPRequestHandler):"
-            " def do_GET(self):"
-            "  b=b'<html>container-lab-ok</html>';"
-            "  self.send_response(200);self.send_header('Content-Length',str(len(b)));"
-            "  self.end_headers();self.wfile.write(b)"
-            " def log_message(self,*a):pass"
-            f"HTTPServer(('0.0.0.0',{lab_port}),H).serve_forever()",
+            "-c", lab_code,
         ],
         capture_output=True, text=True, timeout=60,
     )
     if lab_lc.returncode != 0:
         subprocess.run(["docker", "rm", "-f", lab_name], capture_output=True, timeout=30)
-        pytest.skip(f"could not start lab container: {lab_lc.stderr[-200:]}")
+        pytest.skip(f"could not start lab container: {lab_lc.stderr[-300:]}")
     try:
         # resolve the lab container's sandbox-network IP (address Docker's
         # embedded DNS may not answer on an --internal net) and target that.
@@ -119,7 +120,20 @@ def test_containerized_fetch_executes_in_isolated_domain(lab) -> None:
             ["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", lab_name],
             capture_output=True, text=True, timeout=20,
         ).stdout.strip()
-        # shim runs on the same sandbox network (NOT host loopback / NOT public)
+        assert lab_ip, "could not resolve lab container IP"
+        # wait for the lab HTTP server to accept connections
+        ready = subprocess.run(
+            [
+                "docker", "exec", lab_name, "sh", "-c",
+                "i=0; until python -c "
+                f"\"import socket;socket.create_connection(('127.0.0.1',{lab_port}),1)\" "
+                "2>/dev/null; do sleep 0.5; i=$((i+1)); [ $i -ge 20 ] && exit 1; done; exit 0",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if ready.returncode != 0:
+            logs = subprocess.run(["docker", "logs", lab_name], capture_output=True, text=True, timeout=20)
+            pytest.skip(f"lab server not ready: {(logs.stdout or logs.stderr)[-300:]}")
         request = SandboxRequest(
             operation="http_fetch",
             run_id=str(uuid4()),
