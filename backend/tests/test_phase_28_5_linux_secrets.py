@@ -65,7 +65,7 @@ def test_secret_never_appears_in_control_plane_artifacts(tmp_path) -> None:
             "docker", "run", "-d", "--rm", "--name", name,
             "--network", NETWORK,
             "-e", f"CAP_SECRET_cap_db_pass={sentinel}",
-            IMAGE, "sh", "-c", "sleep 120",
+            "--entrypoint", "sh", IMAGE, "-c", "sleep 120",
         ],
         capture_output=True, text=True, timeout=60,
     )
@@ -126,7 +126,7 @@ def test_sandbox_environment_has_no_host_credentials() -> None:
     subprocess.run(
         [
             "docker", "run", "-d", "--rm", "--name", name,
-            "--network", NETWORK, IMAGE, "sh", "-c", "sleep 60",
+            "--network", NETWORK, "--entrypoint", "sh", IMAGE, "-c", "sleep 60",
         ],
         capture_output=True, text=True, timeout=60,
     )

@@ -59,7 +59,7 @@ def _start_managed_container(execution_id: str, lease_id: str, run_id: str, work
             "--label", f"{_LABEL_LEASE}={lease_id}",
             "--label", f"{_LABEL_RUN}={run_id}",
             "--label", f"{_LABEL_WORKER}={worker}",
-            IMAGE, "sh", "-c", "sleep 600",
+            "--entrypoint", "sh", IMAGE, "-c", "sleep 600",
         ],
         capture_output=True, text=True, timeout=60,
     )
@@ -165,7 +165,7 @@ def test_cancellation_ordering_timestamps() -> None:
             "docker", "run", "-d", "--rm", "--name", name,
             "--network", NETWORK,
             "--label", f"{_LABEL_EXEC}={exec_id}",
-            IMAGE, "sh", "-c", "sleep 600",
+            "--entrypoint", "sh", IMAGE, "-c", "sleep 600",
         ],
         capture_output=True, text=True, timeout=60,
     )

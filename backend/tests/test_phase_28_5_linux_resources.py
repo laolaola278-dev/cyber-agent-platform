@@ -58,8 +58,8 @@ def test_memory_limit_real_and_oom(tmp_path) -> None:
         [
             "docker", "run", "--rm", "--name", name,
             "--memory", "64m", "--memory-swap", "64m",
-            "--network", NETWORK, IMAGE,
-            "python", "-c", "x=bytearray(1024*1024*512); print('allocated')",
+            "--network", NETWORK, "--entrypoint", "python", IMAGE,
+            "-c", "x=bytearray(1024*1024*512); print('allocated')",
         ],
         capture_output=True, text=True, timeout=120,
     )
@@ -90,7 +90,7 @@ def test_cpu_quota_real() -> None:
         [
             "docker", "run", "-d", "--rm", "--name", name,
             "--cpus", "0.5", "--network", NETWORK,
-            IMAGE, "sh", "-c", "while :; do :; done",
+            "--entrypoint", "sh", IMAGE, "-c", "while :; do :; done",
         ],
         capture_output=True, text=True, timeout=60,
     )
@@ -116,7 +116,7 @@ def test_pids_limit_real() -> None:
         [
             "docker", "run", "--rm", "--name", name,
             "--pids-limit", "64", "--network", NETWORK,
-            IMAGE, "sh", "-c",
+            "--entrypoint", "sh", IMAGE, "-c",
             "i=0; while true; do sh -c 'sleep 5' & i=$((i+1)); done",
         ],
         capture_output=True, text=True, timeout=90,
@@ -134,7 +134,7 @@ def test_filesystem_isolation_real(tmp_path) -> None:
         [
             "docker", "run", "-d", "--rm", "--name", name,
             "--read-only", "--tmpfs", "/tmp",
-            "--network", NETWORK, IMAGE, "sh", "-c", "sleep 120",
+            "--network", NETWORK, "--entrypoint", "sh", IMAGE, "-c", "sleep 120",
         ],
         capture_output=True, text=True, timeout=60,
     )
@@ -174,7 +174,7 @@ def test_filesystem_isolation_real(tmp_path) -> None:
     # after removal, the tmpfs data is gone (container re-created fresh)
     proc = subprocess.run(
         ["docker", "run", "--rm", "--tmpfs", "/tmp", "--network", NETWORK,
-         IMAGE, "sh", "-c", "test -f /tmp/canary && echo PERSISTED || echo GONE"],
+         "--entrypoint", "sh", IMAGE, "-c", "test -f /tmp/canary && echo PERSISTED || echo GONE"],
         capture_output=True, text=True, timeout=60,
     )
     assert "GONE" in proc.stdout, "tmpfs data persisted across container removal"

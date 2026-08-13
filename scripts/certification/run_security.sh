@@ -9,6 +9,8 @@ export CAP_CERTIFICATION_STRICT=1
 export CAP_CERT_OUT="$OUT_DIR"
 export EGRESS_PROXY_URL="${EGRESS_PROXY_URL:-http://${CAP_CERT_PREFIX:-capcert}-egress:8080}"
 export CAP_SANDBOX_NETWORK="${CAP_SANDBOX_NETWORK:-cap-sandbox-egress}"
+# PG service container credentials (postgres:16-alpine, user=cap db=cap283 pw=cap)
+export CAP_CERT_PG_DSN="${CAP_CERT_PG_DSN:-postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283}"
 
 cd backend
 uv run pytest \

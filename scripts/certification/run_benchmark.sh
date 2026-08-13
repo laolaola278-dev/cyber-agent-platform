@@ -7,6 +7,7 @@ mkdir -p "$OUT_DIR"
 export CAP_CERTIFICATION_STRICT=1
 export CAP284_BENCH_N="${CAP284_BENCH_N:-500}"
 export CAP284_BENCH_LAB="${CAP284_BENCH_LAB:-40}"
+export CAP_CERT_PG_DSN="${CAP_CERT_PG_DSN:-postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283}"
 cd backend
 uv run pytest \
   tests/test_phase_28_4_benchmark.py \

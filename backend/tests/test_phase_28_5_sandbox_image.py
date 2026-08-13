@@ -106,7 +106,7 @@ def test_build_http_image_and_inspect() -> None:
             (BACKEND / "app" / "sandbox" / "oci_protocol.py").read_text(encoding="utf-8"),
             encoding="utf-8",
         )
-        (ctxp / "sandbox" / "oci_shim.py").write_text(
+        (ctxp / "sandbox" / "shim.py").write_text(
             (BACKEND / "app" / "sandbox" / "oci_shim.py").read_text(encoding="utf-8"),
             encoding="utf-8",
         )
@@ -162,8 +162,8 @@ def test_container_enforces_read_only_rootfs_and_tmpfs() -> None:
         [
             "docker", "run", "--rm", "--network", "none",
             "--read-only", "--tmpfs", "/tmp",
-            "cap-sandbox-http:latest",
-            "sh", "-c", "touch /tmp/ok && (touch /write-test 2>/dev/null && echo WRITABLE || echo RO-OK)",
+            "--entrypoint", "sh", "cap-sandbox-http:latest",
+            "-c", "touch /tmp/ok && (touch /write-test 2>/dev/null && echo WRITABLE || echo RO-OK)",
         ],
         capture_output=True, text=True, timeout=60,
     )

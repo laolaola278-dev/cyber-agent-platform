@@ -106,8 +106,8 @@ def test_ssrf_defense_in_depth_validator_bypass_still_blocked() -> None:
     run = subprocess.run(
         [
             "docker", "run", "--rm", "--network", "none",
-            "--user", "capuser", "cap-sandbox-http:latest",
-            "sh", "-c", "python -c 'import socket; s=socket.socket(); "
+            "--user", "capuser", "--entrypoint", "sh", "cap-sandbox-http:latest",
+            "-c", "python -c 'import socket; s=socket.socket(); "
             "s.settimeout(5); s.connect((\"127.0.0.1\", 80))' 2>&1 || echo NET-ISOLATED",
         ],
         capture_output=True, text=True, timeout=60,
@@ -125,8 +125,8 @@ def test_memory_limit_enforced() -> None:
         [
             "docker", "run", "--rm", "--network", "none",
             "--memory", "64m", "--memory-swap", "64m",
-            "--user", "capuser", "cap-sandbox-http:latest",
-            "python", "-c",
+            "--user", "capuser", "--entrypoint", "python", "cap-sandbox-http:latest",
+            "-c",
             "x = bytearray(1024*1024*512); print('allocated')",
         ],
         capture_output=True, text=True, timeout=60,
@@ -145,8 +145,8 @@ def test_pids_limit_enforced() -> None:
         [
             "docker", "run", "--rm", "--network", "none",
             "--pids-limit", "64",
-            "--user", "capuser", "cap-sandbox-http:latest",
-            "sh", "-c",
+            "--user", "capuser", "--entrypoint", "sh", "cap-sandbox-http:latest",
+            "-c",
             "i=0; while true; do sh -c 'sleep 5' & i=$((i+1)); done",
         ],
         capture_output=True, text=True, timeout=60,
@@ -165,7 +165,7 @@ def test_cpu_limit_configured_and_observable() -> None:
         [
             "docker", "run", "-d", "--name", name,
             "--cpus", "0.5", "--network", "none",
-            "cap-sandbox-http:latest", "sleep", "30",
+            "--entrypoint", "sleep", "cap-sandbox-http:latest", "30",
         ],
         capture_output=True, text=True, timeout=30,
     )

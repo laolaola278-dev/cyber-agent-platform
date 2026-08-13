@@ -19,9 +19,10 @@ RUN pip install --no-cache-dir --disable-pip-version-check "httpx==0.27.2" "pyda
 
 # the typed protocol + shim (self-contained copy, no worker code)
 WORKDIR /sandbox
-COPY sandbox/__init__.py /sandbox/__init__.py
-COPY sandbox/oci_protocol.py /sandbox/oci_protocol.py
-COPY sandbox/shim.py /sandbox/shim.py
+RUN mkdir -p /sandbox/sandbox
+COPY sandbox/__init__.py /sandbox/sandbox/__init__.py
+COPY sandbox/oci_protocol.py /sandbox/sandbox/oci_protocol.py
+COPY sandbox/shim.py /sandbox/sandbox/shim.py
 ENV PYTHONPATH=/sandbox
 
 # no source tree, no host paths, no credentials
