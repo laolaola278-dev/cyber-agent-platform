@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-pytestmark = [pytest.mark.postgres, pytest.mark.object_store, pytest.mark.sandbox]
+pytestmark = [pytest.mark.timeout(1800), pytest.mark.postgres, pytest.mark.object_store, pytest.mark.sandbox]
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 _CERT_PG = os.environ.get("CAP_CERT_PG_DSN", "")  # standard cert credential name

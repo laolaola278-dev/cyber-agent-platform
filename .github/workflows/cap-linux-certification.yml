@@ -172,9 +172,14 @@ jobs:
       - name: Full regression
         working-directory: backend
         run: |
+          # --timeout=300 catches hangs with a thread stack dump instead of
+          # letting the whole job time out; slow benchmark/HA tests carry an
+          # explicit pytest.mark.timeout override so they are not killed.
           uv run pytest tests/test_phase_28_1_worker_path.py \
             tests/test_phase_28_2_*.py tests/test_phase_28_3_*.py tests/test_phase_28_4_*.py \
             tests/test_phase_28_5_*.py -p no:cacheprovider \
+            --timeout=300 --timeout-method=thread \
+            --durations=30 -vv --tb=long \
             --junitxml=outputs/cap-cert/junit-regression.xml
       - name: Collect artifacts
         run: bash scripts/certification/collect_artifacts.sh
@@ -247,6 +252,8 @@ jobs:
           uv run pytest tests/test_phase_28_1_worker_path.py \
             tests/test_phase_28_2_*.py tests/test_phase_28_3_*.py tests/test_phase_28_4_*.py \
             tests/test_phase_28_5_*.py -p no:cacheprovider \
+            --timeout=300 --timeout-method=thread \
+            --durations=30 -vv --tb=long \
             --junitxml=outputs/cap-cert/junit-regression.xml
       - name: Collect artifacts
         run: bash scripts/certification/collect_artifacts.sh

@@ -27,7 +27,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-pytestmark = [pytest.mark.postgres, pytest.mark.object_store, pytest.mark.sandbox]
+pytestmark = [pytest.mark.timeout(1800), pytest.mark.postgres, pytest.mark.object_store, pytest.mark.sandbox]
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 PG_DSN = os.environ.get(

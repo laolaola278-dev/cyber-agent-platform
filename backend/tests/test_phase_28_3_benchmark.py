@@ -25,7 +25,7 @@ from app.acquisition.models_db import AcquisitionRun
 from app.acquisition.service import AcquisitionService
 from app.evidence.service import EvidenceService
 
-pytestmark = pytest.mark.postgres
+pytestmark = [pytest.mark.timeout(1200), pytest.mark.postgres]
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 PG_DSN = os.environ.get(

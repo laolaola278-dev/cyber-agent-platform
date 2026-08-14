@@ -40,6 +40,10 @@ from app.worker.scheduler import WorkerScheduler
 from tests.acquisition_lab import AcquisitionLabServer, lab_policy, lab_url_validator
 from tests.conftest import TestSessionFactory
 
+import pytest
+pytestmark = [pytest.mark.timeout(1200)]
+
+
 RUN_COUNT = 500
 
 

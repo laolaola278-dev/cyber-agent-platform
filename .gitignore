@@ -60,3 +60,6 @@ _pg*.log
 # Temporary / _待删
 _待删_*/
 tmp-*/
+# Phase 28.5-L local certification diagnostics (not committed)
+_cert_diag/
+_cert_tmp/
