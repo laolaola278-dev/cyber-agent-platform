@@ -252,6 +252,17 @@ class AcquisitionClaimCoordinator:
         if run.lease_id is None:
             return None
         lease = await self._leases.require(run.lease_id)
+        # Fencing hardening (Phase 28.3 lease-race closure): a reclaim that
+        # wins between verify_owner and require() swaps run.lease_id to a NEW
+        # lease owned by the reclaiming worker. Renewing that lease here would
+        # report "renewed" while the run has actually moved to another worker
+        # (split-brain). The lease records its owning worker, so refuse to
+        # renew a lease we do not own.
+        if lease.worker_id != worker_id:
+            raise AcquisitionStaleCommit(
+                f"run {run_id}: lease {lease.id} is owned by "
+                f"{lease.worker_id}, not {worker_id} -- renewal rejected"
+            )
         renewed = await self._leases.renew(
             lease.id,
             owner=lease.owner,
