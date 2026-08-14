@@ -10,6 +10,7 @@ acquisition tables before running.
 
 from __future__ import annotations
 
+import os
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
