@@ -175,9 +175,15 @@ jobs:
           # --timeout=300 catches hangs with a thread stack dump instead of
           # letting the whole job time out; slow benchmark/HA tests carry an
           # explicit pytest.mark.timeout override so they are not killed.
+          # The 28.2 SQLite durability benchmark is excluded here: it
+          # serializes writes against SQLite's single-writer lock and is
+          # runner-latency sensitive (344s on a fast runner, 20+ min on a
+          # contended one); its 500-run correctness is re-certified in the
+          # release-tag benchmark job.
           uv run pytest tests/test_phase_28_1_worker_path.py \
             tests/test_phase_28_2_*.py tests/test_phase_28_3_*.py tests/test_phase_28_4_*.py \
             tests/test_phase_28_5_*.py -p no:cacheprovider \
+            --ignore=tests/test_phase_28_2_500_benchmark.py \
             --timeout=300 --timeout-method=thread \
             --durations=30 -vv --tb=long \
             --junitxml=outputs/cap-cert/junit-regression.xml
@@ -252,6 +258,7 @@ jobs:
           uv run pytest tests/test_phase_28_1_worker_path.py \
             tests/test_phase_28_2_*.py tests/test_phase_28_3_*.py tests/test_phase_28_4_*.py \
             tests/test_phase_28_5_*.py -p no:cacheprovider \
+            --ignore=tests/test_phase_28_2_500_benchmark.py \
             --timeout=300 --timeout-method=thread \
             --durations=30 -vv --tb=long \
             --junitxml=outputs/cap-cert/junit-regression.xml
