@@ -37,8 +37,8 @@ from app.worker.plugin_runtime import PluginWorkerRuntime
 
 pytestmark = pytest.mark.postgres
 
-PG_DSN = "postgresql+asyncpg://cap@127.0.0.1:55432/cap283"
-PG_SYNC_DSN = "postgresql://cap@127.0.0.1:55432/cap283"
+PG_DSN = os.environ.get("CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283")
+PG_SYNC_DSN = os.environ.get("CAP283_PG_SYNC", "postgresql://cap@127.0.0.1:55432/cap283")
 
 _TRUNCATE = """
 TRUNCATE TABLE

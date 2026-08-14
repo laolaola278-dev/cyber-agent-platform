@@ -22,7 +22,7 @@ from app.models import Evidence
 
 pytestmark = [pytest.mark.postgres, pytest.mark.object_store]
 
-PG_DSN = "postgresql+asyncpg://cap@127.0.0.1:55432/cap283"
+PG_DSN = os.environ.get("CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283")
 S3_ENDPOINT = os.environ.get("CAP283_S3_ENDPOINT", "127.0.0.1:9000")
 S3_ACCESS = os.environ.get("CAP283_S3_ACCESS", "capadmin")
 S3_SECRET = os.environ.get("CAP283_S3_SECRET", "capadmin123")

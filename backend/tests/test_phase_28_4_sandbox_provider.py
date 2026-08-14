@@ -30,7 +30,7 @@ from app.worker.registry import WorkerRegistry
 
 pytestmark = pytest.mark.sandbox
 
-PG_DSN = "postgresql+asyncpg://cap@127.0.0.1:55432/cap283"
+PG_DSN = os.environ.get("CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283")
 
 
 def _profile(name: str = "p284", timeout: int = 30, memory_mb: int = 256) -> SandboxProfile:
