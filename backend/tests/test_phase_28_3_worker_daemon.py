@@ -112,7 +112,7 @@ class TestWorkerDaemon:
             await admin.close()
         try:
             env = dict(os.environ)
-            env["DATABASE_URL"] = f"postgresql+asyncpg://cap@127.0.0.1:55432/{dbname}"
+            env["DATABASE_URL"] = f"postgresql+asyncpg://cap:cap@127.0.0.1:55432/{dbname}"
             env["ACQ_RUN_SECONDS"] = "2"
             result = await asyncio.to_thread(
                 subprocess.run,

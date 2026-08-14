@@ -28,10 +28,10 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 # default to the isolated Phase 28.3 cluster; override via env
 _ADMIN_DSN = os.environ.get(
-    "CAP283_PG_ADMIN_DSN", "postgresql://cap@127.0.0.1:55432/postgres"
+    "CAP283_PG_ADMIN_DSN", "postgresql://cap:cap@127.0.0.1:55432/postgres"
 )
 _DB_DSN = os.environ.get(
-    "CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/"
+    "CAP283_PG_DSN", "postgresql+asyncpg://cap:cap@127.0.0.1:55432/"
 )
 
 EXPECTED_TABLES = {
@@ -114,7 +114,7 @@ class TestMigration:
                 f"alembic upgrade head failed:\n{result.stdout[-1500:]}\n{result.stderr[-1500:]}"
             )
 
-            conn = await asyncpg.connect(f"postgresql://cap@127.0.0.1:55432/{dbname}")
+            conn = await asyncpg.connect(f"postgresql://cap:cap@127.0.0.1:55432/{dbname}")
             try:
                 rows = await conn.fetch(
                     "SELECT table_name FROM information_schema.tables "
@@ -167,7 +167,7 @@ class TestMigration:
             result = _alembic_upgrade(url)
             assert result.returncode == 0
 
-            conn = await asyncpg.connect(f"postgresql://cap@127.0.0.1:55432/{dbname}")
+            conn = await asyncpg.connect(f"postgresql://cap:cap@127.0.0.1:55432/{dbname}")
             try:
                 key = f"k-{uuid4().hex}"
                 # FK targets first (acquisition_runs requires task_id/agent_id)
@@ -240,7 +240,7 @@ class TestMigration:
             )
             assert down.returncode == 0, down.stderr[-1500:]
 
-            conn = await asyncpg.connect(f"postgresql://cap@127.0.0.1:55432/{dbname}")
+            conn = await asyncpg.connect(f"postgresql://cap:cap@127.0.0.1:55432/{dbname}")
             try:
                 rows = await conn.fetch(
                     "SELECT table_name FROM information_schema.tables "
