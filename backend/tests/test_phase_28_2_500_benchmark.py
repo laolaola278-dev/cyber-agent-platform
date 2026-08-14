@@ -76,6 +76,7 @@ async def _enqueue_all(
 
 
 async def test_500_runs_durable_no_loss_no_duplicate(tmp_path, lab) -> None:
+    from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from sqlalchemy.pool import NullPool
 
@@ -90,6 +91,11 @@ async def test_500_runs_durable_no_loss_no_duplicate(tmp_path, lab) -> None:
     SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # WAL lets the cancel-poll/read connections read while the claim
+        # loop's write transaction is open. Without it (default rollback
+        # journal) every write serializes against the 30s busy timeout and
+        # the 500-run drain stalls in ~30s-per-batch chunks (Phase 28.5-L).
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
 
     # enqueue 500 runs
     async with SessionFactory() as enqueue_session:
