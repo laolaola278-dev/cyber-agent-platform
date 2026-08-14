@@ -47,18 +47,18 @@ REQUIRED_GATES = [
 
 # map gate -> (test file, test id substring) that proves it
 GATE_TESTS = {
-    "container_isolation": ("test_phase_28_5_container_integration.py", "test_containerized_fetch"),
-    "filesystem": ("test_phase_28_5_linux_resources.py", "test_filesystem_isolation_real"),
-    "memory": ("test_phase_28_5_linux_resources.py", "test_memory_limit_real_and_oom"),
-    "cpu": ("test_phase_28_5_linux_resources.py", "test_cpu_quota_real"),
-    "pids": ("test_phase_28_5_linux_resources.py", "test_pids_limit_real"),
-    "network_enforcement": ("test_phase_28_5_linux_network.py", "test_sandbox_direct_public_egress_is_blocked"),
-    "ssrf_defense_in_depth": ("test_phase_28_5_linux_network.py", "test_sandbox_direct_private_and_metadata_blocked"),
-    "hard_cancellation": ("test_phase_28_5_linux_reaper.py", "test_cancellation_ordering_timestamps"),
-    "reaper": ("test_phase_28_5_linux_reaper.py", "test_reaper_fencing_on_real_containers"),
-    "browser": ("test_phase_28_5_container_integration.py", "browser"),
-    "secrets": ("test_phase_28_5_linux_secrets.py", "test_secret_never_appears_in_control_plane_artifacts"),
-    "real_integration": ("test_phase_28_4_multi_worker_ha.py", "test_two_workers"),
+    "container_isolation": ("test_phase_28_5_container_integration", "test_containerized_fetch"),
+    "filesystem": ("test_phase_28_5_linux_resources", "test_filesystem_isolation_real"),
+    "memory": ("test_phase_28_5_linux_resources", "test_memory_limit_real_and_oom"),
+    "cpu": ("test_phase_28_5_linux_resources", "test_cpu_quota_real"),
+    "pids": ("test_phase_28_5_linux_resources", "test_pids_limit_real"),
+    "network_enforcement": ("test_phase_28_5_linux_network", "test_sandbox_direct_public_egress_is_blocked"),
+    "ssrf_defense_in_depth": ("test_phase_28_5_linux_network", "test_sandbox_direct_private_and_metadata_blocked"),
+    "hard_cancellation": ("test_phase_28_5_linux_reaper", "test_cancellation_ordering_timestamps"),
+    "reaper": ("test_phase_28_5_linux_reaper", "test_reaper_fencing_on_real_containers"),
+    "browser": ("test_phase_28_5_sandbox_image", "browser"),
+    "secrets": ("test_phase_28_5_linux_secrets", "test_secret_never_appears_in_control_plane_artifacts"),
+    "real_integration": ("test_phase_28_4_multi_worker_ha", "test_two_workers"),
 }
 
 
@@ -68,10 +68,13 @@ def parse_junit(junit: Path) -> dict[str, str]:
     if not junit.exists():
         return result
     tree = ET.parse(junit)
-    for case in tree.iter("case"):
+    for case in tree.iter("testcase"):
         name = case.get("name", "")
         cls = case.get("classname", "")
-        test_id = f"{cls.split('.')[-1]}.{name}" if cls else name
+        # keep the full class path (module[.Class]) so class-based tests
+        # (e.g. TestMultiWorkerHA.test_two_workers...) still match the module
+        # substring used by resolve_gate.
+        test_id = f"{cls}.{name}" if cls else name
         if case.find("failure") is not None:
             result[test_id] = "failed"
         elif case.find("error") is not None:
@@ -129,7 +132,12 @@ def docker_socket_control_plane() -> dict[str, object]:
 
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    junits = sorted(OUT_DIR.glob("junit-*.xml"))
+    # pytest runs with working-directory: backend, so its --junitxml paths
+    # land under backend/outputs/cap-cert/; the preflight/collect scripts run
+    # from the repo root, so their environment/topology artifacts land under
+    # ./outputs/cap-cert/. Search both for junit files so the gates resolve.
+    backend_out = BACKEND / OUT_DIR if not OUT_DIR.is_absolute() else OUT_DIR
+    junits = sorted(set(OUT_DIR.glob("junit-*.xml")) | set(backend_out.glob("junit-*.xml")))
     results: dict[str, str] = {}
     for junit in junits:
         results.update(parse_junit(junit))
