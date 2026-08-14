@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import pytest
@@ -30,9 +31,13 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 _ADMIN_DSN = os.environ.get(
     "CAP283_PG_ADMIN_DSN", "postgresql://cap:cap@127.0.0.1:55432/postgres"
 )
-_DB_DSN = os.environ.get(
-    "CAP283_PG_DSN", "postgresql+asyncpg://cap:cap@127.0.0.1:55432/"
-)
+# Database-LESS async URL used to build per-test databases (f"{_DB_DSN}{dbname}").
+# It must never carry a database name: CAP283_PG_DSN in CI points at the
+# already-migrated cap283 DB, and appending the dbname produced
+# "cap283cap283_mig_xxx" (InvalidCatalogNameError). Derive it from the admin
+# DSN's host:port so the path is always empty regardless of the env value.
+_admin_parsed = urlparse(_ADMIN_DSN)
+_DB_DSN = f"postgresql+asyncpg://{_admin_parsed.netloc}/"
 
 EXPECTED_TABLES = {
     "acquisition_runs",

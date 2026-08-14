@@ -133,13 +133,6 @@ class WorkerLeaseManager:
             await self._audit(EventType.WORKER_LEASE_EXPIRED, row)
         if rows:
             await self._session.commit()
-        else:
-            # No lease expired, but expire_active still issued an UPDATE that
-            # opened a write transaction; on SQLite that transaction holds the
-            # database write lock even when it matched 0 rows, so leaving it
-            # open blocks the next writer for the full busy timeout (~30s).
-            # Roll it back to release the lock (Phase 28.5-L write-lock leak).
-            await self._session.rollback()
         return tuple(self._contract(row) for row in rows)
 
     async def _audit(self, event_type: EventType, lease: WorkerLeaseModel) -> None:
