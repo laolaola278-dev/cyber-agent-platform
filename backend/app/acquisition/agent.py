@@ -90,6 +90,8 @@ class EvidenceSink(Protocol):
         self, artifact: RawArtifact, object_key: str, content: bytes = b""
     ) -> str: ...
 
+    async def commit(self) -> None: ...
+
 
 @dataclass
 class AgentConfig:
@@ -375,6 +377,13 @@ class AdaptiveDataAcquisitionAgent:
             )
             if evidence_id:
                 result.evidence_ids.append(evidence_id)
+            # Release the DB write lock before fetching the next page: on
+            # SQLite the open evidence write transaction would otherwise hold
+            # the single-writer lock across the next fetch, blocking a
+            # concurrent cancel's CANCEL_REQUESTED write for the busy timeout
+            # (Phase 28.5-L cancel race). On PostgreSQL this is a harmless
+            # finer-grained commit that also improves checkpoint resume.
+            await self._evidence_sink.commit()
 
         # 3. content extraction -> ExtractedDocument
         document = self._extract(content, content_type, final_url, evidence_id, stored.key)

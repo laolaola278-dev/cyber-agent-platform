@@ -22,6 +22,18 @@ class EvidenceService:
         self._publisher = publisher
         self._storage_directory = storage_directory
 
+    async def commit(self) -> None:
+        """Commit pending evidence rows.
+
+        The acquisition agent writes evidence between pagination pages; on
+        SQLite the open write transaction would otherwise hold the database
+        write lock across the next fetch, blocking a concurrent cancel's
+        CANCEL_REQUESTED write for the full busy timeout (Phase 28.5-L).
+        Committing between pages releases the lock; on PostgreSQL (MVCC)
+        this is a harmless no-op that also makes checkpoint resume finer.
+        """
+        await self._session.commit()
+
     def _emit(self, event: PlatformEvent) -> None:
         """Publish an event; a null publisher (tests/embedded) is a no-op."""
         if self._publisher is not None:

@@ -570,6 +570,10 @@ class _EvidenceSink:
     def __init__(self, evidence_service: EvidenceService) -> None:
         self._evidence = evidence_service
 
+    async def commit(self) -> None:
+        """Release the write lock between pagination pages (see EvidenceService.commit)."""
+        await self._evidence.commit()
+
     async def save_evidence(
         self, artifact: RawArtifact, object_key: str, content: bytes = b""
     ) -> str:
