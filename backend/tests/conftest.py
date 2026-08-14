@@ -117,19 +117,27 @@ def minio_available(host: str = "127.0.0.1", port: int = 9000) -> bool:
         return False
 
 
-@pytest.hookimpl(hookwrapper=True)
+@pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
-    """Strict mode: convert SKIPs on certification-marked items to FAILURE."""
-    outcome = yield
+    """Strict mode: fail certification tests whose skipif would skip them.
+
+    Runs BEFORE fixture setup (tryfirst), so it inspects the skipif marker
+    conditions directly and raises a plain failure. The previous hookwrapper
+    implementation re-raised pytest.skip from the teardown, which pytest
+    reports as PluggyTeardownRaisedWarning -- and under filterwarnings=error
+    that warning turned every skipped test into an ERROR instead of a clean
+    SKIP or FAIL.
+    """
     if not CERT_STRICT:
         return
-    try:
-        outcome.get_result()
-    except pytest.skip.Exception as skip_error:
-        if item.get_closest_marker("certification") is not None:
+    if item.get_closest_marker("certification") is None:
+        return
+    for marker in item.iter_markers("skipif"):
+        condition = marker.args[0] if marker.args else False
+        if condition:
+            reason = marker.kwargs.get("reason", "condition met")
             raise pytest.fail(
-                f"CAP_CERTIFICATION_STRICT: critical certification test skipped: "
-                f"{skip_error}",
+                f"CAP_CERTIFICATION_STRICT: critical certification test would "
+                f"skip: {reason}",
                 pytrace=False,
             )
-        raise
