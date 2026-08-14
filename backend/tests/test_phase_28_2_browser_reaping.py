@@ -31,7 +31,13 @@ from app.worker.runtime import WorkerRuntime
 from app.worker.scheduler import WorkerScheduler
 from tests.acquisition_lab import AcquisitionLabServer, lab_policy, lab_url_validator
 
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "F:/playwright-browsers")
+# Playwright's browser cache (not a hardcoded drive path); real Chromium must
+# be installed for this suite (skipped otherwise, e.g. on Linux CI without
+# `playwright install chromium`).
+os.environ.setdefault(
+    "PLAYWRIGHT_BROWSERS_PATH",
+    os.path.expanduser(os.path.join("~", ".cache", "ms-playwright")),
+)
 
 from app.acquisition.claim import AcquisitionClaimCoordinator  # noqa: E402
 from app.acquisition.service import AcquisitionService  # noqa: E402
@@ -39,7 +45,7 @@ from app.evidence.service import EvidenceService  # noqa: E402
 from tests.conftest import TestSessionFactory  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
-    not os.path.isdir(os.environ["PLAYWRIGHT_BROWSERS_PATH"]),
+    not os.path.isdir(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")),
     reason="real chromium browsers not installed",
 )
 

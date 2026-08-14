@@ -26,10 +26,22 @@ from app.sandbox.subprocess_provider import SubprocessSandboxProvider
 from tests.acquisition_lab import AcquisitionLabServer
 from tests.acquisition_lab import lab_policy, lab_url_validator
 
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "F:/playwright-browsers")
+# Windows-only: the subprocess browser executor + real-Chromium process-tree
+# reaping in this suite uses Windows PowerShell to enumerate Chromium PIDs
+# (the OCI container browser path is certified separately in Phase 28.5).
+# PLAYWRIGHT_BROWSERS_PATH defaults to the Playwright cache dir, not a
+# hardcoded drive path.
+os.environ.setdefault(
+    "PLAYWRIGHT_BROWSERS_PATH",
+    os.path.expanduser(os.path.join("~", ".cache", "ms-playwright")),
+)
 
 pytestmark = [
     pytest.mark.sandbox,
+    pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="subprocess browser isolation is Windows-only (OCI browser path is 28.5)",
+    ),
     pytest.mark.skipif(
         not os.path.isdir(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")),
         reason="real chromium browsers not installed",

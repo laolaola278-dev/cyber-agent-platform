@@ -17,7 +17,11 @@ import os
 
 import pytest
 
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "F:/playwright-browsers")
+# Playwright's browser cache (not a hardcoded drive path).
+os.environ.setdefault(
+    "PLAYWRIGHT_BROWSERS_PATH",
+    os.path.expanduser(os.path.join("~", ".cache", "ms-playwright")),
+)
 
 from app.acquisition.browseradapter import PlaywrightAcquisitionAdapter  # noqa: E402
 from app.tools.playwright.adapter import PlaywrightAdapter  # noqa: E402
@@ -25,7 +29,7 @@ from app.tools.playwright.browser import BrowserManager  # noqa: E402
 from tests.acquisition_lab import AcquisitionLabServer  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
-    not os.path.isdir(os.environ["PLAYWRIGHT_BROWSERS_PATH"]),
+    not os.path.isdir(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")),
     reason="real chromium browsers not installed",
 )
 
