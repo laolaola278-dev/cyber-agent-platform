@@ -183,7 +183,7 @@ jobs:
           uv run pytest tests/test_phase_28_1_worker_path.py \
             tests/test_phase_28_2_*.py tests/test_phase_28_3_*.py tests/test_phase_28_4_*.py \
             tests/test_phase_28_5_*.py -p no:cacheprovider \
-            --ignore=tests/test_phase_28_2_500_benchmark.py \
+            --deselect=tests/test_phase_28_2_500_benchmark.py::test_500_runs_durable_no_loss_no_duplicate \
             --timeout=300 --timeout-method=thread \
             --durations=30 -vv --tb=long \
             --junitxml=outputs/cap-cert/junit-regression.xml
@@ -258,7 +258,7 @@ jobs:
           uv run pytest tests/test_phase_28_1_worker_path.py \
             tests/test_phase_28_2_*.py tests/test_phase_28_3_*.py tests/test_phase_28_4_*.py \
             tests/test_phase_28_5_*.py -p no:cacheprovider \
-            --ignore=tests/test_phase_28_2_500_benchmark.py \
+            --deselect=tests/test_phase_28_2_500_benchmark.py::test_500_runs_durable_no_loss_no_duplicate \
             --timeout=300 --timeout-method=thread \
             --durations=30 -vv --tb=long \
             --junitxml=outputs/cap-cert/junit-regression.xml
