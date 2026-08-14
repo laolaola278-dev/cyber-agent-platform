@@ -275,6 +275,14 @@ class SubprocessSandboxProvider:
         child_env = dict(os.environ)
         child_env["CAP_SANDBOX_SYSPATH"] = str(Path(app.__file__).resolve().parents[1])
         try:
+            # POSIX: start a new session so the sandbox (and every descendant
+            # it spawns) is in its own process group; terminate() then uses
+            # killpg(pgid) to reap the WHOLE tree. On Windows the Job Object
+            # (KILL_ON_JOB_CLOSE) provides the equivalent tree-kill net, so no
+            # session flag is set there.
+            spawn_kwargs: dict[str, Any] = {}
+            if sys.platform != "win32":
+                spawn_kwargs["start_new_session"] = True
             process = await asyncio.create_subprocess_exec(
                 self._python,
                 "-c",
@@ -283,6 +291,7 @@ class SubprocessSandboxProvider:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=child_env,
+                **spawn_kwargs,
             )
             try:
                 job.assign(process.pid)
@@ -408,6 +417,24 @@ class SubprocessSandboxProvider:
                 )
             except Exception:  # noqa: BLE001 -- best-effort tree kill
                 pass
+        else:
+            # POSIX: the sandbox runs in its own session/process group
+            # (start_new_session=True), so killpg reaps every descendant the
+            # operation spawned (sleep children, browsers, etc.) -- a plain
+            # process.kill() only reaps the direct child and would orphan the
+            # rest (Phase 28.5-L regression).
+            import signal as _signal
+
+            for sig in (_signal.SIGTERM, _signal.SIGKILL):
+                try:
+                    os.killpg(process.pid, sig)
+                except (ProcessLookupError, PermissionError):
+                    break
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=3)
+                    break
+                except TimeoutError:
+                    continue
         job = self._jobs.get(execution_id)
         if job is not None and job._handle is not None:  # type: ignore[attr-defined]
             job.close()  # KILL_ON_JOB_CLOSE terminates all members
