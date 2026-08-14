@@ -240,12 +240,12 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.13" }
       - run: uv sync --project backend --frozen --extra dev
-      - name: Build images (http + browser)
-        run: bash scripts/certification/build_images.sh
+      - name: Build images + setup infra (http/browser images + PG/MinIO/egress)
+        run: |
+          bash scripts/certification/build_images.sh
+          bash scripts/certification/setup.sh
       - name: Preflight (hard requirements, exit non-zero on missing)
         run: bash scripts/certification/preflight.sh
-      - name: Setup infra (PG/MinIO/egress)
-        run: bash scripts/certification/setup.sh
       - name: Security certification (full adversarial)
         run: bash scripts/certification/run_security.sh
       - name: 100-run HA (kill -9 worker)
