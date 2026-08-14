@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.postgres
+pytestmark = [pytest.mark.timeout(300), pytest.mark.postgres]
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 PG_DSN = os.environ.get(
@@ -105,7 +105,7 @@ class TestWorkerDaemon:
         # a database that has NOT been migrated: the daemon must fail fast
         # with a clear message instead of create_all'ing tables
         dbname = f"cap283_nomig_{os.getpid()}"
-        admin = await asyncpg.connect("postgresql://cap@127.0.0.1:55432/postgres")
+        admin = await asyncpg.connect("postgresql://cap:cap@127.0.0.1:55432/postgres")
         try:
             await admin.execute(f'CREATE DATABASE "{dbname}"')
         finally:
@@ -129,7 +129,7 @@ class TestWorkerDaemon:
                 f"{result.stdout[-1200:]}\n{result.stderr[-1200:]}"
             )
         finally:
-            admin = await asyncpg.connect("postgresql://cap@127.0.0.1:55432/postgres")
+            admin = await asyncpg.connect("postgresql://cap:cap@127.0.0.1:55432/postgres")
             try:
                 await admin.execute(f'DROP DATABASE IF EXISTS "{dbname}"')
             finally:
