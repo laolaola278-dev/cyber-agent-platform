@@ -306,7 +306,7 @@ class AcquisitionService:
         return run
 
     async def run_agent_operation(
-        self, run: AcquisitionRun, checkpoint: Any, *, apply_terminal: bool = True
+        self, run: AcquisitionRun, checkpoint: Any
     ) -> Any:
         """Execute the acquisition INSIDE the worker operation.
 
@@ -314,11 +314,6 @@ class AcquisitionService:
         i.e. within the Worker/Sandbox boundary -- never by the API layer.
         All plan metadata is read from the durable checkpoint column so no
         lazy relationship is touched inside the async worker operation.
-
-        ``apply_terminal=False`` defers the terminal status / finished_at write
-        to the caller, which applies it via an atomic DB conditional UPDATE
-        (guarded by ownership + pre-state) so a concurrent cancel cannot be
-        overwritten by a stale completion.
 
         Returns the AcquisitionRunPayload model; the Worker boundary performs
         the serialization (model_dump) when it crosses the sandbox.
@@ -330,7 +325,7 @@ class AcquisitionService:
         agent = self._build_agent(str(run.id), run.trace_id)
         request = self._planner_request_from_state(run, state)
         result = await agent.acquire(request, checkpoint=checkpoint)
-        await self._persist_result(run, result, run.id, apply_terminal=apply_terminal)
+        await self._persist_result(run, result, run.id)
 
         resumed = AcquisitionCheckpoint(run_id=str(run.id))
         resumed.snapshot(result)
@@ -471,8 +466,6 @@ class AcquisitionService:
         run: AcquisitionRun,
         result: AcquisitionResult,
         run_id: UUID,
-        *,
-        apply_terminal: bool = True,
     ) -> None:
         # idempotent: resume re-runs the agent, so drop this run's previous
         # detail rows before re-inserting the accumulated result
@@ -485,9 +478,8 @@ class AcquisitionService:
             PublicEndpointCandidateRecord,
         ):
             await self._session.execute(delete(model).where(model.run_id == run_id))
-        if apply_terminal:
-            run.status = result.status.value
-            run.finished_at = result.finished_at
+        run.status = result.status.value
+        run.finished_at = result.finished_at
         run.source_type = result.plan.source_type.value if result.plan else "UNKNOWN"
         run.strategy = result.plan.strategy if result.plan else ""
         run.blocked_reason = result.blocked_reason.value

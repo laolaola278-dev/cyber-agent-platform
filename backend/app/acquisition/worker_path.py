@@ -187,7 +187,7 @@ class AcquisitionWorkerPath:
             # cancel channel: DB flag + worker polling).
             poll_factory = async_sessionmaker(self._service.session.bind, expire_on_commit=False)
             operation_task = asyncio.create_task(
-                self._service.run_agent_operation(run, checkpoint, apply_terminal=False)
+                self._service.run_agent_operation(run, checkpoint)
             )
             import time as _t
 
@@ -523,7 +523,14 @@ class AcquisitionWorkerPath:
             )
             .execution_options(synchronize_session=False)
         )
-        result = await self._service.session.execute(stmt)
+        # Disable autoflush: the worker session holds pending result/evidence
+        # writes (including run.status from _persist_result). Auto-flushing
+        # those BEFORE the guarded UPDATE would flip the DB status to COMPLETE
+        # first, so the UPDATE's `status IN (RUNNING, PARTIAL)` guard would
+        # match 0 rows. Execute the guarded UPDATE against the committed state
+        # instead; the pending writes commit atomically right after.
+        async with self._service.session.no_autoflush:
+            result = await self._service.session.execute(stmt)
         if result.rowcount != 1:
             # lost the race (cancelled or reclaimed): discard pending writes
             await self._service.session.rollback()

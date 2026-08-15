@@ -104,25 +104,17 @@ class WorkerLeaseRepository(SQLAlchemyRepository[WorkerLease]):
         return await self.get(lease_id)
 
     async def expire_active(self, *, now: datetime) -> Sequence[WorkerLease]:
-        # Atomic conditional UPDATE (guarded by ACTIVE + expires_at) instead of
-        # SELECT-then-flush: a lease renewed concurrently (expires_at pushed
-        # forward) is never overwritten by a stale expire. This closes the
-        # renew/reclaim split-brain where expire's unguarded ORM flush lost an
-        # UPDATE race to renew.
-        statement = (
-            update(WorkerLease)
-            .where(
-                WorkerLease.status == "ACTIVE",
-                WorkerLease.expires_at <= now,
+        rows = (
+            await self.session.scalars(
+                select(WorkerLease).where(
+                    WorkerLease.status == "ACTIVE", WorkerLease.expires_at <= now
+                )
             )
-            .values(
-                status="EXPIRED",
-                version=WorkerLease.version + 1,
-            )
-            .returning(WorkerLease)
-            .execution_options(synchronize_session=False)
-        )
-        rows = list((await self.session.scalars(statement)).all())
+        ).all()
+        for row in rows:
+            row.status = "EXPIRED"
+            row.version += 1
+        await self.session.flush()
         return rows
 
 
