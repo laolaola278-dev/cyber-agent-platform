@@ -106,7 +106,12 @@ def test_platform_retriever_lookup_fact() -> None:
     class LookupService:
         async def get_by_external_id(self, knowledge_type, external_id):
             if external_id == "CVE-9":
-                return {"knowledge_type": "CVE", "external_id": "CVE-9", "title": "t", "attributes": {}}
+                return {
+                    "knowledge_type": "CVE",
+                    "external_id": "CVE-9",
+                    "title": "t",
+                    "attributes": {},
+                }
             return None
 
         async def search(self, **kwargs):
@@ -114,7 +119,11 @@ def test_platform_retriever_lookup_fact() -> None:
 
     retriever = PlatformKnowledgeRetriever(LookupService())
     fact = SecurityFact(
-        fact_type="vulnerability", value="CVE-9", source_kind="knowledge", source_id="k", confidence=0.5
+        fact_type="vulnerability",
+        value="CVE-9",
+        source_kind="knowledge",
+        source_id="k",
+        confidence=0.5,
     )
     hits = run(retriever.lookup_fact(fact))
     assert hits and hits[0].external_id == "CVE-9"
@@ -131,7 +140,11 @@ def test_attck_knowledge_non_attck_skipped() -> None:
     )
     generator = AttackTechniqueCandidateGenerator(knowledge=retriever)
     fact = SecurityFact(
-        fact_type="vulnerability", value="CVE-1", source_kind="knowledge", source_id="k", confidence=0.5
+        fact_type="vulnerability",
+        value="CVE-1",
+        source_kind="knowledge",
+        source_id="k",
+        confidence=0.5,
     )
     hits = run(generator.from_knowledge(fact))
     assert hits == []  # CVE hit is not an ATT&CK technique -> skipped

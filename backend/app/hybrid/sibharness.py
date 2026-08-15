@@ -83,25 +83,20 @@ def explainability_report(predictions: list[SIBPrediction]) -> dict[str, Any]:
             "unsupported_rate": 0.0,
             "readability": 0.0,
         }
-    evidence_coverage = sum(
-        1 for p in predictions if p.explanations and p.evidence_refs
-    ) / total
-    factor_coverage = sum(
-        1 for p in predictions if p.explanations and p.factors
-    ) / total
-    knowledge_citation = sum(
-        1 for p in predictions if p.explanations and p.knowledge_refs
-    ) / total
-    unsupported = sum(
-        1
-        for p in predictions
-        if p.explanations and not p.evidence_refs and not p.knowledge_refs and not p.factors
-    ) / total
-    readable = sum(
-        1
-        for p in predictions
-        if p.explanations and len(p.explanations[0]) >= 20
-    ) / total
+    evidence_coverage = sum(1 for p in predictions if p.explanations and p.evidence_refs) / total
+    factor_coverage = sum(1 for p in predictions if p.explanations and p.factors) / total
+    knowledge_citation = sum(1 for p in predictions if p.explanations and p.knowledge_refs) / total
+    unsupported = (
+        sum(
+            1
+            for p in predictions
+            if p.explanations and not p.evidence_refs and not p.knowledge_refs and not p.factors
+        )
+        / total
+    )
+    readable = (
+        sum(1 for p in predictions if p.explanations and len(p.explanations[0]) >= 20) / total
+    )
     return {
         "samples": total,
         "evidence_coverage": round(evidence_coverage, 4),
@@ -192,11 +187,7 @@ class SIBHarness:
         for split in splits:
             for track in tracks:
                 key = f"{split}_{track}"
-                subset = [
-                    s
-                    for s in scenarios
-                    if s["split"] == split and s["track"] == track
-                ]
+                subset = [s for s in scenarios if s["split"] == split and s["track"] == track]
                 reports[key] = self._score_track(subset, f"{self._name}-{key}")
         return reports
 
@@ -233,16 +224,10 @@ class SIBHarness:
             if labels.get("severity"):
                 expected_sev = str(labels["severity"]).upper()
                 sev_exact += 1 if prediction.severity == expected_sev else 0
-                if (
-                    prediction.severity in SEVERITY_ORDER
-                    and expected_sev in SEVERITY_ORDER
-                ):
+                if prediction.severity in SEVERITY_ORDER and expected_sev in SEVERITY_ORDER:
                     sev_within += (
                         1
-                        if abs(
-                            SEVERITY_ORDER[prediction.severity]
-                            - SEVERITY_ORDER[expected_sev]
-                        )
+                        if abs(SEVERITY_ORDER[prediction.severity] - SEVERITY_ORDER[expected_sev])
                         <= 1
                         else 0
                     )
@@ -280,9 +265,7 @@ class SIBHarness:
             # attack chain: stage accuracy (predicted stages vs expected techniques)
             expected_chain = list(labels.get("techniques", []))
             if expected_chain:
-                stage_hits = sum(
-                    1 for s in prediction.chain_stages if s in set(expected_chain)
-                )
+                stage_hits = sum(1 for s in prediction.chain_stages if s in set(expected_chain))
                 stage_sum += stage_hits / len(expected_chain)
             # entity accuracy: predicted entity links vs expected
             expected_entities = list(labels.get("entities", []))
@@ -323,7 +306,9 @@ class SIBHarness:
         report.fp_precision = fp_tp / max(fp_tp + fp_fp, 1)
         report.fp_recall = fp_tp / max(fp_pos, 1)
         report.fp_f1 = (
-            2 * report.fp_precision * report.fp_recall
+            2
+            * report.fp_precision
+            * report.fp_recall
             / max(report.fp_precision + report.fp_recall, 1e-9)
         )
         report.fp_auroc = _auroc(fp_scores)
@@ -332,7 +317,9 @@ class SIBHarness:
         report.attck_precision = hits / max(hits + fp_fp, 1)
         report.attck_recall = hits / max(expected, 1)
         report.attck_f1 = (
-            2 * report.attck_precision * report.attck_recall
+            2
+            * report.attck_precision
+            * report.attck_recall
             / max(report.attck_precision + report.attck_recall, 1e-9)
         )
         technique_scenarios = sum(1 for s in scenarios if s["labels"].get("techniques"))
@@ -375,8 +362,7 @@ def retrieval_lift(
     for key in keys:
         result[key] = {
             metric: round(
-                getattr(with_retrieval[key], metric, 0.0)
-                - getattr(without[key], metric, 0.0),
+                getattr(with_retrieval[key], metric, 0.0) - getattr(without[key], metric, 0.0),
                 4,
             )
             for metric in metrics
@@ -401,8 +387,7 @@ def llm_lift(
     for key in keys:
         result[key] = {
             metric: round(
-                getattr(with_llm[key], metric, 0.0)
-                - getattr(without_llm[key], metric, 0.0),
+                getattr(with_llm[key], metric, 0.0) - getattr(without_llm[key], metric, 0.0),
                 4,
             )
             for metric in metrics

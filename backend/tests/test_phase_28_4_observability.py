@@ -8,8 +8,6 @@ secrets, tokens, or high-cardinality identifiers.
 
 from __future__ import annotations
 
-import asyncio
-import re
 from uuid import uuid4
 
 import pytest
@@ -17,13 +15,12 @@ import pytest_asyncio
 
 from app.acquisition.claim import AcquisitionClaimCoordinator
 from app.acquisition.metrics import AcquisitionMetrics
-from app.acquisition.store import LocalFilesystemEvidenceStore, StoredObject
+from app.acquisition.store import LocalFilesystemEvidenceStore
 from app.worker.lease import WorkerLeaseManager
 
 
 @pytest_asyncio.fixture
 async def obs_db(tmp_path):
-    from pathlib import Path
 
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from sqlalchemy.pool import NullPool
@@ -63,9 +60,7 @@ def test_metrics_render_exposes_expected_family() -> None:
     m.inc("worker_lease_renew_total", amount=5)
     m.inc("worker_lease_renew_failure_total")
     m.inc("sandbox_execution_total", labels={"provider": "subprocess-sandbox"})
-    m.observe_duration(
-        "sandbox_execution_duration", 1.5, labels={"provider": "subprocess-sandbox"}
-    )
+    m.observe_duration("sandbox_execution_duration", 1.5, labels={"provider": "subprocess-sandbox"})
     m.inc("sandbox_forced_termination_total")
     m.inc("evidence_blob_put_total", amount=2)
     m.inc("evidence_blob_bytes", amount=1024)
@@ -85,7 +80,7 @@ def test_metrics_render_exposes_expected_family() -> None:
         "acquisition_running 3.0",
         "worker_lease_renew_total 5",
         "worker_lease_renew_failure_total 1",
-        "sandbox_execution_total{provider=\"subprocess-sandbox\"} 1",
+        'sandbox_execution_total{provider="subprocess-sandbox"} 1',
         "sandbox_execution_duration",
         "sandbox_forced_termination_total 1",
         "evidence_blob_put_total 2",
@@ -112,12 +107,9 @@ def test_metrics_never_expose_high_cardinality_or_secrets() -> None:
 
 
 @pytest.mark.asyncio
-async def test_claim_loop_emits_counters(
-    obs_db, tmp_path
-) -> None:
+async def test_claim_loop_emits_counters(obs_db, tmp_path) -> None:
     from sqlalchemy import text as sa_text
 
-    from app.acquisition.models_db import AcquisitionRun
     from app.acquisition.service import AcquisitionService
     from app.evidence.service import EvidenceService
     from tests.acquisition_lab import lab_policy, lab_url_validator
@@ -140,9 +132,7 @@ async def test_claim_loop_emits_counters(
             )
         )
         await reg.heartbeat(
-            WorkerHeartbeat(
-                worker_id=worker_id, status=WorkerStatus.ONLINE, active_executions=0
-            )
+            WorkerHeartbeat(worker_id=worker_id, status=WorkerStatus.ONLINE, active_executions=0)
         )
         await session.commit()
 

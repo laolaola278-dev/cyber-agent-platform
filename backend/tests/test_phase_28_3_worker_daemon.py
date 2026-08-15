@@ -19,9 +19,7 @@ import pytest
 pytestmark = [pytest.mark.timeout(300), pytest.mark.postgres]
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-PG_DSN = os.environ.get(
-    "CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283"
-)
+PG_DSN = os.environ.get("CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283")
 PG_SYNC_DSN = PG_DSN.replace("postgresql+asyncpg://", "postgresql://")
 
 
@@ -79,9 +77,7 @@ class TestWorkerDaemon:
 
         result = await asyncio.to_thread(_run_daemon, name, 3)
         log = (result.stdout + result.stderr).lower()
-        assert "worker registered" in log, (
-            f"daemon did not register:\n{result.stdout[-1500:]}"
-        )
+        assert "worker registered" in log, f"daemon did not register:\n{result.stdout[-1500:]}"
         assert "started" in log
         assert "auto-shutdown" in log
         assert "engine disposed" in log

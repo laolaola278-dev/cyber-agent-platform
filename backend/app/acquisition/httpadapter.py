@@ -97,9 +97,7 @@ class HTTPAdapter:
         fetch_executor: Any | None = None,
     ) -> None:
         self._policy = policy
-        self._validator = validator or URLPolicyValidator(
-            allowed_schemes=policy.allowed_schemes
-        )
+        self._validator = validator or URLPolicyValidator(allowed_schemes=policy.allowed_schemes)
         self._client_factory = client_factory or (
             lambda: httpx.AsyncClient(
                 timeout=httpx.Timeout(policy.timeout_seconds),
@@ -160,9 +158,7 @@ class HTTPAdapter:
                 except httpx.TimeoutException:
                     return self._error_result(url, BlockReason.TIMEOUT, "request timeout")
                 except httpx.HTTPError as error:
-                    return self._error_result(
-                        url, BlockReason.FAILED, f"http error: {error}"
-                    )
+                    return self._error_result(url, BlockReason.FAILED, f"http error: {error}")
 
                 final_status = response.status_code
                 final_url = str(response.url)
@@ -232,9 +228,7 @@ class HTTPAdapter:
         finally:
             await client.aclose()
 
-        blocked, reason, detail = self._detect_restricted_markers(
-            final_content[:65536], final_url
-        )
+        blocked, reason, detail = self._detect_restricted_markers(final_content[:65536], final_url)
         if blocked:
             return HTTPFetchResult(
                 status=final_status,
@@ -279,9 +273,7 @@ class HTTPAdapter:
             pass  # not gzip -- keep raw
         return raw
 
-    def _detect_restricted_markers(
-        self, head: bytes, url: str
-    ) -> tuple[bool, BlockReason, str]:
+    def _detect_restricted_markers(self, head: bytes, url: str) -> tuple[bool, BlockReason, str]:
         try:
             text = head.decode("utf-8", "replace").lower()
         except Exception:  # noqa: BLE001
@@ -294,9 +286,7 @@ class HTTPAdapter:
             return True, BlockReason.LOGIN_PAGE, "login page marker detected"
         return False, BlockReason.NONE, ""
 
-    def _error_result(
-        self, url: str, reason: BlockReason, detail: str
-    ) -> HTTPFetchResult:
+    def _error_result(self, url: str, reason: BlockReason, detail: str) -> HTTPFetchResult:
         return HTTPFetchResult(
             status=0,
             final_url=url,

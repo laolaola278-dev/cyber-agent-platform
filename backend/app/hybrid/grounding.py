@@ -83,9 +83,7 @@ class EvidenceGroundingEngine:
             reason="No referenced evidence matched the known evidence set.",
         )
 
-    def ground_claims(
-        self, claims: list[tuple[str, list[str]]]
-    ) -> list[GroundedClaim]:
+    def ground_claims(self, claims: list[tuple[str, list[str]]]) -> list[GroundedClaim]:
         return [self.ground(claim, refs) for claim, refs in claims]
 
     @staticmethod

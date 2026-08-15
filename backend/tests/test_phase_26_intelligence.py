@@ -55,16 +55,12 @@ def test_hypothesis_requires_grounding() -> None:
         statement="compromise via phishing", supporting_evidence=["evidence:1"]
     )
     assert grounded.state == HypothesisState.PROPOSED
-    insufficient = InvestigationHypothesis(
-        statement="possible", insufficient_evidence=True
-    )
+    insufficient = InvestigationHypothesis(statement="possible", insufficient_evidence=True)
     assert insufficient.insufficient_evidence is True
 
 
 def test_hypothesis_transition_immutable() -> None:
-    hypothesis = InvestigationHypothesis(
-        statement="s", supporting_evidence=["evidence:1"]
-    )
+    hypothesis = InvestigationHypothesis(statement="s", supporting_evidence=["evidence:1"])
     supported = hypothesis.transition(HypothesisState.SUPPORTED)
     assert supported.state == HypothesisState.SUPPORTED
     assert hypothesis.state == HypothesisState.PROPOSED  # immutable

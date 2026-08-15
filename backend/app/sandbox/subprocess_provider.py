@@ -30,16 +30,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import cloudpickle
 import json
 import os
-import signal
-import subprocess
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from uuid import UUID
+
+import cloudpickle
 
 from app.exceptions import SandboxExecutionError
 from app.sandbox.profile import SandboxProfile
@@ -250,9 +250,7 @@ class SubprocessSandboxProvider:
     ) -> SandboxResult:
         started = datetime.now(UTC)
         try:
-            operation_blob = base64.b64encode(
-                cloudpickle.dumps(operation)
-            ).decode("ascii")
+            operation_blob = base64.b64encode(cloudpickle.dumps(operation)).decode("ascii")
         except Exception as error:  # noqa: BLE001
             raise SandboxExecutionError(
                 f"operation is not sandbox-serializable: {error}"
@@ -266,9 +264,7 @@ class SubprocessSandboxProvider:
             # child dies -> the secrets die with it.
             "secrets": dict(secrets or {}),
         }
-        job = JobObject(
-            max_processes=self._max_processes, memory_mb=self._memory_mb
-        )
+        job = JobObject(max_processes=self._max_processes, memory_mb=self._memory_mb)
         # let the child import project modules (app.*) when operations need them
         import app  # noqa: F401
 
@@ -335,9 +331,7 @@ class SubprocessSandboxProvider:
                     exit_code=130,
                 )
             if process.returncode != 0:
-                stderr_tail = (stderr_bytes or b"").decode(
-                    "utf-8", errors="replace"
-                )[-2000:]
+                stderr_tail = (stderr_bytes or b"").decode("utf-8", errors="replace")[-2000:]
                 stderr_tail = _redact(stderr_tail, secrets)
                 return SandboxResult(
                     execution_id=execution_id,
@@ -354,9 +348,7 @@ class SubprocessSandboxProvider:
                 )
 
             try:
-                decoded = cloudpickle.loads(
-                    base64.b64decode(stdout_bytes.decode("utf-8").strip())
-                )
+                decoded = cloudpickle.loads(base64.b64decode(stdout_bytes.decode("utf-8").strip()))
             except Exception as error:  # noqa: BLE001
                 return SandboxResult(
                     execution_id=execution_id,
@@ -375,9 +367,7 @@ class SubprocessSandboxProvider:
                     provider=self.provider_name,
                     status="FAILED",
                     output={},
-                    error=_redact(
-                        decoded.get("error") or "sandbox operation failed", secrets
-                    ),
+                    error=_redact(decoded.get("error") or "sandbox operation failed", secrets),
                     error_code=decoded.get("error_type"),
                     started_at=started,
                     finished_at=datetime.now(UTC),

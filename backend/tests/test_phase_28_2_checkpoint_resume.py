@@ -22,20 +22,9 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.acquisition.claim import AcquisitionClaimCoordinator
 from app.acquisition.models_db import AcquisitionRun
 from app.acquisition.service import AcquisitionService
-from app.acquisition.worker_path import AcquisitionWorkerPath
 from app.evidence.service import EvidenceService
-from app.sandbox import SandboxPolicyEngine, SandboxRuntime
-from app.sandbox.profile import SandboxProfile
-from app.sandbox.runtime import MemorySandboxProvider
-from app.worker.contracts import WorkerHeartbeat, WorkerRecord, WorkerStatus
-from app.worker.lease import WorkerLeaseManager
-from app.worker.plugin_runtime import PluginWorkerRuntime
-from app.worker.registry import WorkerRegistry
-from app.worker.runtime import WorkerRuntime
-from app.worker.scheduler import WorkerScheduler
 from tests.acquisition_lab import AcquisitionLabServer, lab_policy, lab_url_validator
 from tests.conftest import TestSessionFactory
 
@@ -57,7 +46,9 @@ async def _make_service(
     session: AsyncSession, tmp_path: Path, lab: AcquisitionLabServer
 ) -> AcquisitionService:
     evidence = EvidenceService(
-        session, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+        session,
+        publisher=None,
+        storage_directory=tmp_path,  # type: ignore[arg-type]
     )
     return AcquisitionService(
         session,
@@ -74,28 +65,20 @@ async def _make_service(
 async def test_idempotent_create_returns_same_run(session, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     key = f"idem-{uuid4()}"
-    run1, created1 = await service.create(
-        goal="g", url=f"{lab.origin}/static", idempotency_key=key
-    )
-    run2, created2 = await service.create(
-        goal="g", url=f"{lab.origin}/static", idempotency_key=key
-    )
+    run1, created1 = await service.create(goal="g", url=f"{lab.origin}/static", idempotency_key=key)
+    run2, created2 = await service.create(goal="g", url=f"{lab.origin}/static", idempotency_key=key)
     assert created1 is True
     assert created2 is False
     assert run1.id == run2.id
     assert run1.idempotency_key == key
 
 
-async def test_idempotent_key_reuse_with_different_request_rejected(
-    session, tmp_path, lab
-) -> None:
+async def test_idempotent_key_reuse_with_different_request_rejected(session, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     key = f"idem-{uuid4()}"
     await service.create(goal="g", url=f"{lab.origin}/static", idempotency_key=key)
-    with pytest.raises(Exception):
-        await service.create(
-            goal="DIFFERENT GOAL", url=f"{lab.origin}/static", idempotency_key=key
-        )
+    with pytest.raises(Exception):  # noqa: B017 -- idempotency conflict (AcquisitionConflict)
+        await service.create(goal="DIFFERENT GOAL", url=f"{lab.origin}/static", idempotency_key=key)
 
 
 async def test_distinct_keys_create_distinct_runs(session, tmp_path, lab) -> None:

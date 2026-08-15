@@ -14,9 +14,7 @@ class SandboxPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     enabled: bool = True
-    allowed_providers: frozenset[str] = frozenset(
-        {"memory-sandbox", "subprocess-sandbox"}
-    )
+    allowed_providers: frozenset[str] = frozenset({"memory-sandbox", "subprocess-sandbox"})
     maximum_cpu_millicores: int = Field(default=2000, ge=50, le=16_000)
     maximum_memory_mb: int = Field(default=2048, ge=32, le=65_536)
     maximum_timeout_seconds: int = Field(default=3600, ge=1, le=86_400)

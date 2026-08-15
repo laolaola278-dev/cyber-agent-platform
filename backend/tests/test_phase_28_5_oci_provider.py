@@ -8,28 +8,15 @@ gated on an available docker daemon (marked separately).
 
 from __future__ import annotations
 
-import asyncio
-import json
-import os
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 
-from app.database import Base
 from app.sandbox.oci_protocol import (
     SandboxRequest,
-    SandboxResponse,
     http_fetch_result_from_dict,
 )
 from app.sandbox.oci_provider import (
-    LABEL_ATTEMPT,
-    LABEL_EXECUTION,
-    LABEL_LEASE,
-    LABEL_RUN,
-    LABEL_WORKER,
     ContainerSpec,
     OCISandboxProvider,
 )
@@ -187,11 +174,14 @@ async def test_provider_rejects_arbitrary_callables() -> None:
 
 @pytest.mark.asyncio
 async def test_protocol_validates_request_and_forbidden_fields() -> None:
-    from app.sandbox.oci_protocol import validate_request
     from pydantic import ValidationError
 
+    from app.sandbox.oci_protocol import validate_request
+
     with pytest.raises(ValidationError):
-        SandboxRequest(operation="nope", run_id="r", sandbox_execution_id=str(uuid4()), url="http://x")
+        SandboxRequest(
+            operation="nope", run_id="r", sandbox_execution_id=str(uuid4()), url="http://x"
+        )
     bad_req = SandboxRequest(
         operation="http_fetch",
         run_id="r",
@@ -233,9 +223,7 @@ async def test_secrets_never_ride_the_protocol() -> None:
         url="http://example.invalid/",
         policy={"allow_private": True},
     )
-    await provider.execute_request(
-        _profile(), request, secrets={"cap-db-pass": "hunter2secret"}
-    )
+    await provider.execute_request(_profile(), request, secrets={"cap-db-pass": "hunter2secret"})
     # secret arrives via env with the CAP_SECRET_ prefix
     assert captured.get("CAP_SECRET_cap-db-pass") == "hunter2secret"
     # and the JSON body never carried it

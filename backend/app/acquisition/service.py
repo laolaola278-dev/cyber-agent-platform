@@ -16,11 +16,6 @@ from warnings import deprecated
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Fixed identity of the platform's acquisition system agent (FK target for
-# runs created without an explicit agent). Phase 28.3 PostgreSQL
-# certification: acquisition_runs.agent_id references agents.id.
-DEFAULT_ACQUISITION_AGENT_ID = UUID("00000000-0000-0000-0000-0000000000ac")
-
 from app.acquisition.agent import AdaptiveDataAcquisitionAgent, AgentConfig
 from app.acquisition.httpadapter import HTTPAdapter
 from app.acquisition.models import (
@@ -40,6 +35,11 @@ from app.acquisition.planner import AcquisitionPlanner, PlannerRequest
 from app.acquisition.store import EvidenceObjectStoreProvider, LocalFilesystemEvidenceStore
 from app.acquisition.urlpolicy import URLPolicyValidator
 from app.evidence.service import EvidenceService
+
+# Fixed identity of the platform's acquisition system agent (FK target for
+# runs created without an explicit agent). Phase 28.3 PostgreSQL
+# certification: acquisition_runs.agent_id references agents.id.
+DEFAULT_ACQUISITION_AGENT_ID = UUID("00000000-0000-0000-0000-0000000000ac")
 
 
 class AcquisitionService:
@@ -191,9 +191,7 @@ class AcquisitionService:
 
             existing = (
                 await self._session.execute(
-                    select(AcquisitionRun).where(
-                        AcquisitionRun.idempotency_key == idempotency_key
-                    )
+                    select(AcquisitionRun).where(AcquisitionRun.idempotency_key == idempotency_key)
                 )
             ).scalar_one_or_none()
             if existing is not None:
@@ -201,9 +199,7 @@ class AcquisitionService:
                     return existing, False
                 from app.acquisition.exceptions import AcquisitionConflict
 
-                raise AcquisitionConflict(
-                    "idempotency key reused with a different request"
-                )
+                raise AcquisitionConflict("idempotency key reused with a different request")
 
         request = PlannerRequest(
             goal=goal,
@@ -241,9 +237,7 @@ class AcquisitionService:
                 "status": "QUEUED",
                 "expected_fields": list(request.expected_fields),
                 "expected_time_range": (
-                    list(request.expected_time_range)
-                    if request.expected_time_range
-                    else None
+                    list(request.expected_time_range) if request.expected_time_range else None
                 ),
                 "expected_record_count": request.expected_record_count,
             },
@@ -276,9 +270,7 @@ class AcquisitionService:
 
             existing = (
                 await self._session.execute(
-                    _select(AcquisitionRun).where(
-                        AcquisitionRun.idempotency_key == idempotency_key
-                    )
+                    _select(AcquisitionRun).where(AcquisitionRun.idempotency_key == idempotency_key)
                 )
             ).scalar_one_or_none()
             if existing is None:
@@ -288,14 +280,13 @@ class AcquisitionService:
                 return existing, False
             from app.acquisition.exceptions import AcquisitionConflict
 
-            raise AcquisitionConflict(
-                "idempotency key reused with a different request"
-            ) from None
+            raise AcquisitionConflict("idempotency key reused with a different request") from None
         return run, True
 
     async def get_run(self, run_id: UUID, *, fresh: bool = False) -> AcquisitionRun:
-        from app.acquisition.exceptions import AcquisitionNotFound
         from sqlalchemy import select
+
+        from app.acquisition.exceptions import AcquisitionNotFound
 
         if fresh:
             # force a fresh DB read (bypasses the session identity map) so a
@@ -376,9 +367,7 @@ class AcquisitionService:
             target_asset=run.target_asset or "",
             expected_fields=list(state.get("expected_fields") or []),
             expected_time_range=(
-                tuple(state["expected_time_range"])
-                if state.get("expected_time_range")
-                else None
+                tuple(state["expected_time_range"]) if state.get("expected_time_range") else None
             ),
             expected_record_count=state.get("expected_record_count"),
             expected_record_type="records",
@@ -478,8 +467,12 @@ class AcquisitionService:
         return run
 
     async def _persist_result(
-        self, run: AcquisitionRun, result: AcquisitionResult, run_id: UUID,
-        *, apply_terminal: bool = True,
+        self,
+        run: AcquisitionRun,
+        result: AcquisitionResult,
+        run_id: UUID,
+        *,
+        apply_terminal: bool = True,
     ) -> None:
         # idempotent: resume re-runs the agent, so drop this run's previous
         # detail rows before re-inserting the accumulated result
@@ -643,5 +636,3 @@ def _request_fingerprint(
         sort_keys=True,
     )
     return hashlib.sha256(payload.encode()).hexdigest()
-
-

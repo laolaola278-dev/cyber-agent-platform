@@ -62,9 +62,7 @@ def test_url_policy_rejects_non_http_schemes() -> None:
 
 
 def test_url_policy_accepts_public_https() -> None:
-    result = URLPolicyValidator(resolver=PUBLIC_RESOLVER).validate_url(
-        "https://example.com/page"
-    )
+    result = URLPolicyValidator(resolver=PUBLIC_RESOLVER).validate_url("https://example.com/page")
     assert result.allowed is True
     assert result.final_host == "example.com"
     assert result.resolved_ips == ["93.184.216.34"]

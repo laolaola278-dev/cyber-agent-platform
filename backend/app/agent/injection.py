@@ -159,7 +159,6 @@ def isolate_untrusted_data(blocks: list[dict[str, Any]]) -> IsolationResult:
         analysis = analyze_injection(text, source=source)
         analyses.append(analysis)
         fragments.append(
-            f"<untrusted-data source={source!r} risk={analysis.risk}>"
-            f"{text}</untrusted-data>"
+            f"<untrusted-data source={source!r} risk={analysis.risk}>{text}</untrusted-data>"
         )
     return IsolationResult(fenced_text="\n".join(fragments), analyses=tuple(analyses))

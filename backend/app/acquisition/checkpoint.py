@@ -55,9 +55,7 @@ class AcquisitionCheckpoint:
         self.replan_count = getattr(result, "replans", 0)
         # only SUCCESSFUL pages survive the checkpoint: a page that was
         # attempted but failed (e.g. timeout) must be retried on resume
-        document_urls = {
-            doc.source_url for doc in getattr(result, "documents", [])
-        }
+        document_urls = {doc.source_url for doc in getattr(result, "documents", [])}
         self.visited_urls = [
             url
             for url in getattr(result, "visited_urls", [])

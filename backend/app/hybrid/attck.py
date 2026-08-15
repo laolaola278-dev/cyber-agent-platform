@@ -152,9 +152,7 @@ class AttackTechniqueCandidateGenerator:
         if fact.fact_type in ("technique", "vulnerability"):
             hits = await self._knowledge.lookup_fact(fact, limit=5)
         else:
-            hits = await self._knowledge.lookup(
-                knowledge_type="ATT&CK", query=fact.value, limit=5
-            )
+            hits = await self._knowledge.lookup(knowledge_type="ATT&CK", query=fact.value, limit=5)
         candidates: list[TechniqueCandidate] = []
         for hit in hits:
             if hit.knowledge_type.upper() != "ATT&CK":
@@ -234,9 +232,7 @@ class HybridATTCMapper:
         facts: list[SecurityFact],
         event_techniques: list[str] | None = None,
     ) -> TechniqueMapping:
-        candidates = await self._generator.generate(
-            facts=facts, event_techniques=event_techniques
-        )
+        candidates = await self._generator.generate(facts=facts, event_techniques=event_techniques)
         if not candidates:
             return TechniqueMapping(
                 technique_id=None,

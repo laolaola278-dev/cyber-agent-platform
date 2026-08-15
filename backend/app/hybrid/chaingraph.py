@@ -72,9 +72,7 @@ class AttackChainGraph:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "nodes": [
-                {"id": n.node_id, "kind": n.kind, "label": n.label} for n in self.nodes
-            ],
+            "nodes": [{"id": n.node_id, "kind": n.kind, "label": n.label} for n in self.nodes],
             "edges": [
                 {"source": e.source, "target": e.target, "kind": e.kind, "weight": e.weight}
                 for e in self.edges
@@ -183,8 +181,7 @@ class AttackChainBuilder:
             for event in sorted_events:
                 event_id = f"event:{event.get('id', '')}"
                 entity_hit = any(
-                    str(entity) in fact.value
-                    for entity in (event.get("entities", []) or [])
+                    str(entity) in fact.value for entity in (event.get("entities", []) or [])
                 )
                 if entity_hit:
                     graph.add_edge(

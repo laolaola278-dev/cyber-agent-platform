@@ -56,12 +56,8 @@ async def test_agent_static_html_success() -> None:
     url = f"{ORIGIN}/page"
     agent = _agent(
         {
-            f"{ORIGIN}/robots.txt": SyntheticResponse(
-                200, {}, b"User-agent: *\nAllow: /\n"
-            ),
-            url: SyntheticResponse(
-                200, {"content-type": "text/html"}, _html("Page", "body text")
-            ),
+            f"{ORIGIN}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+            url: SyntheticResponse(200, {"content-type": "text/html"}, _html("Page", "body text")),
         }
     )
     result = await _run(agent, url)
@@ -197,9 +193,7 @@ async def test_agent_evidence_lineage() -> None:
     url = f"{ORIGIN}/page"
     agent = _agent(
         {
-            f"{ORIGIN}/robots.txt": SyntheticResponse(
-                200, {}, b"User-agent: *\nAllow: /\n"
-            ),
+            f"{ORIGIN}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
             url: SyntheticResponse(
                 200, {"content-type": "text/html"}, _html("Page", "CVE-2024-1234")
             ),

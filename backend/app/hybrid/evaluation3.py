@@ -158,9 +158,7 @@ class HybridEvaluationHarness:
         expected_severity = expected.get("severity")
         if expected_severity:
             outcome.severity_declared = True
-            outcome.severity_ok = (
-                _normalize_severity(expected_severity) == output.severity.severity
-            )
+            outcome.severity_ok = _normalize_severity(expected_severity) == output.severity.severity
         if expected.get("false_positive") is not None:
             outcome.fp_declared = True
             outcome.fp_ok = (
@@ -173,13 +171,11 @@ class HybridEvaluationHarness:
         outcome.attck_hits = len(actual_techniques & expected_techniques)
 
         grounded = any(
-            claim.status in ("SUPPORTED", "PARTIALLY_SUPPORTED")
-            for claim in output.grounded_claims
+            claim.status in ("SUPPORTED", "PARTIALLY_SUPPORTED") for claim in output.grounded_claims
         )
         outcome.grounded = grounded
         unsupported = any(
-            claim.status in ("UNSUPPORTED", "CONTRADICTED")
-            for claim in output.grounded_claims
+            claim.status in ("UNSUPPORTED", "CONTRADICTED") for claim in output.grounded_claims
         )
         outcome.unsupported = unsupported and not grounded
         outcome.explanation_coverage = output.explanation.coverage()
@@ -231,9 +227,7 @@ class HybridEvaluationHarness:
         # grounding / explanation denominators: only completed NON-injection,
         # non-boundary scenarios (they fail closed or never produce claims)
         grounded_base = [
-            o
-            for o in outcomes
-            if o.completed and o.category not in _NON_TRIAGE_CATEGORIES
+            o for o in outcomes if o.completed and o.category not in _NON_TRIAGE_CATEGORIES
         ]
         metrics.evidence_grounding = (
             sum(1 for o in grounded_base if o.grounded) / len(grounded_base)
@@ -263,8 +257,7 @@ class HybridEvaluationHarness:
             else 0.0
         )
         metrics.explanation_unsupported_rate = (
-            sum(1 for o in grounded_base if o.explanation_coverage == 0.0)
-            / len(grounded_base)
+            sum(1 for o in grounded_base if o.explanation_coverage == 0.0) / len(grounded_base)
             if grounded_base
             else 0.0
         )

@@ -83,9 +83,7 @@ async def _register(session, worker_id: UUID, name: str) -> None:
 @_skip
 class TestFaultInjection:
     @pytest.mark.asyncio
-    async def test_crash_after_blob_put_before_attach_leaves_orphan_only(
-        self, tmp_path
-    ) -> None:
+    async def test_crash_after_blob_put_before_attach_leaves_orphan_only(self, tmp_path) -> None:
         """A worker that dies after writing a blob but before the fenced
         attachment leaves: an immutable orphan blob, NO stale artifact row,
         and a run the survivor can recover to terminal."""
@@ -110,9 +108,7 @@ class TestFaultInjection:
         try:
             async with factory() as session:
                 service = await _make_service(session, store, tmp_path)
-                run, _ = await service.create(
-                    goal="fi-blob", url="http://example.invalid/private"
-                )
+                run, _ = await service.create(goal="fi-blob", url="http://example.invalid/private")
                 await session.commit()
                 worker_a = uuid4()
                 await _register(session, worker_a, f"fi-a-{worker_a.hex[:8]}")
@@ -143,9 +139,7 @@ class TestFaultInjection:
                 coord_b = AcquisitionClaimCoordinator(
                     session, WorkerLeaseManager(session), lease_ttl_seconds=60
                 )
-                claimed = await coord_b.reclaim_expired(
-                    run_id, worker_b, token=uuid4()
-                )
+                claimed = await coord_b.reclaim_expired(run_id, worker_b, token=uuid4())
                 assert claimed is not None, "survivor could not reclaim"
                 await session.commit()
 
@@ -154,10 +148,7 @@ class TestFaultInjection:
                 count = int(
                     (
                         await session.execute(
-                            text(
-                                "SELECT count(*) FROM acquisition_artifacts "
-                                "WHERE run_id = :rid"
-                            ),
+                            text("SELECT count(*) FROM acquisition_artifacts WHERE run_id = :rid"),
                             {"rid": str(run_id)},
                         )
                     ).scalar()
@@ -165,7 +156,9 @@ class TestFaultInjection:
                 )
                 assert count == 0, "stale artifact row survived the crash"
                 fresh = await session.get(
-                    __import__("app.acquisition.models_db", fromlist=["AcquisitionRun"]).AcquisitionRun,
+                    __import__(
+                        "app.acquisition.models_db", fromlist=["AcquisitionRun"]
+                    ).AcquisitionRun,
                     run_id,
                 )
                 assert fresh.worker_id == worker_b
@@ -232,7 +225,9 @@ class TestFaultInjection:
             # A dies; API durably flips CANCEL_REQUESTED (the durable truth)
             async with factory() as session:
                 run_row = await session.get(
-                    __import__("app.acquisition.models_db", fromlist=["AcquisitionRun"]).AcquisitionRun,
+                    __import__(
+                        "app.acquisition.models_db", fromlist=["AcquisitionRun"]
+                    ).AcquisitionRun,
                     run_id,
                 )
                 run_row.status = "CANCEL_REQUESTED"
@@ -255,7 +250,9 @@ class TestFaultInjection:
                 await session.commit()
 
                 fresh = await session.get(
-                    __import__("app.acquisition.models_db", fromlist=["AcquisitionRun"]).AcquisitionRun,
+                    __import__(
+                        "app.acquisition.models_db", fromlist=["AcquisitionRun"]
+                    ).AcquisitionRun,
                     run_id,
                 )
                 # the durable cancel flag survives the claim; the run will be

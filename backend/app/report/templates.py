@@ -65,7 +65,7 @@ class HtmlReportTemplate:
             "<li>"
             f"[{escape(str(item['http_status']))}] "
             f"{escape(item['title'] or 'Untitled')} - "
-            f"<a href=\"{escape(item['url'], quote=True)}\">"
+            f'<a href="{escape(item["url"], quote=True)}">'
             f"{escape(item['url'])}</a>"
             "</li>"
             for item in payload["evidence"]

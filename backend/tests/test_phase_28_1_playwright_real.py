@@ -53,6 +53,7 @@ async def adapter(lab: AcquisitionLabServer) -> PlaywrightAcquisitionAdapter:
 
 # -- 1. real JavaScript rendering -------------------------------------------------
 
+
 async def test_real_js_rendering(adapter: PlaywrightAcquisitionAdapter, lab) -> None:
     observation = await adapter.browse(f"{lab.origin}/dynamic")
     assert observation.available is True
@@ -62,6 +63,7 @@ async def test_real_js_rendering(adapter: PlaywrightAcquisitionAdapter, lab) -> 
 
 
 # -- 2. network observation: XHR/Fetch -> PublicEndpointCandidate ------------------
+
 
 async def test_network_observation_xhr(adapter: PlaywrightAcquisitionAdapter, lab) -> None:
     observation = await adapter.browse(f"{lab.origin}/xhr")
@@ -73,6 +75,7 @@ async def test_network_observation_xhr(adapter: PlaywrightAcquisitionAdapter, la
 
 # -- 3. DOM snapshot ------------------------------------------------------------------
 
+
 async def test_dom_snapshot_and_title(adapter: PlaywrightAcquisitionAdapter, lab) -> None:
     observation = await adapter.browse(f"{lab.origin}/static")
     assert observation.available is True
@@ -82,6 +85,7 @@ async def test_dom_snapshot_and_title(adapter: PlaywrightAcquisitionAdapter, lab
 
 
 # -- 4. browser context cleanup after browse -------------------------------------------
+
 
 async def test_browser_context_cleanup(adapter: PlaywrightAcquisitionAdapter, lab) -> None:
     manager = adapter._browser_manager  # type: ignore[attr-defined]
@@ -93,14 +97,13 @@ async def test_browser_context_cleanup(adapter: PlaywrightAcquisitionAdapter, la
 
 # -- 5. timeout cleanup (slow page must not leak a context) ------------------------------
 
+
 async def test_timeout_cleanup(adapter: PlaywrightAcquisitionAdapter, lab) -> None:
     manager = adapter._browser_manager  # type: ignore[attr-defined]
     lab.set_fail_page2(True)
     try:
         # the lab stalls page 2; a short navigation timeout still cleans up
-        observation = await adapter.browse(
-            f"{lab.origin}/pagination?page=2", max_wait_ms=2000
-        )
+        observation = await adapter.browse(f"{lab.origin}/pagination?page=2", max_wait_ms=2000)
         assert observation.available is True or observation.error
     finally:
         lab.set_fail_page2(False)
@@ -109,6 +112,7 @@ async def test_timeout_cleanup(adapter: PlaywrightAcquisitionAdapter, lab) -> No
 
 # -- 6. resource leak: 100 consecutive browser acquisitions -> 0 leaked contexts --------
 
+
 async def test_no_context_leak_across_100_acquisitions(
     adapter: PlaywrightAcquisitionAdapter, lab
 ) -> None:
@@ -116,9 +120,7 @@ async def test_no_context_leak_across_100_acquisitions(
     for index in range(100):
         # short wait keeps the 100-run leak loop fast; still exercises the
         # full navigate -> observe -> snapshot -> close lifecycle
-        await adapter.browse(
-            f"{lab.origin}/static", wait_network_idle_ms=200
-        )
+        await adapter.browse(f"{lab.origin}/static", wait_network_idle_ms=200)
         if index % 25 == 0:
             assert len(manager._contexts) == 0  # type: ignore[attr-defined]
     assert len(manager._contexts) == 0  # type: ignore[attr-defined]

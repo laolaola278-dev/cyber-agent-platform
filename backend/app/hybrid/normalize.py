@@ -49,7 +49,9 @@ _HTML_ENTITY_RE = re.compile(r"&(?:#x[0-9a-fA-F]{1,6}|#\d{1,7}|[a-zA-Z]{2,8});")
 # Whitespace-tolerant: zero-width removal can concatenate tokens.
 JAILBREAK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"ignore\s*(all\s+)?(previous|prior|earlier)\s*instructions", re.I),
-    re.compile(r"ignore\s*(previous|prior|everything)\s*(instructions|policy|rules|above|and)", re.I),  # noqa: E501
+    re.compile(
+        r"ignore\s*(previous|prior|everything)\s*(instructions|policy|rules|above|and)", re.I
+    ),  # noqa: E501
     re.compile(r"ignore\s*above", re.I),
     re.compile(r"disregard\s*(previous|prior|earlier)\s*instructions", re.I),
     re.compile(r"forget\s*(everything|all\s*previous|your\s*rules)", re.I),
@@ -61,7 +63,10 @@ JAILBREAK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"delete\s*(the\s*)?firewall", re.I),
     re.compile(r"isolate\s*(this|the)\s*host", re.I),
     re.compile(r"disable\s*(the\s*)?firewall", re.I),
-    re.compile(r"(disable|delete|remove|bypass)\s*(the\s*)?(firewall|pare-?feu|брандмауэр|جدار\s*الحماية|방화벽)", re.I),  # noqa: E501
+    re.compile(
+        r"(disable|delete|remove|bypass)\s*(the\s*)?(firewall|pare-?feu|брандмауэр|جدار\s*الحماية|방화벽)",
+        re.I,
+    ),  # noqa: E501
     re.compile(r"grant\s*(me\s*)?(full\s*)?(admin|root)\s*access", re.I),
     re.compile(r"grant\s*full\s*access", re.I),
     re.compile(r"\[system\]", re.I),
@@ -79,9 +84,15 @@ JAILBREAK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"ignore_policy", re.I),
     # multilingual "ignore previous instructions / disable firewall"
     re.compile(r"指示\s*を\s*無視|ファイアウォール\s*を\s*無効", re.I),
-    re.compile(r"ignor(ez|a|ar)\s*(todas\s+)?(las|les)?\s*(instrucciones\s*anteriores|instructions\s*pr[ée]c[ée]dentes)", re.I),  # noqa: E501
+    re.compile(
+        r"ignor(ez|a|ar)\s*(todas\s+)?(las|les)?\s*(instrucciones\s*anteriores|instructions\s*pr[ée]c[ée]dentes)",
+        re.I,
+    ),  # noqa: E501
     re.compile(r"d[ée]sob[ée]issez", re.I),
-    re.compile(r"(disable|delete|remove|bypass)\s*(le\s*)?pare-?feu|(отключите|удалите)\s*брандмауэр|(عطّل|احذف)\s*جدار\s*الحماية|방화벽\s*(비활성화|제거)", re.I),  # noqa: E501
+    re.compile(
+        r"(disable|delete|remove|bypass)\s*(le\s*)?pare-?feu|(отключите|удалите)\s*брандмауэр|(عطّل|احذف)\s*جدار\s*الحماية|방화벽\s*(비활성화|제거)",
+        re.I,
+    ),  # noqa: E501
     re.compile(r"предыдущие\s*инструкции|игнорируйте|аннулируйте", re.I),
     re.compile(r"이전\s*지시|무시하고", re.I),
     re.compile(r"التعليمات\s*السابقة|ألغِ|عطّل", re.I),

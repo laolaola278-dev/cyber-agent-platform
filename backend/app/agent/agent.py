@@ -295,9 +295,7 @@ class InvestigationAgent:
                 title=title,
                 content=content,
                 source_refs=[
-                    obs.evidence_refs[0]
-                    for obs in memory.observations
-                    if obs.evidence_refs
+                    obs.evidence_refs[0] for obs in memory.observations if obs.evidence_refs
                 ],
             )
         )

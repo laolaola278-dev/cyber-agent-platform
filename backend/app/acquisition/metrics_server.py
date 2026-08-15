@@ -28,7 +28,6 @@ async def run_metrics_server(
 ) -> None:
     """Run the uvicorn server until cancelled."""
     from fastapi import FastAPI, Response
-    from fastapi.responses import JSONResponse
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 

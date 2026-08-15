@@ -164,9 +164,7 @@ def test_adversarial_huge_response_blocked() -> None:
             "https://bench.example/robots.txt": SyntheticResponse(
                 200, {}, b"User-agent: *\nAllow: /\n"
             ),
-            url: SyntheticResponse(
-                200, {"content-type": "text/html"}, b"x" * (12 * 1024 * 1024)
-            ),
+            url: SyntheticResponse(200, {"content-type": "text/html"}, b"x" * (12 * 1024 * 1024)),
         }
     )
     adapter = HTTPAdapter(

@@ -152,9 +152,7 @@ class HybridEngine:
                 hits.extend(await self._knowledge.lookup_fact(fact, limit=3))
             else:
                 hits.extend(
-                    await self._knowledge.lookup(
-                        knowledge_type="ATT&CK", query=fact.value, limit=3
-                    )
+                    await self._knowledge.lookup(knowledge_type="ATT&CK", query=fact.value, limit=3)
                 )
 
         # 3. severity (deterministic)
@@ -166,8 +164,7 @@ class HybridEngine:
             asset_criticality=source.get("criticality") or ctx.get("asset_criticality"),
             exposed=bool(ctx.get("exposed", True)),
             evidence_confidence=0.9 if extraction.facts else 0.4,
-            detection_confidence=source.get("detection_confidence")
-            or source.get("confidence"),
+            detection_confidence=source.get("detection_confidence") or source.get("confidence"),
         )
 
         # 4. ATT&CK mapping (deterministic + optional LLM rank)
@@ -203,11 +200,7 @@ class HybridEngine:
                 confidence=0.3,
                 factors=[SeverityFactor("evidence", "missing", 0.0)],
             )
-        classification = (
-            "UNKNOWN"
-            if not evidence_present
-            else self._classify(severity, fp, ctx)
-        )
+        classification = "UNKNOWN" if not evidence_present else self._classify(severity, fp, ctx)
 
         # 7. confidence calibration (never model self-report)
         calibrated = self._calibrator.calibrate(
@@ -234,8 +227,7 @@ class HybridEngine:
             claims.append(
                 (
                     f"technique={mapping.technique_id}",
-                    source.get("evidence_refs")
-                    or [f"evidence:{source.get('id', 'evt')}"],
+                    source.get("evidence_refs") or [f"evidence:{source.get('id', 'evt')}"],
                 )
             )
         grounded = self._grounding.ground_claims(claims)
@@ -320,13 +312,10 @@ class HybridEngine:
         from app.agent.failures import ProviderUnavailableError
         from app.hybrid.normalize import injection_resistant
 
-        resisted, _report, _note = injection_resistant(
-            data_blocks, isolation_func=None
-        )
+        resisted, _report, _note = injection_resistant(data_blocks, isolation_func=None)
         if not resisted:
             raise ProviderUnavailableError(
-                "Hybrid engine rejected untrusted data (prompt injection); "
-                "fail closed."
+                "Hybrid engine rejected untrusted data (prompt injection); fail closed."
             )
 
     async def _build_chain(
@@ -348,9 +337,9 @@ class HybridEngine:
         ]
         technique_ids = [
             c.technique_id
-            for c in await AttackTechniqueCandidateGenerator(
-                knowledge=self._knowledge
-            ).generate(facts=facts, event_techniques=source.get("techniques"))
+            for c in await AttackTechniqueCandidateGenerator(knowledge=self._knowledge).generate(
+                facts=facts, event_techniques=source.get("techniques")
+            )
         ]
         graph = self._chains.build(
             events=event_payloads,

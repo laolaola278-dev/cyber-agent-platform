@@ -48,9 +48,7 @@ def test_candidate_promotion_requires_source() -> None:
     unbacked = FactCandidate(fact_type="technique", value="T9999", evidence_refs=[])
     assert unbacked.promote(source_kind="asset", source_id="asset-1") is None
     # security_event is a self-sufficient platform source (Phase 27 principle)
-    assert (
-        unbacked.promote(source_kind="security_event", source_id="evt-1") is not None
-    )
+    assert unbacked.promote(source_kind="security_event", source_id="evt-1") is not None
 
 
 def test_extract_facts_from_event() -> None:
@@ -190,9 +188,7 @@ def test_false_positive_scorer() -> None:
     hint = scorer.score(rule="benign scanner noise", known_benign_match=True)
     assert hint.likely_false_positive is True
     assert hint.false_positive_probability >= 0.7
-    real = scorer.score(
-        rule="malicious beacon", evidence_quality=0.95, detection_confidence="HIGH"
-    )
+    real = scorer.score(rule="malicious beacon", evidence_quality=0.95, detection_confidence="HIGH")
     assert real.likely_false_positive is False
     noisy = scorer.score(rule="dns_request flood", frequency_30d=200)
     assert noisy.false_positive_probability > 0.2

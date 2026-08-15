@@ -108,9 +108,7 @@ def _agent(routes: dict, *, with_browser: bool = False, resolver=None):
     return AdaptiveDataAcquisitionAgent(
         http=HTTPAdapter(
             policy=policy,
-            validator=URLPolicyValidator(
-                resolver=resolver or (lambda host: ["93.184.216.34"])
-            ),
+            validator=URLPolicyValidator(resolver=resolver or (lambda host: ["93.184.216.34"])),
             client_factory=web.client_factory(),
         ),
         store=_TempStore("mem"),
@@ -266,6 +264,7 @@ def test_agent_status_verdict_blocked() -> None:
     from app.acquisition.models import AcquisitionStatus, Verdict
 
     status = AdaptiveDataAcquisitionAgent._status_from_verdict(
-        Verdict.BLOCKED, None  # type: ignore[arg-type]
+        Verdict.BLOCKED,
+        None,  # type: ignore[arg-type]
     )
     assert status == AcquisitionStatus.BLOCKED

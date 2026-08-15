@@ -42,7 +42,9 @@ class Settings(BaseSettings):
 
     # -- Phase 28.4: production isolation / durable object storage ----------
     # Phase 28.5: sandbox_provider accepts "oci-sandbox" (container runtime)
-    sandbox_provider: str = "subprocess-sandbox"  # memory-sandbox | subprocess-sandbox | oci-sandbox
+    sandbox_provider: str = (
+        "subprocess-sandbox"  # memory-sandbox | subprocess-sandbox | oci-sandbox
+    )
     sandbox_timeout_seconds: int = 120
     sandbox_memory_mb: int = 512
     sandbox_max_processes: int = 64

@@ -62,22 +62,16 @@ class SandboxedFetchExecutor:
             result = await adapter.fetch(url)
             # SandboxResult.output is a dict; encode the arbitrary result via
             # cloudpickle (content includes bytes)
-            return {
-                "payload": base64.b64encode(cloudpickle.dumps(result)).decode("ascii")
-            }
+            return {"payload": base64.b64encode(cloudpickle.dumps(result)).decode("ascii")}
 
-        result = await self._runtime.execute(
-            self._profile, operation, execution_id=uuid4()
-        )
+        result = await self._runtime.execute(self._profile, operation, execution_id=uuid4())
         if result.status == "SUCCEEDED":
             import base64
 
             import cloudpickle
 
             try:
-                decoded = cloudpickle.loads(
-                    base64.b64decode(result.output["payload"])
-                )
+                decoded = cloudpickle.loads(base64.b64decode(result.output["payload"]))
                 if isinstance(decoded, HTTPFetchResult):
                     return decoded
             except Exception:  # noqa: BLE001 -- fall through to failure mapping

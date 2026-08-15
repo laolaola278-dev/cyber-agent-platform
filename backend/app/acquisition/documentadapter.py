@@ -63,11 +63,7 @@ def _parse_html(content: bytes, source_url: str) -> DocumentParseResult:
                 if part:
                     text_parts.append(part)
         text = "\n".join(text_parts)[:_MAX_TEXT_CHARS]
-        links = [
-            (node.get("href") or "")
-            for node in body.iter("a")
-            if node.get("href")
-        ][:500]
+        links = [(node.get("href") or "") for node in body.iter("a") if node.get("href")][:500]
         tables: list[list[list[str]]] = []
         for table in body.iter("table"):
             rows: list[list[str]] = []
@@ -129,9 +125,7 @@ def _parse_pdf(content: bytes, source_url: str) -> DocumentParseResult:
             parser_backend="pypdf",
         )
     except Exception as error:  # noqa: BLE001
-        return DocumentParseResult(
-            ok=False, parser_backend="pypdf", error=f"parse failed: {error}"
-        )
+        return DocumentParseResult(ok=False, parser_backend="pypdf", error=f"parse failed: {error}")
 
 
 def _parse_docx(content: bytes, source_url: str) -> DocumentParseResult:
@@ -283,10 +277,7 @@ class DocumentAdapter:
                             "wordprocessingml.document"
                         )
                     if "xl/workbook.xml" in names:
-                        return (
-                            "application/vnd.openxmlformats-officedocument."
-                            "spreadsheetml.sheet"
-                        )
+                        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             except zipfile.BadZipFile:
                 pass
         sniffed = content

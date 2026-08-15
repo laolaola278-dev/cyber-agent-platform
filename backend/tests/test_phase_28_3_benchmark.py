@@ -28,9 +28,7 @@ from app.evidence.service import EvidenceService
 pytestmark = [pytest.mark.timeout(1200), pytest.mark.postgres]
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-PG_DSN = os.environ.get(
-    "CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283"
-)
+PG_DSN = os.environ.get("CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283")
 PG_SYNC_DSN = PG_DSN.replace("postgresql+asyncpg://", "postgresql://")
 BENCH_N = int(os.environ.get("CAP283_BENCH_N", "100"))
 
@@ -158,9 +156,7 @@ async def test_pg_durability_benchmark(tmp_path) -> None:
     engine = create_async_engine(PG_DSN, pool_size=5)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as s:
-        total = int(
-            (await s.scalar(select(func.count()).select_from(AcquisitionRun))) or 0
-        )
+        total = int((await s.scalar(select(func.count()).select_from(AcquisitionRun))) or 0)
         rows = (
             await s.execute(
                 select(

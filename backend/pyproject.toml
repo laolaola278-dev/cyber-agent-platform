@@ -53,7 +53,12 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "ASYNC"]
+# "ASYNC" (flake8-async) is omitted deliberately: it targets trio/anyio
+# conventions (e.g. `timeout` param shadowing, blocking subprocess/pathlib).
+# This codebase is asyncio-based and performs blocking IO via
+# asyncio.to_thread(...) -- the correct asyncio pattern -- so those rules
+# produce false positives.
+select = ["E", "F", "I", "UP", "B"]
 ignore = ["B008"]
 
 [tool.pytest.ini_options]

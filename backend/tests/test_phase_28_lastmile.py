@@ -121,9 +121,7 @@ def test_browser_browse_observes_public_endpoints() -> None:
 
 def test_browser_browse_with_wait_selector() -> None:
     adapter, _manager = _adapter_with_fakes()
-    observation = run(
-        adapter.browse("https://bench.example/app", wait_for_selector=".item")
-    )
+    observation = run(adapter.browse("https://bench.example/app", wait_for_selector=".item"))
     assert observation.title == "App"
 
 
@@ -195,9 +193,7 @@ def test_completeness_not_paginated_retry() -> None:
         CompletenessInput(
             expected_fields=["t"],
             observed_fields={"t"},
-            pagination=PaginationStrategy(
-                kind="page_param", max_pages=5, pages_fetched=1
-            ),
+            pagination=PaginationStrategy(kind="page_param", max_pages=5, pages_fetched=1),
         )
     )
     assert report.verdict == Verdict.RETRY

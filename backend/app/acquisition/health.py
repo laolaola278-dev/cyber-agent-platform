@@ -77,9 +77,7 @@ class WorkerHealth:
             async with factory() as session:
                 from sqlalchemy import text
 
-                row = await session.execute(
-                    text("SELECT version_num FROM alembic_version LIMIT 1")
-                )
+                row = await session.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
                 row = row.scalar_one_or_none()
             return row is not None
         except Exception:  # noqa: BLE001

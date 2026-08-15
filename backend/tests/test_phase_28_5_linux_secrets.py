@@ -16,12 +16,10 @@ off plain environment variables in that case (stdin pipe / tmpfs secret file
 
 from __future__ import annotations
 
-import json
 import os
 import secrets
 import subprocess
 import uuid
-from pathlib import Path
 
 import pytest
 
@@ -40,7 +38,8 @@ def _docker() -> bool:
     try:
         proc = subprocess.run(
             ["docker", "info", "--format", "{{.ServerVersion}}"],
-            capture_output=True, timeout=15,
+            capture_output=True,
+            timeout=15,
         )
         return proc.returncode == 0 and bool(proc.stdout.strip())
     except Exception:  # noqa: BLE001
@@ -64,20 +63,39 @@ def test_secret_never_appears_in_control_plane_artifacts(tmp_path) -> None:
     # in logs or image history). The container reads it from /run/secrets.
     subprocess.run(
         [
-            "docker", "run", "-d", "--rm", "--name", name,
-            "--network", NETWORK,
-            "--tmpfs", "/run/secrets",
-            "--entrypoint", "sh", IMAGE, "-c", "sleep 120",
+            "docker",
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            name,
+            "--network",
+            NETWORK,
+            "--tmpfs",
+            "/run/secrets",
+            "--entrypoint",
+            "sh",
+            IMAGE,
+            "-c",
+            "sleep 120",
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     # place the secret on a tmpfs file (runtime secret mechanism)
     write = subprocess.run(
         [
-            "docker", "exec", name, "sh", "-c",
+            "docker",
+            "exec",
+            name,
+            "sh",
+            "-c",
             f"umask 077; printf '%s' {sentinel!r} > /run/secrets/cap_db_pass",
         ],
-        capture_output=True, text=True, timeout=20,
+        capture_output=True,
+        text=True,
+        timeout=20,
     )
     assert write.returncode == 0, f"secret placement failed: {write.stderr[-200:]}"
 
@@ -88,22 +106,24 @@ def test_secret_never_appears_in_control_plane_artifacts(tmp_path) -> None:
         #    NOT appear anywhere (it was never passed via -e / labels / cmd).
         inspect = subprocess.run(
             ["docker", "inspect", name],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         inspect_text = inspect.stdout
         for section in ("Config.Env", "Config.Labels", "Config.Cmd", "Args"):
             if sentinel in inspect_text:
                 leaks.append(f"docker inspect contains sentinel ({section})")
         # 2. docker logs
-        logs = subprocess.run(
-            ["docker", "logs", name], capture_output=True, text=True, timeout=30
-        )
+        logs = subprocess.run(["docker", "logs", name], capture_output=True, text=True, timeout=30)
         if sentinel in (logs.stdout + logs.stderr):
             leaks.append("docker logs contain sentinel")
         # 3. image history / layers
         history = subprocess.run(
             ["docker", "history", "--no-trunc", IMAGE],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if sentinel in history.stdout:
             leaks.append("image history contains sentinel")
@@ -138,15 +158,30 @@ def test_sandbox_environment_has_no_host_credentials() -> None:
     name = f"cap-cert-env-{uuid.uuid4().hex[:8]}"
     subprocess.run(
         [
-            "docker", "run", "-d", "--rm", "--name", name,
-            "--network", NETWORK, "--entrypoint", "sh", IMAGE, "-c", "sleep 60",
+            "docker",
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            name,
+            "--network",
+            NETWORK,
+            "--entrypoint",
+            "sh",
+            IMAGE,
+            "-c",
+            "sleep 60",
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     try:
         env = subprocess.run(
             ["docker", "exec", name, "env"],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True,
+            text=True,
+            timeout=20,
         ).stdout
         for bad in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "MINIO_ROOT_USER"):
             assert bad not in env, f"sandbox inherited {bad}"

@@ -62,9 +62,7 @@ class AgenticPlanner:
         """
         isolation_result = isolate_untrusted_data(data_blocks or [])
         if isolation_result.fail_closed:
-            raise AgentPlanningError(
-                "Plan rejected: untrusted content contains prompt injection"
-            )
+            raise AgentPlanningError("Plan rejected: untrusted content contains prompt injection")
 
         user_prompt = self._build_user_prompt(
             goal=goal, context=context, fenced=isolation_result.fenced_text
@@ -86,9 +84,7 @@ class AgenticPlanner:
         plan = self._parse(response.structured or json.loads(response.content))
         decision = self._plan_guardrail.check(plan, registry=registry, profile=profile)
         if not decision.allowed:
-            raise AgentPlanningError(
-                f"Plan rejected by guardrail: {decision.reason}"
-            )
+            raise AgentPlanningError(f"Plan rejected by guardrail: {decision.reason}")
         return plan, isolation_result
 
     @staticmethod

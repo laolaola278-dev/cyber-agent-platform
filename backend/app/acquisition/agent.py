@@ -159,17 +159,11 @@ class AdaptiveDataAcquisitionAgent:
             # the primary URL is re-entered so pagination resumes from the
             # checkpoint cursor (already-fetched pages stay skipped)
             primary = getattr(checkpoint, "current_url", "")
-            result.visited_urls = [
-                url
-                for url in (checkpoint.visited_urls or [])
-                if url != primary
-            ]
+            result.visited_urls = [url for url in (checkpoint.visited_urls or []) if url != primary]
             result.evidence_ids = list(checkpoint.evidence_refs or [])
             result.replans = checkpoint.replan_count or 0
             result.total_bytes = checkpoint.bytes_used or 0
-            result.strategy_history = (
-                checkpoint.strategy.split(".") if checkpoint.strategy else []
-            )
+            result.strategy_history = checkpoint.strategy.split(".") if checkpoint.strategy else []
             for seen in checkpoint.records_seen or []:
                 # the primary URL is deliberately re-fetched on resume (to
                 # re-establish pagination context); it is not a duplicate
@@ -372,9 +366,7 @@ class AdaptiveDataAcquisitionAgent:
 
         evidence_id = None
         if self._evidence_sink is not None:
-            evidence_id = await self._evidence_sink.save_evidence(
-                artifact, stored.key, content
-            )
+            evidence_id = await self._evidence_sink.save_evidence(artifact, stored.key, content)
             if evidence_id:
                 result.evidence_ids.append(evidence_id)
             # Release the DB write lock before fetching the next page: on

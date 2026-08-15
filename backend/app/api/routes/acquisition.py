@@ -151,7 +151,8 @@ async def list_acquisitions(
     page_size: int = Query(default=50, ge=1, le=200),
 ) -> dict:
     statement = (
-        select(AcquisitionRun).order_by(AcquisitionRun.created_at.desc())
+        select(AcquisitionRun)
+        .order_by(AcquisitionRun.created_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
@@ -255,9 +256,7 @@ async def acquisition_evidence(run_id: UUID, session: SessionDependency) -> dict
     if run is None:
         raise HTTPException(status_code=404, detail="acquisition not found")
     artifacts = await session.execute(
-        select(AcquisitionArtifactRecord).where(
-            AcquisitionArtifactRecord.run_id == run_id
-        )
+        select(AcquisitionArtifactRecord).where(AcquisitionArtifactRecord.run_id == run_id)
     )
     rows = artifacts.scalars().all()
     return {
@@ -283,9 +282,7 @@ async def acquisition_evidence(run_id: UUID, session: SessionDependency) -> dict
 @router.get("/{run_id}/completeness")
 async def acquisition_completeness(run_id: UUID, session: SessionDependency) -> dict:
     report = await session.execute(
-        select(CompletenessReportRecord).where(
-            CompletenessReportRecord.run_id == run_id
-        )
+        select(CompletenessReportRecord).where(CompletenessReportRecord.run_id == run_id)
     )
     row = report.scalar_one_or_none()
     if row is None:

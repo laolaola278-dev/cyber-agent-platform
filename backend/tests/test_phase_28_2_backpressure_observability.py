@@ -11,14 +11,12 @@ Certifies:
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.acquisition.claim import AcquisitionClaimCoordinator
@@ -57,7 +55,9 @@ async def _make_service(
     session: AsyncSession, tmp_path: Path, lab: AcquisitionLabServer
 ) -> AcquisitionService:
     evidence = EvidenceService(
-        session, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+        session,
+        publisher=None,
+        storage_directory=tmp_path,  # type: ignore[arg-type]
     )
     return AcquisitionService(
         session,
@@ -143,9 +143,7 @@ async def test_scheduler_respects_max_concurrency(session, tmp_path, lab) -> Non
         WorkerHeartbeat(worker_id=worker.id, status=WorkerStatus.ONLINE, active_executions=0)
     )
     await reg.heartbeat(
-        WorkerHeartbeat(
-            worker_id=worker.id, status=WorkerStatus.BUSY, active_executions=1
-        )
+        WorkerHeartbeat(worker_id=worker.id, status=WorkerStatus.BUSY, active_executions=1)
     )
     scheduler = WorkerScheduler(reg)
     # at max concurrency -> no feasible worker -> backpressure via exception
@@ -188,13 +186,21 @@ async def test_reclaim_records_recovery_count(session, tmp_path, lab) -> None:
     coord = AcquisitionClaimCoordinator(session, leases, lease_ttl_seconds=60)
     reg = WorkerRegistry(session)
     wa = await reg.register(
-        WorkerRecord(name="acq-a", runtime_version="28.2", capabilities=frozenset({"acquisition.http"}))
+        WorkerRecord(
+            name="acq-a", runtime_version="28.2", capabilities=frozenset({"acquisition.http"})
+        )
     )
     wb = await reg.register(
-        WorkerRecord(name="acq-b", runtime_version="28.2", capabilities=frozenset({"acquisition.http"}))
+        WorkerRecord(
+            name="acq-b", runtime_version="28.2", capabilities=frozenset({"acquisition.http"})
+        )
     )
-    await reg.heartbeat(WorkerHeartbeat(worker_id=wa.id, status=WorkerStatus.ONLINE, active_executions=0))
-    await reg.heartbeat(WorkerHeartbeat(worker_id=wb.id, status=WorkerStatus.ONLINE, active_executions=0))
+    await reg.heartbeat(
+        WorkerHeartbeat(worker_id=wa.id, status=WorkerStatus.ONLINE, active_executions=0)
+    )
+    await reg.heartbeat(
+        WorkerHeartbeat(worker_id=wb.id, status=WorkerStatus.ONLINE, active_executions=0)
+    )
     await coord.claim(run.id, wa.id)
     await leases.expire(now=datetime.now(UTC) + timedelta(seconds=120))
     await coord.reclaim_expired(run.id, wb.id)
@@ -212,7 +218,9 @@ async def test_claim_loop_executes_end_to_end(session, tmp_path, lab) -> None:
     await session.flush()
     reg = WorkerRegistry(session)
     worker = await reg.register(
-        WorkerRecord(name="acq-loop", runtime_version="28.2", capabilities=frozenset({"acquisition.http"}))
+        WorkerRecord(
+            name="acq-loop", runtime_version="28.2", capabilities=frozenset({"acquisition.http"})
+        )
     )
     await reg.heartbeat(
         WorkerHeartbeat(worker_id=worker.id, status=WorkerStatus.ONLINE, active_executions=0)
@@ -256,7 +264,9 @@ async def test_observability_fields_durable(session, tmp_path, lab) -> None:
     await session.flush()
     reg = WorkerRegistry(session)
     worker = await reg.register(
-        WorkerRecord(name="acq-dup", runtime_version="28.2", capabilities=frozenset({"acquisition.http"}))
+        WorkerRecord(
+            name="acq-dup", runtime_version="28.2", capabilities=frozenset({"acquisition.http"})
+        )
     )
     await reg.heartbeat(
         WorkerHeartbeat(worker_id=worker.id, status=WorkerStatus.ONLINE, active_executions=0)

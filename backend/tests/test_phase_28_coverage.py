@@ -183,9 +183,7 @@ def test_pagination_detect_strategies() -> None:
     assert strategy.kind == "page_param"
     assert strategy.page_param == "page"
     # cursor
-    strategy = detect_strategy(
-        page_url="https://example.com/list?cursor=abc", html="<a>x</a>"
-    )
+    strategy = detect_strategy(page_url="https://example.com/list?cursor=abc", html="<a>x</a>")
     assert strategy.kind == "cursor"
     # load more marker
     strategy = detect_strategy(page_url="https://example.com/f", html="load more")

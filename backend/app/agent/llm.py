@@ -156,8 +156,10 @@ class FakeLLMProvider(LLMProvider):
         severity = str(hints.get("severity", "MEDIUM")).upper()
         false_positive_hint = bool(hints.get("false_positive_hint", False))
         techniques = list(hints.get("expected_techniques", []))
-        classification = "BENIGN" if false_positive_hint else (
-            "MALICIOUS" if severity in {"HIGH", "CRITICAL"} else "SUSPICIOUS"
+        classification = (
+            "BENIGN"
+            if false_positive_hint
+            else ("MALICIOUS" if severity in {"HIGH", "CRITICAL"} else "SUSPICIOUS")
         )
         return {
             "classification": classification,

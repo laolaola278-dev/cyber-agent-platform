@@ -24,9 +24,7 @@ async def test_create_investigation_end_to_end(client: AsyncClient) -> None:
 
 
 async def test_get_investigation(client: AsyncClient) -> None:
-    created = await client.post(
-        "/agent/investigations", json={"goal": "Check the web exposure"}
-    )
+    created = await client.post("/agent/investigations", json={"goal": "Check the web exposure"})
     session_id = created.json()["id"]
     response = await client.get(f"/agent/investigations/{session_id}")
     assert response.status_code == 200
@@ -67,9 +65,7 @@ async def test_continue_missing_investigation_404(client: AsyncClient) -> None:
 
 
 async def test_get_run(client: AsyncClient) -> None:
-    created = await client.post(
-        "/agent/investigations", json={"goal": "Run telemetry check"}
-    )
+    created = await client.post("/agent/investigations", json={"goal": "Run telemetry check"})
     run_id = created.json()["run_id"]
     response = await client.get(f"/agent/runs/{run_id}")
     assert response.status_code == 200
@@ -146,6 +142,4 @@ async def test_no_direct_high_risk_execution_api(client: AsyncClient) -> None:
     paths = openapi.json()["paths"]
     agent_paths = [path for path in paths if path.startswith("/agent/")]
     assert agent_paths
-    assert not any(
-        "response" in path or "execute" in path for path in agent_paths
-    )
+    assert not any("response" in path or "execute" in path for path in agent_paths)

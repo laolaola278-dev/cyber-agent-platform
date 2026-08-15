@@ -10,7 +10,6 @@ Real-container proofs:
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import time
@@ -34,7 +33,8 @@ def _docker() -> bool:
     try:
         proc = subprocess.run(
             ["docker", "info", "--format", "{{.ServerVersion}}"],
-            capture_output=True, timeout=15,
+            capture_output=True,
+            timeout=15,
         )
         return proc.returncode == 0 and bool(proc.stdout.strip())
     except Exception:  # noqa: BLE001
@@ -53,15 +53,30 @@ def _start_managed_container(execution_id: str, lease_id: str, run_id: str, work
     name = f"cap-cert-reap-{uuid.uuid4().hex[:8]}"
     run = subprocess.run(
         [
-            "docker", "run", "-d", "--name", name,
-            "--network", NETWORK,
-            "--label", f"{_LABEL_EXEC}={execution_id}",
-            "--label", f"{_LABEL_LEASE}={lease_id}",
-            "--label", f"{_LABEL_RUN}={run_id}",
-            "--label", f"{_LABEL_WORKER}={worker}",
-            "--entrypoint", "sh", IMAGE, "-c", "sleep 600",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            name,
+            "--network",
+            NETWORK,
+            "--label",
+            f"{_LABEL_EXEC}={execution_id}",
+            "--label",
+            f"{_LABEL_LEASE}={lease_id}",
+            "--label",
+            f"{_LABEL_RUN}={run_id}",
+            "--label",
+            f"{_LABEL_WORKER}={worker}",
+            "--entrypoint",
+            "sh",
+            IMAGE,
+            "-c",
+            "sleep 600",
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert run.returncode == 0, f"managed container start failed: {run.stderr[-300:]}"
     return name
@@ -117,16 +132,25 @@ def test_reaper_fencing_on_real_containers() -> None:
 
                 s.add(
                     Task(
-                        id=task_id, name="reaper-cert-task", task_type="acquisition.http",
-                        status="RUNNING", input={}, required_permissions=[],
+                        id=task_id,
+                        name="reaper-cert-task",
+                        task_type="acquisition.http",
+                        status="RUNNING",
+                        input={},
+                        required_permissions=[],
                         required_capabilities=["acquisition.http"],
                     )
                 )
                 s.add(
                     Agent(
-                        id=agent_id, name=f"reaper-agent-{agent_id.hex[:6]}",
-                        version="28.5", permissions=[], capabilities=["acquisition.http"],
-                        tools=[], status="ONLINE", platform_version="0.2.1",
+                        id=agent_id,
+                        name=f"reaper-agent-{agent_id.hex[:6]}",
+                        version="28.5",
+                        permissions=[],
+                        capabilities=["acquisition.http"],
+                        tools=[],
+                        status="ONLINE",
+                        platform_version="0.2.1",
                     )
                 )
                 await s.flush()
@@ -138,22 +162,32 @@ def test_reaper_fencing_on_real_containers() -> None:
                         status="RUNNING",
                         worker_id=uuid.UUID(worker_b),
                         lease_id=uuid.UUID(lease_b),
-                        goal="g", source_type="web", strategy="paged",
-                        task_id=task_id, agent_id=agent_id,
+                        goal="g",
+                        source_type="web",
+                        strategy="paged",
+                        task_id=task_id,
+                        agent_id=agent_id,
                         trace_id=f"t-{uuid.uuid4().hex[:6]}",
-                        created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
+                        created_at=datetime.now(UTC),
+                        updated_at=datetime.now(UTC),
                     )
                 )
                 reg = WorkerRegistry(s)
                 await reg.register(
-                    WorkerRecord(id=uuid.UUID(worker_b), name=f"w-{worker_b[:6]}",
-                                 runtime_version="28.5",
-                                 capabilities=frozenset({"acquisition.http"}),
-                                 max_concurrency=2)
+                    WorkerRecord(
+                        id=uuid.UUID(worker_b),
+                        name=f"w-{worker_b[:6]}",
+                        runtime_version="28.5",
+                        capabilities=frozenset({"acquisition.http"}),
+                        max_concurrency=2,
+                    )
                 )
                 await reg.heartbeat(
-                    WorkerHeartbeat(worker_id=uuid.UUID(worker_b),
-                                    status=WorkerStatus.ONLINE, active_executions=0)
+                    WorkerHeartbeat(
+                        worker_id=uuid.UUID(worker_b),
+                        status=WorkerStatus.ONLINE,
+                        active_executions=0,
+                    )
                 )
                 await s.commit()
 
@@ -169,9 +203,9 @@ def test_reaper_fencing_on_real_containers() -> None:
             for c in remaining:
                 labs = c.get("Config", {}).get("Labels", {})
                 print(
-                    f"[reaper-diag] remaining id={c.get('Id','')[:12]} "
-                    f"lease={labs.get(_LABEL_LEASE,'')[:8]} "
-                    f"worker={labs.get(_LABEL_WORKER,'')[:8]}",
+                    f"[reaper-diag] remaining id={c.get('Id', '')[:12]} "
+                    f"lease={labs.get(_LABEL_LEASE, '')[:8]} "
+                    f"worker={labs.get(_LABEL_WORKER, '')[:8]}",
                     flush=True,
                 )
             print(f"[reaper-diag] stats={stats}", flush=True)
@@ -205,12 +239,24 @@ def test_cancellation_ordering_timestamps() -> None:
     name = f"cap-cert-cancel-{uuid.uuid4().hex[:8]}"
     subprocess.run(
         [
-            "docker", "run", "-d", "--name", name,
-            "--network", NETWORK,
-            "--label", f"{_LABEL_EXEC}={exec_id}",
-            "--entrypoint", "sh", IMAGE, "-c", "sleep 600",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            name,
+            "--network",
+            NETWORK,
+            "--label",
+            f"{_LABEL_EXEC}={exec_id}",
+            "--entrypoint",
+            "sh",
+            IMAGE,
+            "-c",
+            "sleep 600",
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     try:
         t_cancel = time.monotonic()
@@ -219,7 +265,9 @@ def test_cancellation_ordering_timestamps() -> None:
         # confirm the container actually exited
         state = subprocess.run(
             ["docker", "inspect", "--format", "{{.State.Status}}", name],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True,
+            text=True,
+            timeout=20,
         )
         assert state.stdout.strip() == "exited", "container did not exit on cancel"
         t_exit = time.monotonic()

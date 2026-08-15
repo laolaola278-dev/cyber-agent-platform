@@ -58,8 +58,7 @@ def _make_pdf_bytes() -> bytes:
     for offset in offsets[1:]:
         out += f"{offset:010d} 00000 n \n".encode()
     out += (
-        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
-        f"startxref\n{xref_pos}\n%%EOF\n"
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n"
     ).encode()
     return bytes(out)
 
@@ -188,8 +187,12 @@ def _build_scenarios() -> list[AQBScenario]:
                 "static_html",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
-                    url: SyntheticResponse(200, {"content-type": "text/html"}, _html(title, f"Body {index}")),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
+                    url: SyntheticResponse(
+                        200, {"content-type": "text/html"}, _html(title, f"Body {index}")
+                    ),
                 },
                 expected={"extracted": True, "title_present": True},
             )
@@ -202,15 +205,19 @@ def _build_scenarios() -> list[AQBScenario]:
         routes = {
             f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
             page1: SyntheticResponse(
-                200, {"content-type": "text/html"},
+                200,
+                {"content-type": "text/html"},
                 _html(f"List {index}", "item 1", next_href=f"{base}?page=2"),
             ),
             f"{base}?page=2": SyntheticResponse(
-                200, {"content-type": "text/html"},
+                200,
+                {"content-type": "text/html"},
                 _html(f"List {index}", "item 2", next_href=f"{base}?page=3"),
             ),
             f"{base}?page=3": SyntheticResponse(
-                200, {"content-type": "text/html"}, _html(f"List {index}", "item 3"),
+                200,
+                {"content-type": "text/html"},
+                _html(f"List {index}", "item 3"),
             ),
         }
         scenarios.append(
@@ -230,9 +237,12 @@ def _build_scenarios() -> list[AQBScenario]:
                 "infinite_scroll",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: SyntheticResponse(
-                        200, {"content-type": "text/html"},
+                        200,
+                        {"content-type": "text/html"},
                         _html(f"Feed {index}", "infinite scroll synthetic feed"),
                     ),
                 },
@@ -249,7 +259,9 @@ def _build_scenarios() -> list[AQBScenario]:
                 "json_api",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nDisallow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nDisallow: /\n"
+                    ),
                     url: SyntheticResponse(200, {"content-type": "application/json"}, payload),
                 },
                 expected={"extracted": True, "json_parsed": True},
@@ -264,7 +276,9 @@ def _build_scenarios() -> list[AQBScenario]:
                 "pdf",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: SyntheticResponse(
                         200, {"content-type": "application/pdf"}, _make_pdf_bytes()
                     ),
@@ -281,7 +295,9 @@ def _build_scenarios() -> list[AQBScenario]:
                 "docx",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: SyntheticResponse(
                         200,
                         {
@@ -305,13 +321,14 @@ def _build_scenarios() -> list[AQBScenario]:
                 "xlsx",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: SyntheticResponse(
                         200,
                         {
                             "content-type": (
-                                "application/vnd.openxmlformats-officedocument."
-                                "spreadsheetml.sheet"
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
                         },
                         _make_xlsx_bytes([["id", "value"], [index, "x"]]),
@@ -330,7 +347,9 @@ def _build_scenarios() -> list[AQBScenario]:
                 "duplicate",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: SyntheticResponse(200, {"content-type": "text/html"}, body),
                     f"{url}?page=2": SyntheticResponse(200, {"content-type": "text/html"}, body),
                 },
@@ -346,7 +365,9 @@ def _build_scenarios() -> list[AQBScenario]:
                 "dynamic_html",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: SyntheticResponse(
                         200,
                         {"content-type": "text/html"},
@@ -368,7 +389,9 @@ def _build_scenarios() -> list[AQBScenario]:
                 "missing_field",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: SyntheticResponse(200, {"content-type": "text/html"}, _html("M", "")),
                 },
                 expected={
@@ -388,8 +411,12 @@ def _build_scenarios() -> list[AQBScenario]:
                 "missing_time_range",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
-                    url: SyntheticResponse(200, {"content-type": "text/html"}, _html("T", "no timestamps")),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
+                    url: SyntheticResponse(
+                        200, {"content-type": "text/html"}, _html("T", "no timestamps")
+                    ),
                 },
                 expected={
                     "status": "PARTIAL",
@@ -411,9 +438,13 @@ def _build_scenarios() -> list[AQBScenario]:
                 "redirect",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: _redirect(final),
-                    final: SyntheticResponse(200, {"content-type": "text/html"}, _html("Final", "ok")),
+                    final: SyntheticResponse(
+                        200, {"content-type": "text/html"}, _html("Final", "ok")
+                    ),
                 },
                 expected={"final_url": final},
             )
@@ -448,7 +479,9 @@ def _build_scenarios() -> list[AQBScenario]:
                 "dns_rebinding",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: SyntheticResponse(200, {"content-type": "text/html"}, _html("R", "x")),
                 },
                 expected={"status": "BLOCKED", "reason": "SSRF_BLOCKED"},
@@ -483,7 +516,9 @@ def _build_scenarios() -> list[AQBScenario]:
                 "http_401" if status == 401 else "http_403",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: SyntheticResponse(status, {}, b"restricted"),
                 },
                 expected={"status": "BLOCKED", "reason": "AUTH_REQUIRED"},
@@ -501,8 +536,12 @@ def _build_scenarios() -> list[AQBScenario]:
                 "login_page",
                 f"{origin}/login/{index}",
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
-                    f"{origin}/login/{index}": SyntheticResponse(200, {"content-type": "text/html"}, login_marker),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
+                    f"{origin}/login/{index}": SyntheticResponse(
+                        200, {"content-type": "text/html"}, login_marker
+                    ),
                 },
                 expected={"status": "BLOCKED", "reason": "LOGIN_PAGE"},
                 outcome="blocked",
@@ -513,8 +552,12 @@ def _build_scenarios() -> list[AQBScenario]:
                 "captcha",
                 f"{origin}/captcha/{index}",
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
-                    f"{origin}/captcha/{index}": SyntheticResponse(200, {"content-type": "text/html"}, captcha_marker),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
+                    f"{origin}/captcha/{index}": SyntheticResponse(
+                        200, {"content-type": "text/html"}, captcha_marker
+                    ),
                 },
                 expected={"status": "BLOCKED", "reason": "CAPTCHA"},
                 outcome="blocked",
@@ -525,8 +568,12 @@ def _build_scenarios() -> list[AQBScenario]:
                 "paywall",
                 f"{origin}/paywall/{index}",
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
-                    f"{origin}/paywall/{index}": SyntheticResponse(200, {"content-type": "text/html"}, paywall_marker),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
+                    f"{origin}/paywall/{index}": SyntheticResponse(
+                        200, {"content-type": "text/html"}, paywall_marker
+                    ),
                 },
                 expected={"status": "BLOCKED", "reason": "PAYWALL"},
                 outcome="blocked",
@@ -541,8 +588,12 @@ def _build_scenarios() -> list[AQBScenario]:
                 "oversized",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
-                    url: SyntheticResponse(200, {"content-type": "text/html"}, b"x" * (12 * 1024 * 1024)),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
+                    url: SyntheticResponse(
+                        200, {"content-type": "text/html"}, b"x" * (12 * 1024 * 1024)
+                    ),
                 },
                 expected={"status": "BLOCKED", "reason": "SIZE_LIMIT"},
                 outcome="blocked",
@@ -557,9 +608,13 @@ def _build_scenarios() -> list[AQBScenario]:
                 "malformed_html",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: SyntheticResponse(
-                        200, {"content-type": "text/html"}, b"<html><body><unclosed " + b"a" * 200,
+                        200,
+                        {"content-type": "text/html"},
+                        b"<html><body><unclosed " + b"a" * 200,
                     ),
                 },
                 expected={"status": "COMPLETE"},
@@ -575,7 +630,9 @@ def _build_scenarios() -> list[AQBScenario]:
                 "timeout",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: SyntheticResponse(200, {"content-type": "text/html"}, b""),
                 },
                 expected={"status": "PARTIAL", "expected_record_count": 50},
@@ -591,7 +648,9 @@ def _build_scenarios() -> list[AQBScenario]:
                 "rate_limit",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
                     url: SyntheticResponse(429, {"retry-after": "60"}, b"slow down"),
                 },
                 expected={"status": "PARTIAL", "reason": "RATE_LIMITED"},
@@ -607,8 +666,12 @@ def _build_scenarios() -> list[AQBScenario]:
                 "partial_completion",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
-                    url: SyntheticResponse(200, {"content-type": "text/html"}, _html("P", "only partial data")),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
+                    url: SyntheticResponse(
+                        200, {"content-type": "text/html"}, _html("P", "only partial data")
+                    ),
                 },
                 expected={"status": "PARTIAL", "expected_record_count": 50},
                 outcome="partial",
@@ -623,8 +686,12 @@ def _build_scenarios() -> list[AQBScenario]:
                 "structure_change",
                 url,
                 {
-                    f"{origin}/robots.txt": SyntheticResponse(200, {}, b"User-agent: *\nAllow: /\n"),
-                    url: SyntheticResponse(200, {"content-type": "text/html"}, _html("C", "layout changed")),
+                    f"{origin}/robots.txt": SyntheticResponse(
+                        200, {}, b"User-agent: *\nAllow: /\n"
+                    ),
+                    url: SyntheticResponse(
+                        200, {"content-type": "text/html"}, _html("C", "layout changed")
+                    ),
                 },
                 expected={
                     "status": "PARTIAL",
@@ -655,7 +722,5 @@ def aqb_stats(scenarios: list[AQBScenario]) -> dict[str, Any]:
         "total": total,
         "categories": dict(categories),
         "outcomes": dict(outcomes),
-        "failure_fraction": round(
-            (outcomes["blocked"] + outcomes["partial"]) / max(total, 1), 4
-        ),
+        "failure_fraction": round((outcomes["blocked"] + outcomes["partial"]) / max(total, 1), 4),
     }

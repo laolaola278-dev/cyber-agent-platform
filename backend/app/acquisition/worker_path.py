@@ -23,7 +23,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.acquisition.checkpoint import AcquisitionCheckpoint
-from app.acquisition.claim import AcquisitionClaimCoordinator, fencing_hash
+from app.acquisition.claim import fencing_hash
 from app.acquisition.exceptions import AcquisitionStaleCommit
 from app.acquisition.models_db import AcquisitionRun
 from app.exceptions import (
@@ -185,13 +185,12 @@ class AcquisitionWorkerPath:
             # committed snapshot -- the API's durable CANCEL_REQUESTED is
             # visible across the process boundary (this is the production
             # cancel channel: DB flag + worker polling).
-            poll_factory = async_sessionmaker(
-                self._service.session.bind, expire_on_commit=False
-            )
+            poll_factory = async_sessionmaker(self._service.session.bind, expire_on_commit=False)
             operation_task = asyncio.create_task(
                 self._service.run_agent_operation(run, checkpoint, apply_terminal=False)
             )
             import time as _t
+
             _op_start = _t.monotonic()
             last_renew: float = 0.0
             while not operation_task.done():
@@ -200,10 +199,7 @@ class AcquisitionWorkerPath:
                         polled = await poll_session.get(AcquisitionRun, run_id)
                     poll_status = polled.status if polled is not None else None
                     poll_cancel_at = polled.cancel_requested_at if polled is not None else None
-                    if (
-                        poll_status == "CANCEL_REQUESTED"
-                        or poll_cancel_at is not None
-                    ):
+                    if poll_status == "CANCEL_REQUESTED" or poll_cancel_at is not None:
                         operation_task.cancel()
                         with suppress(asyncio.CancelledError, Exception):
                             await operation_task
@@ -342,9 +338,7 @@ class AcquisitionWorkerPath:
         # reclaim swapped ownership), this UPDATE matches 0 rows and the stale
         # completion is discarded (its pending evidence rolls back with it).
         await self._record_worker_identity(run, checkpoint)
-        applied = await self._finalize_terminal_atomic(
-            run_id, worker_id, token, payload
-        )
+        applied = await self._finalize_terminal_atomic(run_id, worker_id, token, payload)
         if applied:
             return payload
 
@@ -352,14 +346,9 @@ class AcquisitionWorkerPath:
         # to a terminal outcome (never leave CANCEL_REQUESTED lingering).
         current = await self._service.get_run(run_id, fresh=True)
         ck = AcquisitionCheckpoint.from_dict(current.checkpoint or {})
-        if (
-            current.status == "CANCEL_REQUESTED"
-            or current.cancel_requested_at is not None
-        ):
+        if current.status == "CANCEL_REQUESTED" or current.cancel_requested_at is not None:
             # cancel won the race -> finalize CANCELLED (idempotent conditional)
-            await self._finalize_cancelled_if_safe(
-                run_id, worker_id, "cancelled before commit"
-            )
+            await self._finalize_cancelled_if_safe(run_id, worker_id, "cancelled before commit")
             return self._payload_from_run(current, ck, "cancelled before commit")
         # reclaimed (ownership lost) or already terminal -> never touch it
         return self._payload_from_run(current, ck, "ownership lost during execution")
@@ -648,9 +637,7 @@ class AcquisitionWorkerPath:
 
     # -- internals -----------------------------------------------------------
 
-    async def _record_worker_identity(
-        self, run: Any, checkpoint: AcquisitionCheckpoint
-    ) -> None:
+    async def _record_worker_identity(self, run: Any, checkpoint: AcquisitionCheckpoint) -> None:
         execution = getattr(self._plugin, "last_execution", None)
         if execution is None:
             return

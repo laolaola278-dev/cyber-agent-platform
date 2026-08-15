@@ -13,20 +13,12 @@ import os
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.acquisition.claim import AcquisitionClaimCoordinator
-from app.acquisition.models_db import AcquisitionRun
-from app.acquisition.service import AcquisitionService
-from app.evidence.service import EvidenceService
 from app.sandbox.policy import SandboxPolicyEngine
 from app.sandbox.profile import SandboxProfile
 from app.sandbox.runtime import SandboxRuntime
 from app.sandbox.subprocess_provider import SubprocessSandboxProvider
-from app.worker.contracts import WorkerHeartbeat, WorkerRecord, WorkerStatus
-from app.worker.lease import WorkerLeaseManager
-from app.worker.registry import WorkerRegistry
 
 pytestmark = pytest.mark.sandbox
 
@@ -65,8 +57,6 @@ def _process_alive(pid: int) -> bool:
         return False
 
 
-
-
 @pytest.mark.asyncio
 async def test_operation_runs_in_separate_os_process(runtime) -> None:
     async def op():
@@ -96,10 +86,11 @@ async def test_provider_reports_honest_capabilities(runtime) -> None:
 @pytest.mark.asyncio
 async def test_policy_fails_closed_when_profile_demands_unsupported(runtime) -> None:
     profile = _profile().model_copy(update={"network_enabled": True})
+
     async def op():
         return {}
 
-    with pytest.raises(Exception):  # SandboxExecutionError / PolicyViolation
+    with pytest.raises(Exception):  # noqa: B017 -- SandboxExecutionError / PolicyViolation
         await runtime.execute(profile, op, execution_id=uuid4())
 
 
@@ -111,9 +102,7 @@ async def test_hard_timeout_terminates_sandbox(runtime) -> None:
         await asyncio.sleep(60)
         return {}
 
-    result = await runtime.execute(
-        _profile(timeout=1), infinite, execution_id=uuid4()
-    )
+    result = await runtime.execute(_profile(timeout=1), infinite, execution_id=uuid4())
     assert result.status == "FAILED"
     assert result.timed_out is True
     assert "timed out" in (result.error or "")
@@ -154,13 +143,11 @@ async def test_terminate_kills_process_and_children(runtime, tmp_path) -> None:
     try:
         result = await asyncio.wait_for(task, timeout=5)
         assert result.terminated is True
-    except asyncio.TimeoutError:  # pragma: no cover
+    except TimeoutError:  # pragma: no cover
         pytest.fail("sandbox did not observe termination")
     await asyncio.sleep(1.5)
     # the child process tree is gone (Job Object kill-on-close)
-    assert not _process_alive(child_pid), (
-        f"orphan sandbox child {child_pid} survived termination"
-    )
+    assert not _process_alive(child_pid), f"orphan sandbox child {child_pid} survived termination"
 
 
 @pytest.mark.asyncio
@@ -173,6 +160,7 @@ async def test_sandbox_crash_does_not_kill_worker(runtime) -> None:
     result = await runtime.execute(_profile(), crash, execution_id=uuid4())
     assert result.status == "FAILED"
     assert result.exit_code == 9
+
     # worker still alive and can run another sandbox
     async def ok():
         return {"alive": True}
@@ -185,11 +173,11 @@ async def test_sandbox_crash_does_not_kill_worker(runtime) -> None:
 @pytest.mark.asyncio
 async def test_unserializable_operation_fails_closed(runtime) -> None:
     engine = create_async_engine(PG_DSN)
-    async with engine.connect() as conn:
+    async with engine.connect():
         # an operation holding an un-picklable resource must be rejected
         async def op():
             return {"engine": engine}  # AsyncEngine is not cloudpicklable
 
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017 -- provider rejects non-cloudpicklable payload
             await runtime.execute(_profile(), op, execution_id=uuid4())
     await engine.dispose()

@@ -75,10 +75,9 @@ async def test_cancel_race_does_not_leak_browser_contexts(session, tmp_path, lab
     If cancellation failed to reap browser resources, every cancelled run
     would leak a context/page and the live count would grow monotonically.
     """
+    from app.acquisition.browseradapter import PlaywrightAcquisitionAdapter
     from app.tools.playwright.adapter import PlaywrightAdapter  # noqa: F401
     from app.tools.playwright.browser import BrowserManager  # noqa: F401
-
-    from app.acquisition.browseradapter import PlaywrightAcquisitionAdapter
 
     manager = BrowserManager()
     platform = PlaywrightAdapter(manager)
@@ -97,7 +96,9 @@ async def test_cancel_race_does_not_leak_browser_contexts(session, tmp_path, lab
         for _ in range(6):
             async with TestSessionFactory() as s2:
                 ev = EvidenceService(
-                    s2, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+                    s2,
+                    publisher=None,
+                    storage_directory=tmp_path,  # type: ignore[arg-type]
                 )
                 svc = AcquisitionService(
                     s2,
@@ -144,7 +145,9 @@ async def test_cancel_race_does_not_leak_browser_contexts(session, tmp_path, lab
                 # cancel through a separate session (cooperative cancel)
                 async with TestSessionFactory() as cs:
                     ev2 = EvidenceService(
-                        cs, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+                        cs,
+                        publisher=None,
+                        storage_directory=tmp_path,  # type: ignore[arg-type]
                     )
                     svc2 = AcquisitionService(
                         cs,
@@ -170,8 +173,7 @@ async def test_cancel_race_does_not_leak_browser_contexts(session, tmp_path, lab
                 await asyncio.sleep(0.1)
                 live = await _count_live_contexts(adapter)
                 assert live == baseline, (
-                    f"browser contexts leaked across cancel race: "
-                    f"{live} != baseline {baseline}"
+                    f"browser contexts leaked across cancel race: {live} != baseline {baseline}"
                 )
     finally:
         await adapter.shutdown()

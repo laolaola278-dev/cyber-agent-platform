@@ -96,9 +96,7 @@ class Phase26Service:
     ) -> dict[str, Any]:
         provider = await self.choose_provider(prefer_real=prefer_real)
         agent = TriageAgent(provider, policy=self._policy)
-        output = await agent.triage(
-            source=source, context=context, data_blocks=data_blocks
-        )
+        output = await agent.triage(source=source, context=context, data_blocks=data_blocks)
         run_id = await self._record_invocation(
             provider=provider,
             output=output.result.model_dump(),
@@ -409,7 +407,13 @@ def _extract_hints(request: Any) -> dict[str, Any]:
             decoded = ""
         text = f"{normalized} {decoded}".casefold()
         markers = (
-            "ignore", "instruction", "firewall", "admin", "secret", "system prompt", "reveal"
+            "ignore",
+            "instruction",
+            "firewall",
+            "admin",
+            "secret",
+            "system prompt",
+            "reveal",
         )
         injection = any(marker in text for marker in markers)
         return {"text": raw, "injection_observed": injection}

@@ -13,8 +13,17 @@ from app.acquisition.worker_path import TERMINAL
 
 
 def test_all_durable_states_are_enum_members() -> None:
-    for status in ("PENDING", "QUEUED", "RUNNING", "CANCEL_REQUESTED",
-                   "COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"):
+    for status in (
+        "PENDING",
+        "QUEUED",
+        "RUNNING",
+        "CANCEL_REQUESTED",
+        "COMPLETE",
+        "PARTIAL",
+        "BLOCKED",
+        "FAILED",
+        "CANCELLED",
+    ):
         assert status in AcquisitionStatus.__members__.values(), status
 
 
@@ -37,8 +46,7 @@ def test_create_emits_queued() -> None:
     """create() durably emits the enum member QUEUED (not a loose string)."""
     import asyncio
 
-    from pathlib import Path
-
+    from sqlalchemy import select
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from sqlalchemy.pool import StaticPool
 
@@ -46,7 +54,6 @@ def test_create_emits_queued() -> None:
     from app.acquisition.service import AcquisitionService
     from app.database import Base
     from app.evidence.service import EvidenceService
-    from sqlalchemy import select
 
     async def _check() -> None:
         engine = create_async_engine(

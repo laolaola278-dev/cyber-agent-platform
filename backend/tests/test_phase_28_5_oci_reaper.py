@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -84,7 +82,7 @@ async def _seed_run(factory, run_id: str, worker_id, lease_id) -> None:
     async with factory() as session:
         session.add(
             AcquisitionRun(
-                id=__import__('uuid').UUID(run_id),
+                id=__import__("uuid").UUID(run_id),
                 idempotency_key=f"reaper-{uuid4().hex}",
                 request_fingerprint=f"fp-{uuid4().hex}",
                 status="RUNNING",
@@ -119,9 +117,7 @@ async def _register_worker(factory, worker_id: str) -> None:
             )
         )
         await reg.heartbeat(
-            WorkerHeartbeat(
-                worker_id=worker_id, status=WorkerStatus.ONLINE, active_executions=0
-            )
+            WorkerHeartbeat(worker_id=worker_id, status=WorkerStatus.ONLINE, active_executions=0)
         )
 
 
@@ -131,8 +127,8 @@ async def test_reaper_kills_stale_lease_and_keeps_current_owner(db_factory) -> N
     never touched; only the stale A container is removed."""
     run_id = str(uuid4())
     worker_a, worker_b = uuid4(), uuid4()
-    lease_a = str(uuid4())           # A's OLD lease (stale)
-    current_lease = uuid4()          # the run is now owned via THIS lease (B)
+    lease_a = str(uuid4())  # A's OLD lease (stale)
+    current_lease = uuid4()  # the run is now owned via THIS lease (B)
     # after B reclaims, the run's worker is B (the current owner)
     await _seed_run(db_factory, run_id, worker_b, current_lease)
     await _register_worker(db_factory, worker_b)

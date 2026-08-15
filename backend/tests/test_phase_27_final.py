@@ -45,12 +45,14 @@ def test_attck_dedup_event_over_knowledge() -> None:
     )
     generator = AttackTechniqueCandidateGenerator(knowledge=retriever)
     fact = SecurityFact(
-        fact_type="observed_indicator", value="phishing", source_kind="security_event",
-        source_id="e", confidence=0.8, evidence_ref="evidence:1",
+        fact_type="observed_indicator",
+        value="phishing",
+        source_kind="security_event",
+        source_id="e",
+        confidence=0.8,
+        evidence_ref="evidence:1",
     )
-    candidates = run(
-        generator.generate(facts=[fact], event_techniques=["T1566"])
-    )
+    candidates = run(generator.generate(facts=[fact], event_techniques=["T1566"]))
     # event-declared T1566 (1.0) beats knowledge/rule candidates
     assert candidates[0].score == 1.0
 
@@ -143,7 +145,11 @@ def test_retriever_cve_fact_lookup() -> None:
         entries=[{"knowledge_type": "CVE", "external_id": "CVE-1", "title": "t", "keywords": []}]
     )
     fact = SecurityFact(
-        fact_type="vulnerability", value="CVE-1", source_kind="knowledge", source_id="k", confidence=0.5
+        fact_type="vulnerability",
+        value="CVE-1",
+        source_kind="knowledge",
+        source_id="k",
+        confidence=0.5,
     )
     hits = run(retriever.lookup_fact(fact))
     assert hits and hits[0].external_id == "CVE-1"
@@ -151,7 +157,9 @@ def test_retriever_cve_fact_lookup() -> None:
 
 def test_retriever_query_path() -> None:
     retriever = MemoryKnowledgeRetriever(
-        entries=[{"knowledge_type": "IOC", "external_id": "i1", "title": "x", "keywords": ["phish"]}]
+        entries=[
+            {"knowledge_type": "IOC", "external_id": "i1", "title": "x", "keywords": ["phish"]}
+        ]
     )
     hits = run(retriever.lookup(knowledge_type="IOC", query="phish"))
     assert hits and hits[0].external_id == "i1"

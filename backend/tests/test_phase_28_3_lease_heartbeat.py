@@ -28,8 +28,8 @@ from app.acquisition.worker_path import AcquisitionRunPayload, AcquisitionWorker
 from app.database import Base
 from app.evidence.service import EvidenceService
 from app.sandbox.policy import SandboxPolicyEngine
-from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
 from app.sandbox.profile import SandboxProfile
+from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
 from app.worker.contracts import WorkerHeartbeat, WorkerRecord, WorkerStatus
 from app.worker.lease import WorkerLeaseManager
 from app.worker.plugin_runtime import PluginWorkerRuntime
@@ -112,9 +112,7 @@ async def _make_worker_path(
     return wp
 
 
-async def _register_worker(
-    session: AsyncSession, worker_id: UUID, name: str = "acq-hb"
-) -> None:
+async def _register_worker(session: AsyncSession, worker_id: UUID, name: str = "acq-hb") -> None:
     reg = WorkerRegistry(session)
     await reg.register(
         WorkerRecord(

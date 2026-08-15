@@ -201,7 +201,10 @@ def test_platform_retriever_lookup_fact_technique_ioc() -> None:
     assert hits and hits[0].external_id == "T1566"
     # IOC branch (not vulnerability/technique) -> lookup with query
     ioc_fact = SecurityFact(
-        fact_type="observed_indicator", value="8.8.8.8", source_kind="security_event",
-        source_id="e", confidence=0.5,
+        fact_type="observed_indicator",
+        value="8.8.8.8",
+        source_kind="security_event",
+        source_id="e",
+        confidence=0.5,
     )
     assert run(retriever.lookup_fact(ioc_fact)) == []

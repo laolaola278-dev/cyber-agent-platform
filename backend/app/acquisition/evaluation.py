@@ -164,9 +164,7 @@ class AQBHarness:
         self, scenario: AQBScenario
     ) -> tuple[AdaptiveDataAcquisitionAgent, _TempStore]:
         web = SyntheticWeb(routes=scenario.routes)
-        validator = URLPolicyValidator(
-            resolver=scenario.resolver or _bench_resolver
-        )
+        validator = URLPolicyValidator(resolver=scenario.resolver or _bench_resolver)
         http = HTTPAdapter(
             policy=self._policy, validator=validator, client_factory=web.client_factory()
         )
@@ -235,8 +233,8 @@ class AQBHarness:
             # pagination_page is the 0-based index of the last page fetched,
             # so +1 yields the count of pages actually traversed.
             reached = result.pagination_page + 1
-            pagination_ok = reached >= expected_pages if expected_pages else (
-                len(result.visited_urls) > 0
+            pagination_ok = (
+                reached >= expected_pages if expected_pages else (len(result.visited_urls) > 0)
             )
         coverage_score = result.completeness.coverage_score if result.completeness else 0.0
         coverage_ok = (
@@ -428,9 +426,7 @@ async def run_benchmark_v2(
     v2 = compute_aqb_v2(
         results,
         resume=resume if isinstance(resume, Probe) else Probe(*(resume or (0, 0))),
-        integrity=integrity
-        if isinstance(integrity, Probe)
-        else Probe(*(integrity or (0, 0))),
+        integrity=integrity if isinstance(integrity, Probe) else Probe(*(integrity or (0, 0))),
     )
     return {
         "dataset": {"version": "cap-aqb-v1", **stats},

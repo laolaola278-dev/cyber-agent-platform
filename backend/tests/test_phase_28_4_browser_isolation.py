@@ -23,8 +23,7 @@ from app.sandbox.policy import SandboxPolicyEngine
 from app.sandbox.profile import SandboxProfile
 from app.sandbox.runtime import SandboxRuntime
 from app.sandbox.subprocess_provider import SubprocessSandboxProvider
-from tests.acquisition_lab import AcquisitionLabServer
-from tests.acquisition_lab import lab_policy, lab_url_validator
+from tests.acquisition_lab import AcquisitionLabServer, lab_policy, lab_url_validator
 
 # Windows-only: the subprocess browser executor + real-Chromium process-tree
 # reaping in this suite uses Windows PowerShell to enumerate Chromium PIDs
@@ -137,9 +136,7 @@ async def test_terminate_kills_browser_process_tree(executor, lab) -> None:
         return {}
 
     task = asyncio.create_task(
-        runtime.execute(
-            executor._profile, hang_browser, execution_id=execution_id
-        )
+        runtime.execute(executor._profile, hang_browser, execution_id=execution_id)
     )
     await asyncio.sleep(8.0)  # let chromium spawn inside the sandbox
     spawned = _chromium_pids()
@@ -151,16 +148,14 @@ async def test_terminate_kills_browser_process_tree(executor, lab) -> None:
         result = await asyncio.wait_for(task, timeout=10)
         assert result.status in ("CANCELLED", "FAILED")
         assert result.terminated is True
-    except asyncio.TimeoutError:  # pragma: no cover
+    except TimeoutError:  # pragma: no cover
         pytest.fail("sandbox browser did not terminate")
 
     # give the OS a moment to reap the tree, then assert NO chromium remains
     await asyncio.sleep(2.0)
     remaining = _chromium_pids()
     # allowed to differ only by removing the spawned set entirely
-    assert not remaining & spawned, (
-        f"orphan chromium survived termination: {remaining & spawned}"
-    )
+    assert not remaining & spawned, f"orphan chromium survived termination: {remaining & spawned}"
 
 
 @pytest.mark.asyncio

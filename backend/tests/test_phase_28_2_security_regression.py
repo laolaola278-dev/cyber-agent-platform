@@ -14,7 +14,6 @@ Certifies the security invariants that MUST survive the 28.2 refactor:
 
 from __future__ import annotations
 
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -69,12 +68,12 @@ async def test_production_ssrf_policy_allows_public() -> None:
 
 async def test_lab_validator_is_distinct_from_production() -> None:
     """The lab allow-private validator must NOT leak into production policy."""
-    prod = __import__("app.acquisition.urlpolicy", fromlist=["URLPolicyValidator"]).URLPolicyValidator(
-        allow_private=False
-    )
+    prod = __import__(
+        "app.acquisition.urlpolicy", fromlist=["URLPolicyValidator"]
+    ).URLPolicyValidator(allow_private=False)
     lab_val = lab_url_validator()
     # the lab variant allows localhost only because it was EXPLICITLY opted in
-    assert bool(lab_val.validate_url(f"http://127.0.0.1:1/")) is True
+    assert bool(lab_val.validate_url("http://127.0.0.1:1/")) is True
     assert bool(prod.validate_url("http://127.0.0.1:1/")) is False
     # distinct object identities (never shared)
     assert prod is not lab_val
@@ -82,16 +81,18 @@ async def test_lab_validator_is_distinct_from_production() -> None:
 
 # -- 2. cancelled runs leave no sensitive partial artifacts ---------------------------
 
+
 async def test_cancelled_run_leaves_no_evidence_after_cancel(session, tmp_path, lab) -> None:
     from sqlalchemy import select
 
     from app.acquisition.claim import AcquisitionClaimCoordinator
-    from app.acquisition.models_db import AcquisitionRun
     from app.acquisition.worker_path import AcquisitionWorkerPath
     from app.models import Evidence
 
     evidence = EvidenceService(
-        session, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+        session,
+        publisher=None,
+        storage_directory=tmp_path,  # type: ignore[arg-type]
     )
     service = AcquisitionService(
         session,
@@ -148,7 +149,9 @@ async def test_execution_flows_through_sandbox_boundary(session, tmp_path, lab) 
     from app.acquisition.worker_path import AcquisitionWorkerPath
 
     evidence = EvidenceService(
-        session, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+        session,
+        publisher=None,
+        storage_directory=tmp_path,  # type: ignore[arg-type]
     )
     service = AcquisitionService(
         session,
@@ -194,13 +197,14 @@ async def test_execution_flows_through_sandbox_boundary(session, tmp_path, lab) 
 
 
 async def test_worker_without_capability_cannot_execute(session, tmp_path, lab) -> None:
-    from app.exceptions import WorkerUnavailable
-
     from app.acquisition.claim import AcquisitionClaimCoordinator
     from app.acquisition.worker_path import AcquisitionWorkerPath
+    from app.exceptions import WorkerUnavailable
 
     evidence = EvidenceService(
-        session, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+        session,
+        publisher=None,
+        storage_directory=tmp_path,  # type: ignore[arg-type]
     )
     service = AcquisitionService(
         session,
@@ -233,8 +237,8 @@ async def test_worker_without_capability_cannot_execute(session, tmp_path, lab) 
         SandboxRuntime(provider, SandboxPolicyEngine()),
     )
     plugin = PluginWorkerRuntime(rt, SandboxProfile(name="acquisition-lab"))
-    wp = AcquisitionWorkerPath(plugin, service, coord)
-    token = uuid4()
+    AcquisitionWorkerPath(plugin, service, coord)
+    uuid4()
     # claim requires the coordinator, but execution asks the scheduler to pick
     # a worker with acquisition.http -- this worker lacks it -> backpressure
     from app.worker.contracts import PluginExecutionRequest

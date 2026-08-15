@@ -18,12 +18,11 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest_asyncio
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.acquisition.claim import AcquisitionClaimCoordinator
-from app.acquisition.exceptions import AcquisitionStaleCommit
 from app.acquisition.models import AcquisitionResult, BlockReason, RawArtifact
 from app.acquisition.models_db import (
     AcquisitionArtifactRecord,
@@ -34,8 +33,8 @@ from app.acquisition.worker_path import AcquisitionRunPayload, AcquisitionWorker
 from app.database import Base
 from app.evidence.service import EvidenceService
 from app.sandbox.policy import SandboxPolicyEngine
-from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
 from app.sandbox.profile import SandboxProfile
+from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
 from app.worker.contracts import WorkerHeartbeat, WorkerRecord, WorkerStatus
 from app.worker.lease import WorkerLeaseManager
 from app.worker.plugin_runtime import PluginWorkerRuntime
@@ -82,7 +81,9 @@ async def _make_service(session: AsyncSession, tmp_path: Path) -> AcquisitionSer
     )
 
 
-async def _make_worker_path(session: AsyncSession, service: AcquisitionService) -> AcquisitionWorkerPath:
+async def _make_worker_path(
+    session: AsyncSession, service: AcquisitionService
+) -> AcquisitionWorkerPath:
     leases = WorkerLeaseManager(session)
     # Phase 28.3 side-effect fencing: WorkerRuntime MUST use a session that
     # is SEPARATE from the service/evidence session. The runtime's commit
@@ -127,9 +128,9 @@ async def _artifact_count(session: AsyncSession, run_id) -> int:
     return int(
         (
             await session.scalar(
-                select(func.count()).select_from(AcquisitionArtifactRecord).where(
-                    AcquisitionArtifactRecord.run_id == run_id
-                )
+                select(func.count())
+                .select_from(AcquisitionArtifactRecord)
+                .where(AcquisitionArtifactRecord.run_id == run_id)
             )
         )
         or 0
@@ -200,9 +201,7 @@ async def test_stale_worker_cannot_attach_intermediate_data(sef_db, session, tmp
     _engine, SessionFactory = sef_db
     await asyncio.sleep(0.2)
     async with SessionFactory() as admin:
-        await WorkerLeaseManager(admin).expire(
-            now=datetime.now(UTC) + timedelta(seconds=60)
-        )
+        await WorkerLeaseManager(admin).expire(now=datetime.now(UTC) + timedelta(seconds=60))
         worker_b = uuid4()
         await _register_worker(admin, worker_b, "acq-stale-b")
         coord_b = AcquisitionClaimCoordinator(
@@ -230,9 +229,7 @@ async def test_stale_worker_cannot_attach_intermediate_data(sef_db, session, tmp
 # -- 2. cancel during object write: no post-CANCELLED evidence attachment -----
 
 
-async def test_cancel_during_object_write_no_post_cancelled_attachment(
-    session, tmp_path
-) -> None:
+async def test_cancel_during_object_write_no_post_cancelled_attachment(session, tmp_path) -> None:
     service = await _make_service(session, tmp_path)
     run, _ = await service.create(goal="g", url="http://example.com/static")
     await session.commit()
@@ -361,8 +358,6 @@ async def test_stale_worker_leaves_no_orphan_evidence_rows(sef_db, session, tmp_
     # rolled-back object and SQLAlchemy's autoflush would make it visible to
     # the same-session query -- the durable truth is the committed DB state.
     async with SessionFactory() as fresh_sess:
-        committed = int(
-            (await fresh_sess.scalar(select(func.count()).select_from(Evidence))) or 0
-        )
+        committed = int((await fresh_sess.scalar(select(func.count()).select_from(Evidence))) or 0)
     assert committed == 0
     await wp_a._runtime_session.close()  # noqa: BLE001 -- release runtime session

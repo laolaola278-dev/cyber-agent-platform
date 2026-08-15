@@ -53,7 +53,9 @@ async def _make_service(
     session: AsyncSession, tmp_path: Path, lab: AcquisitionLabServer
 ) -> AcquisitionService:
     evidence = EvidenceService(
-        session, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+        session,
+        publisher=None,
+        storage_directory=tmp_path,  # type: ignore[arg-type]
     )
     return AcquisitionService(
         session,
@@ -92,6 +94,7 @@ async def _make_worker_path(
 
 # -- 1. async create: 202 semantics, no network in the request -----------------
 
+
 async def test_create_returns_queued_without_executing(
     session: AsyncSession, tmp_path, lab
 ) -> None:
@@ -109,6 +112,7 @@ async def test_create_returns_queued_without_executing(
 
 
 # -- 2. full worker chain executes the run ------------------------------------
+
 
 async def test_worker_chain_executes_run_and_records_identities(
     session: AsyncSession, tmp_path, lab
@@ -148,6 +152,7 @@ async def test_worker_chain_executes_run_and_records_identities(
 
 # -- 3. idempotency -------------------------------------------------------------
 
+
 async def test_idempotency_same_key_returns_existing_run(
     session: AsyncSession, tmp_path, lab
 ) -> None:
@@ -164,27 +169,20 @@ async def test_idempotency_same_key_returns_existing_run(
     assert run1.id == run2.id  # same key + same request -> the SAME run
 
 
-async def test_idempotency_conflicting_request_raises(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_idempotency_conflicting_request_raises(session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
-    await service.create(
-        goal="g", url=f"{lab.origin}/static", idempotency_key="key-2"
-    )
+    await service.create(goal="g", url=f"{lab.origin}/static", idempotency_key="key-2")
     await session.flush()
     with pytest.raises(AcquisitionConflict):
-        await service.create(
-            goal="g", url=f"{lab.origin}/dynamic", idempotency_key="key-2"
-        )
+        await service.create(goal="g", url=f"{lab.origin}/dynamic", idempotency_key="key-2")
 
 
 # -- 4. cancellation -------------------------------------------------------------
 
+
 async def test_cancel_marks_run_cancelled(session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
-    run, _ = await service.create(
-        goal="g", url=f"{lab.origin}/pagination?page=1"
-    )
+    run, _ = await service.create(goal="g", url=f"{lab.origin}/pagination?page=1")
     await session.flush()
     worker_path, _, _, _ = await _make_worker_path(session, service)
 
@@ -198,6 +196,7 @@ async def test_cancel_marks_run_cancelled(session: AsyncSession, tmp_path, lab) 
 
 
 # -- 5. checkpoint resume: page-2 timeout -> PARTIAL -> resume -> COMPLETE -------
+
 
 async def test_resume_continues_same_run_from_checkpoint(
     session: AsyncSession, tmp_path, lab
@@ -237,6 +236,7 @@ async def test_resume_continues_same_run_from_checkpoint(
 
 # -- 6. restricted access stops through the real path (safety regression) --------
 
+
 async def test_restricted_access_stops_through_worker_path(
     session: AsyncSession, tmp_path, lab
 ) -> None:
@@ -254,12 +254,11 @@ async def test_restricted_access_stops_through_worker_path(
 
 # -- 7. SSRF through the real path (production policy unchanged) ------------------
 
+
 async def test_ssrf_blocked_through_worker_path(session: AsyncSession, tmp_path) -> None:
     # production validator (default, no lab override) blocks private hosts
     evidence = EvidenceService(session, publisher=None, storage_directory=tmp_path)  # type: ignore[arg-type]
-    service = AcquisitionService(
-        session, evidence, store_root=tmp_path / "objects"
-    )
+    service = AcquisitionService(session, evidence, store_root=tmp_path / "objects")
     run, _ = await service.create(goal="g", url="http://127.0.0.1/secret")
     await session.flush()
     worker_path, _, _, _ = await _make_worker_path(session, service)
@@ -270,6 +269,7 @@ async def test_ssrf_blocked_through_worker_path(session: AsyncSession, tmp_path)
 
 
 # -- 8. cancel AFTER execution releases sandbox + lease ----------------------------
+
 
 async def test_cancel_after_execution_releases_resources(
     session: AsyncSession, tmp_path, lab
@@ -292,9 +292,8 @@ async def test_cancel_after_execution_releases_resources(
 
 # -- 9. terminal runs are not re-executed --------------------------------------------
 
-async def test_terminal_run_is_not_reexecuted(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+
+async def test_terminal_run_is_not_reexecuted(session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/paywall")
     await session.flush()
@@ -310,6 +309,7 @@ async def test_terminal_run_is_not_reexecuted(
 
 # -- 10. get_run not found raises acquisition-domain 404 ------------------------------
 
+
 async def test_get_run_not_found(session: AsyncSession, tmp_path, lab) -> None:
     from app.acquisition.exceptions import AcquisitionNotFound
 
@@ -320,9 +320,8 @@ async def test_get_run_not_found(session: AsyncSession, tmp_path, lab) -> None:
 
 # -- 11. cancel a RUNNING run releases sandbox execution + lease --------------------
 
-async def test_cancel_running_run_releases_resources(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+
+async def test_cancel_running_run_releases_resources(session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
     await session.flush()
@@ -348,6 +347,7 @@ async def test_cancel_running_run_releases_resources(
 
 # -- 12. worker identity recording is skipped when no execution happened -------------
 
+
 async def test_worker_identity_skipped_without_execution(
     session: AsyncSession, tmp_path, lab
 ) -> None:
@@ -363,6 +363,7 @@ async def test_worker_identity_skipped_without_execution(
 
 # -- 13. cancel is best-effort: terminate/lease-release failures are swallowed ---------
 
+
 class _BrokenPlugin:
     """Plugin whose terminate raises -- release must still proceed."""
 
@@ -373,9 +374,7 @@ class _BrokenPlugin:
         raise RuntimeError("terminate failed")
 
 
-async def test_cancel_tolerates_terminate_failure(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_cancel_tolerates_terminate_failure(session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
     await session.flush()
@@ -389,9 +388,7 @@ async def test_cancel_tolerates_terminate_failure(
     assert cancelled.status == "CANCELLED"
 
 
-async def test_cancel_tolerates_lease_query_failure(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_cancel_tolerates_lease_query_failure(session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
     await session.flush()
@@ -422,6 +419,7 @@ async def test_cancel_tolerates_lease_query_failure(
 
 # -- 14. _apply_payload fills started_at when the run has none ------------------------
 
+
 async def test_apply_payload_sets_started_at_when_missing(
     session: AsyncSession, tmp_path, lab
 ) -> None:
@@ -448,9 +446,8 @@ async def test_apply_payload_sets_started_at_when_missing(
 
 # -- 15. cancel releases a real held lease (RELEASED status) --------------------------
 
-async def test_cancel_releases_real_lease(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+
+async def test_cancel_releases_real_lease(session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
     await session.flush()
@@ -474,6 +471,7 @@ async def test_cancel_releases_real_lease(
 
 
 # -- 16. worker identity tolerates lease lookup failure --------------------------------
+
 
 class _IdentityLeaseBrokenPlugin:
     """Plugin whose last_execution exists, but the lease lookup service fails."""
@@ -508,9 +506,7 @@ async def test_worker_identity_tolerates_lease_lookup_failure(
     plugin = _IdentityLeaseBrokenPlugin()
     worker_path = AcquisitionWorkerPath(plugin, _BrokenIdentityService(service))  # type: ignore[arg-type]
     # identity fields are still recorded; only the lease lookup is skipped
-    await worker_path._record_worker_identity(
-        run, AcquisitionCheckpoint(run_id=str(run.id))
-    )
+    await worker_path._record_worker_identity(run, AcquisitionCheckpoint(run_id=str(run.id)))
     assert run.worker_id == "w-1"
     assert run.sandbox_execution_id == "sb-1"
     assert run.lease_id is None

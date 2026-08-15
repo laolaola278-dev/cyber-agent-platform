@@ -61,7 +61,5 @@ async def test_create_acquisition_validation(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_resume_missing_acquisition_404(client: AsyncClient) -> None:
-    response = await client.post(
-        f"/acquisitions/{uuid4()}/resume", headers=HEADERS
-    )
+    response = await client.post(f"/acquisitions/{uuid4()}/resume", headers=HEADERS)
     assert response.status_code == 404

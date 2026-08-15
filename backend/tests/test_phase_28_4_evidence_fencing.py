@@ -10,15 +10,13 @@ from __future__ import annotations
 import asyncio
 import os
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.acquisition.claim import AcquisitionClaimCoordinator
-from app.acquisition.models import AcquisitionResult, BlockReason, RawArtifact
 from app.acquisition.models_db import AcquisitionArtifactRecord, AcquisitionRun
 from app.acquisition.service import AcquisitionService
 from app.acquisition.store import S3EvidenceStore
@@ -80,9 +78,7 @@ async def _make_service(session, tmp_path, store) -> AcquisitionService:
 @_skip
 class TestEvidenceFencing:
     @pytest.mark.asyncio
-    async def test_stale_worker_cannot_attach_evidence_via_object_store(
-        self, tmp_path
-    ) -> None:
+    async def test_stale_worker_cannot_attach_evidence_via_object_store(self, tmp_path) -> None:
         engine = create_async_engine(PG_DSN, pool_size=5)
         factory = async_sessionmaker(engine, expire_on_commit=False)
         store = S3EvidenceStore(
@@ -138,9 +134,7 @@ class TestEvidenceFencing:
                     coord_b = AcquisitionClaimCoordinator(
                         admin, WorkerLeaseManager(admin), lease_ttl_seconds=120
                     )
-                    claimed = await coord_b.reclaim_expired(
-                        run_id, worker_b, token=uuid4()
-                    )
+                    claimed = await coord_b.reclaim_expired(run_id, worker_b, token=uuid4())
                     assert claimed is not None
 
                 # A's commit is fenced: verify_owner must reject A

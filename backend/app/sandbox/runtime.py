@@ -221,9 +221,7 @@ class SandboxRuntime:
         import time as _t
 
         _started = _t.monotonic()
-        result = await self._provider.execute(
-            identifier, profile, operation, secrets=secrets
-        )
+        result = await self._provider.execute(identifier, profile, operation, secrets=secrets)
         if self._metrics is not None:
             self._metrics.inc(
                 "sandbox_execution_total", labels={"provider": self._provider.provider_name}

@@ -46,8 +46,7 @@ EVALUATION_PROFILE = AgentProfile(
     version="1.0.0",
     role="evaluation",
     capabilities=list(
-        EVALUATION_REGISTRY
-        - {"response.waf", "response.firewall", "response.edr", "host.isolate"}
+        EVALUATION_REGISTRY - {"response.waf", "response.firewall", "response.edr", "host.isolate"}
     ),
     risk_level="LOW",
 )
@@ -307,9 +306,7 @@ class AgentEvaluationHarness:
             if s.illegal_capability and r.outcome == "PASS"
         )
         valid_total = sum(
-            1
-            for s in scenarios
-            if not s.injection_expected and not s.illegal_capability
+            1 for s in scenarios if not s.injection_expected and not s.illegal_capability
         )
 
         metrics = (

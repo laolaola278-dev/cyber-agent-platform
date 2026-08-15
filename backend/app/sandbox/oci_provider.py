@@ -119,10 +119,8 @@ class DockerCLIDriver:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(input_bytes), timeout=self._timeout
             )
-            return subprocess.CompletedProcess(
-                args, proc.returncode or 0, stdout, stderr
-            )
-        except asyncio.TimeoutError as error:
+            return subprocess.CompletedProcess(args, proc.returncode or 0, stdout, stderr)
+        except TimeoutError as error:
             raise ContainerRuntimeError(
                 f"docker {' '.join(args[:2])} timed out after {self._timeout}s"
             ) from error
@@ -171,11 +169,9 @@ class DockerCLIDriver:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input_bytes), timeout=timeout
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(input_bytes), timeout=timeout)
             return proc.returncode or 0, stdout, stderr
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # hard termination: SIGTERM -> SIGKILL -> confirm -> remove
             try:
                 await self.kill(spec.name)
@@ -183,7 +179,7 @@ class DockerCLIDriver:
                 pass
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
-            except asyncio.TimeoutError:  # pragma: no cover
+            except TimeoutError:  # pragma: no cover
                 try:
                     proc.kill()
                 except ProcessLookupError:
@@ -232,23 +228,15 @@ class DockerCLIDriver:
             data = json.loads(proc.stdout.decode())
             return data[0] if isinstance(data, list) and data else {}
         except json.JSONDecodeError as error:
-            raise ContainerRuntimeError(
-                f"docker inspect returned invalid json: {error}"
-            ) from error
+            raise ContainerRuntimeError(f"docker inspect returned invalid json: {error}") from error
 
     async def list_by_labels(self, labels: dict[str, str]) -> list[dict[str, Any]]:
         # empty value = "label key exists" filter (docker syntax)
         filter_args = []
         for k, v in labels.items():
             filter_args += ["--filter", f"label={k}" if v == "" else f"label={k}={v}"]
-        proc = await self._run(
-            ["ps", "-a", *filter_args, "--format", "{{.ID}}"]
-        )
-        ids = [
-            line.strip()
-            for line in proc.stdout.decode().splitlines()
-            if line.strip()
-        ]
+        proc = await self._run(["ps", "-a", *filter_args, "--format", "{{.ID}}"])
+        ids = [line.strip() for line in proc.stdout.decode().splitlines() if line.strip()]
         result = []
         for cid in ids:
             try:
@@ -286,12 +274,12 @@ class OCISandboxProvider:
     real_isolation = True
 
     capabilities = SandboxProviderCapability(
-        network=True,       # container network namespace + egress proxy
-        filesystem=True,    # read-only rootfs + tmpfs
-        secret=True,        # ephemeral env injection, never baked into image
-        timeout=True,       # hard wall-clock + container stop
-        process=True,       # container PID namespace + pids-limit
-        resource=True,      # memory/cpu limits via cgroup
+        network=True,  # container network namespace + egress proxy
+        filesystem=True,  # read-only rootfs + tmpfs
+        secret=True,  # ephemeral env injection, never baked into image
+        timeout=True,  # hard wall-clock + container stop
+        process=True,  # container PID namespace + pids-limit
+        resource=True,  # memory/cpu limits via cgroup
         container=True,
         vm=False,
         snapshot=False,
@@ -310,15 +298,9 @@ class OCISandboxProvider:
         metrics: Any | None = None,
     ) -> None:
         self._driver = driver or DockerCLIDriver()
-        self._image = (
-            image
-            or os.environ.get("CAP_SANDBOX_IMAGE")
-            or "cap-sandbox-http:latest"
-        )
+        self._image = image or os.environ.get("CAP_SANDBOX_IMAGE") or "cap-sandbox-http:latest"
         self._network = network or os.environ.get("CAP_SANDBOX_NETWORK")
-        self._egress_proxy = egress_proxy_url or os.environ.get(
-            "CAP_EGRESS_PROXY_URL"
-        )
+        self._egress_proxy = egress_proxy_url or os.environ.get("CAP_EGRESS_PROXY_URL")
         self._default_memory_mb = default_memory_mb
         self._default_cpu = default_cpu_millicores
         self._default_pids = default_pids_limit
@@ -394,14 +376,16 @@ class OCISandboxProvider:
             tmpfs=("/tmp",),
         )
 
-        started = time.monotonic()
+        time.monotonic()
         payload = request.model_dump_json().encode("utf-8")
         try:
             exit_code, stdout, stderr = await self._driver.run_interactive(
                 spec, payload, timeout=profile.timeout_seconds
             )
             if self._metrics is not None:
-                self._metrics.inc("sandbox_execution_total", labels={"provider": self.provider_name})
+                self._metrics.inc(
+                    "sandbox_execution_total", labels={"provider": self.provider_name}
+                )
         finally:
             # lifecycle: execute -> remove on EVERY path (success/failure/
             # timeout/cancel) so no container outlives its execution

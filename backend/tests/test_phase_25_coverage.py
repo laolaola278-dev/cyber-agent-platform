@@ -386,9 +386,7 @@ async def test_loop_retry_exhaustion_produces_failed_observation() -> None:
     )
     result = await loop.run(
         plan=plan,
-        profile=__import__(
-            "app.agent.contracts", fromlist=["AgentProfile"]
-        ).AgentProfile(
+        profile=__import__("app.agent.contracts", fromlist=["AgentProfile"]).AgentProfile(
             name="i", role="r", capabilities=["asset.read"]
         ),
         registry=REGISTRY,
@@ -419,14 +417,10 @@ async def test_agent_stage_knowledge() -> None:
                 capability=capability, summary="ok", evidence_refs=["evidence:1"]
             )
 
-    agent = InvestigationAgent(
-        AgenticPlanner(FakeLLMProvider()), NoopExecutor()
-    )
+    agent = InvestigationAgent(AgenticPlanner(FakeLLMProvider()), NoopExecutor())
     memory = InvestigationSessionMemory()
     memory.add_observation(
-        AgentObservation(
-            capability="asset.read", summary="s", evidence_refs=["evidence:1"]
-        )
+        AgentObservation(capability="asset.read", summary="s", evidence_refs=["evidence:1"])
     )
     agent.stage_knowledge(memory, title="t", content="c")
     assert len(memory.knowledge_candidates) == 1

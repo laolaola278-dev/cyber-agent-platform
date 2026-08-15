@@ -98,16 +98,10 @@ class PlatformKnowledgeRetriever(KnowledgeRetriever):
 
     async def lookup_fact(self, fact: SecurityFact, *, limit: int = 5) -> list[RetrievedKnowledge]:
         if fact.fact_type == "vulnerability" and fact.value.startswith("CVE-"):
-            return await self.lookup(
-                knowledge_type="CVE", external_id=fact.value, limit=limit
-            )
+            return await self.lookup(knowledge_type="CVE", external_id=fact.value, limit=limit)
         if fact.fact_type == "technique" and fact.value.startswith("T"):
-            return await self.lookup(
-                knowledge_type="ATT&CK", external_id=fact.value, limit=limit
-            )
-        return await self.lookup(
-            knowledge_type="IOC", query=fact.value, limit=limit
-        )
+            return await self.lookup(knowledge_type="ATT&CK", external_id=fact.value, limit=limit)
+        return await self.lookup(knowledge_type="IOC", query=fact.value, limit=limit)
 
 
 class MemoryKnowledgeRetriever(KnowledgeRetriever):
@@ -135,11 +129,7 @@ class MemoryKnowledgeRetriever(KnowledgeRetriever):
             if str(entry.get("knowledge_type", "")).upper() != knowledge_type.upper():
                 continue
             if external_id and str(entry.get("external_id", "")).lower() == external_id.lower():
-                return [
-                    _to_retrieved(
-                        entry, score=1.0, evidence_ref=entry.get("evidence_ref")
-                    )
-                ]
+                return [_to_retrieved(entry, score=1.0, evidence_ref=entry.get("evidence_ref"))]
             if query:
                 # Real retrieval semantics: any knowledge keyword appearing in
                 # the query text is a hit (behavior text contains technique
@@ -156,9 +146,7 @@ class MemoryKnowledgeRetriever(KnowledgeRetriever):
                             " ".join(str(k) for k in keywords),
                         ]
                     ).lower()
-                    keyword_hit = any(
-                        str(kw).lower() in query_lower for kw in keywords
-                    )
+                    keyword_hit = any(str(kw).lower() in query_lower for kw in keywords)
                     if keyword_hit or query_lower in haystack:
                         matches.append(
                             _to_retrieved(
@@ -173,13 +161,9 @@ class MemoryKnowledgeRetriever(KnowledgeRetriever):
 
     async def lookup_fact(self, fact: SecurityFact, *, limit: int = 5) -> list[RetrievedKnowledge]:
         if fact.fact_type == "vulnerability" and fact.value.startswith("CVE-"):
-            return await self.lookup(
-                knowledge_type="CVE", external_id=fact.value, limit=limit
-            )
+            return await self.lookup(knowledge_type="CVE", external_id=fact.value, limit=limit)
         if fact.fact_type == "technique" and fact.value.startswith("T"):
-            return await self.lookup(
-                knowledge_type="ATT&CK", external_id=fact.value, limit=limit
-            )
+            return await self.lookup(knowledge_type="ATT&CK", external_id=fact.value, limit=limit)
         return await self.lookup(knowledge_type="IOC", query=fact.value, limit=limit)
 
 
@@ -210,9 +194,7 @@ def _to_retrieved(
     evidence_ref: str | None = None,
 ) -> RetrievedKnowledge:
     attributes = (
-        entry.get("attributes")
-        if isinstance(entry, dict)
-        else getattr(entry, "attributes", {})
+        entry.get("attributes") if isinstance(entry, dict) else getattr(entry, "attributes", {})
     )
     title = entry.get("title") if isinstance(entry, dict) else getattr(entry, "title", "")
     description = (

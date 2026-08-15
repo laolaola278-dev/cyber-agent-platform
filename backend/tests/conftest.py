@@ -1,5 +1,7 @@
 """Shared test database and API client fixtures."""
 
+import os as _os
+import shutil as _shutil
 from collections.abc import AsyncIterator
 
 import pytest
@@ -72,9 +74,6 @@ async def client() -> AsyncIterator[AsyncClient]:
 # CAP_CERTIFICATION_STRICT=1 turns environment-availability SKIPS on
 # certification-critical tests into FAILURES. A certification job must never
 # end green with "12 passed, 8 skipped" when a critical runtime was absent.
-import os as _os
-import shutil as _shutil
-
 CERT_STRICT = _os.environ.get("CAP_CERTIFICATION_STRICT") == "1"
 
 
@@ -88,7 +87,8 @@ def docker_available() -> bool:
 
         proc = subprocess.run(
             ["docker", "info", "--format", "{{.ServerVersion}}"],
-            capture_output=True, timeout=15,
+            capture_output=True,
+            timeout=15,
         )
         return proc.returncode == 0 and bool(proc.stdout.strip())
     except Exception:  # noqa: BLE001
@@ -137,7 +137,6 @@ def pytest_runtest_setup(item):
         if condition:
             reason = marker.kwargs.get("reason", "condition met")
             raise pytest.fail(
-                f"CAP_CERTIFICATION_STRICT: critical certification test would "
-                f"skip: {reason}",
+                f"CAP_CERTIFICATION_STRICT: critical certification test would skip: {reason}",
                 pytrace=False,
             )

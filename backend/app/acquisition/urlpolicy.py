@@ -152,9 +152,7 @@ class URLPolicyValidator:
         if not allowed:
             return URLValidationResult(False, reason, final_host=host)
         resolved = self._resolver(host)
-        return URLValidationResult(
-            True, reason, final_host=host, resolved_ips=resolved
-        )
+        return URLValidationResult(True, reason, final_host=host, resolved_ips=resolved)
 
     def validate_redirect(self, url: str) -> URLValidationResult:
         """Redirect targets are re-validated (never trusted implicitly)."""

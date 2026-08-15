@@ -13,11 +13,11 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.acquisition.gc import EvidenceOrphanGC, GCRunStats
-from app.acquisition.store import S3EvidenceStore, sha256_hex
+from app.acquisition.gc import EvidenceOrphanGC
+from app.acquisition.store import S3EvidenceStore
 from app.models import Evidence
 
 pytestmark = [pytest.mark.postgres, pytest.mark.object_store]
@@ -98,8 +98,6 @@ async def _ensure_task(session, task_id) -> None:
         await session.flush()
 
 
-
-
 @_skip
 class TestOrphanGC:
     @pytest.mark.asyncio
@@ -175,7 +173,7 @@ class TestOrphanGC:
                     await _ensure_agent(session, _a)
                 for _t in _tasks:
                     await _ensure_task(session, _t)
-                for i, (_a, _t) in enumerate(zip(_agents, _tasks)):
+                for i, (_a, _t) in enumerate(zip(_agents, _tasks, strict=False)):
                     session.add(
                         Evidence(
                             task_id=_t,
@@ -206,6 +204,7 @@ class TestOrphanGC:
         try:
             data = b"race blob"
             obj = await store.put(data, metadata={})
+
             # attach in a separate session, then run GC concurrently
             async def attach() -> None:
                 async with gc._session_factory() as session:  # type: ignore[attr-defined]

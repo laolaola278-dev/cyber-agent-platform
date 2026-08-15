@@ -11,7 +11,6 @@ Secrets must:
 
 from __future__ import annotations
 
-import asyncio
 from uuid import uuid4
 
 import pytest
@@ -46,6 +45,7 @@ def _profile(**overrides) -> SandboxProfile:
 async def test_secret_reaches_sandbox_in_memory_only(runtime) -> None:
     async def op():
         import os as _os
+
         from app.sandbox.inject import get_secret
 
         leaked_env = any(SECRET_VALUE in str(v) for v in _os.environ.values())
@@ -99,9 +99,7 @@ async def test_memory_provider_rejects_secret_injection() -> None:
         return {}
 
     with pytest.raises(Exception) as excinfo:
-        await mem.execute(
-            _profile(), op, execution_id=uuid4(), secrets={"a": SECRET_VALUE}
-        )
+        await mem.execute(_profile(), op, execution_id=uuid4(), secrets={"a": SECRET_VALUE})
     assert "secret injection" in str(excinfo.value)
 
 
@@ -144,6 +142,7 @@ async def test_secret_gone_after_sandbox_exits(runtime) -> None:
 
     async def op():
         import os as _os
+
         from app.sandbox.inject import get_secret
 
         get_secret("cap-db-pass")
@@ -172,6 +171,6 @@ async def test_secret_gone_after_sandbox_exits(runtime) -> None:
             import os
 
             os.kill(child_pid, 0)
-            assert False, "sandbox process still alive"
+            raise AssertionError("sandbox process still alive")
         except OSError:
             pass

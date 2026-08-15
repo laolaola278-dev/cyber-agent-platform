@@ -80,9 +80,7 @@ async def _register_worker(factory, worker_id) -> None:
             )
         )
         await reg.heartbeat(
-            WorkerHeartbeat(
-                worker_id=worker_id, status=WorkerStatus.ONLINE, active_executions=0
-            )
+            WorkerHeartbeat(worker_id=worker_id, status=WorkerStatus.ONLINE, active_executions=0)
         )
 
 
@@ -230,9 +228,7 @@ async def test_claim_loop_stops_claiming_when_unready(db_factory, tmp_path) -> N
         fresh = await session.get(AcquisitionRun, run_id)
         assert fresh.status == "QUEUED"
         await session.execute(
-            __import__("sqlalchemy").text(
-                "DELETE FROM acquisition_runs WHERE id=:rid"
-            ),
+            __import__("sqlalchemy").text("DELETE FROM acquisition_runs WHERE id=:rid"),
             {"rid": str(run_id)},
         )
         await session.commit()

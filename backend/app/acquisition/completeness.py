@@ -61,9 +61,7 @@ class CompletenessEvaluator:
         # time coverage
         time_coverage = 1.0
         if data.expected_time_range:
-            time_coverage = self._time_coverage(
-                data.expected_time_range, data.observed_timestamps
-            )
+            time_coverage = self._time_coverage(data.expected_time_range, data.observed_timestamps)
 
         # pagination completeness
         pagination_complete = True
@@ -114,9 +112,7 @@ class CompletenessEvaluator:
     # -- helpers -------------------------------------------------------------
 
     @staticmethod
-    def _time_coverage(
-        expected: tuple[str, str], observed_timestamps: list[str]
-    ) -> float:
+    def _time_coverage(expected: tuple[str, str], observed_timestamps: list[str]) -> float:
         if not observed_timestamps:
             return 0.0  # no temporal evidence at all
         try:

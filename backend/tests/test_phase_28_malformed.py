@@ -69,9 +69,7 @@ def test_pdf_import_error_reported(monkeypatch: pytest.MonkeyPatch) -> None:
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    result = DocumentAdapter().parse(
-        b"%PDF-1.4 x", content_type="application/pdf", source_url="u"
-    )
+    result = DocumentAdapter().parse(b"%PDF-1.4 x", content_type="application/pdf", source_url="u")
     assert result.ok is False
     assert "UNAVAILABLE:pypdf" in result.parser_backend
 
@@ -127,9 +125,7 @@ def test_lxml_import_error_reported(monkeypatch: pytest.MonkeyPatch) -> None:
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    result = DocumentAdapter().parse(
-        b"<html>x</html>", content_type="text/html", source_url="u"
-    )
+    result = DocumentAdapter().parse(b"<html>x</html>", content_type="text/html", source_url="u")
     assert result.ok is False
     assert "UNAVAILABLE:lxml" in result.parser_backend
 

@@ -64,11 +64,9 @@ class AgentRepository(SQLAlchemyRepository[Agent]):
             page_size=page_size,
         )
 
-    async def _list_related_versions[
-        VersionT: AgentVersion
-    ](self, model: type[VersionT], criterion: object, *, page: int, page_size: int) -> PageResult[
-        VersionT
-    ]:
+    async def _list_related_versions[VersionT: AgentVersion](
+        self, model: type[VersionT], criterion: object, *, page: int, page_size: int
+    ) -> PageResult[VersionT]:
         from sqlalchemy import func
 
         total = await self.session.scalar(select(func.count()).select_from(model).where(criterion))

@@ -114,9 +114,7 @@ def test_unknown_capability_execution_rate_zero() -> None:
     """Unknown capabilities must never reach execution: both guardrail layers
     reject them before the executor is invoked."""
     assert "imaginary.execute" not in REGISTRY
-    decision = CapabilityGuardrail().check(
-        "imaginary.execute", registry=REGISTRY, profile=PROFILE
-    )
+    decision = CapabilityGuardrail().check("imaginary.execute", registry=REGISTRY, profile=PROFILE)
     assert not decision.allowed
 
 

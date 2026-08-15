@@ -10,22 +10,21 @@ acquisition tables before running.
 
 from __future__ import annotations
 
-import os
 import asyncio
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.acquisition.claim import AcquisitionClaimCoordinator
 from app.acquisition.claim_loop import AcquisitionWorkerLoop
 from app.acquisition.exceptions import (
     AcquisitionClaimConflict,
-    AcquisitionConflict,
     AcquisitionStaleCommit,
 )
 from app.acquisition.models_db import AcquisitionRun
@@ -101,9 +100,7 @@ async def _make_service(session: AsyncSession, tmp_path: Path) -> AcquisitionSer
     )
 
 
-async def _register_worker(
-    session: AsyncSession, worker_id: UUID, name: str | None = None
-) -> None:
+async def _register_worker(session: AsyncSession, worker_id: UUID, name: str | None = None) -> None:
     from app.worker.registry import WorkerRegistry
 
     # unique name per worker: WorkerRegistry.register keys by name, and a
@@ -131,9 +128,8 @@ async def _make_worker_path(
     session (Phase 28.3 side-effect fencing: the runtime commit must never
     commit the operation's evidence rows)."""
     from app.sandbox.policy import SandboxPolicyEngine
-    from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
     from app.sandbox.profile import SandboxProfile
-    from app.worker.plugin_runtime import PluginWorkerRuntime
+    from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
     from app.worker.registry import WorkerRegistry
     from app.worker.runtime import WorkerRuntime
     from app.worker.scheduler import WorkerScheduler
@@ -180,9 +176,7 @@ class TestPostgresConcurrency:
             worker_id = workers[i]
             async with pg_factory() as s:
                 await _register_worker(s, worker_id, f"acq-pg-a-{i}")
-                coord = AcquisitionClaimCoordinator(
-                    s, WorkerLeaseManager(s), lease_ttl_seconds=120
-                )
+                coord = AcquisitionClaimCoordinator(s, WorkerLeaseManager(s), lease_ttl_seconds=120)
                 try:
                     await coord.claim(run_id, worker_id, token=uuid4())
                     results.append(f"won:{worker_id}")
@@ -201,9 +195,7 @@ class TestPostgresConcurrency:
 
     # -- B. automatic recovery: expired lease is reclaimed by a loop ----------
     @pytest.mark.asyncio
-    async def test_automatic_recovery_increments_recovery_count(
-        self, pg_factory, tmp_path
-    ) -> None:
+    async def test_automatic_recovery_increments_recovery_count(self, pg_factory, tmp_path) -> None:
         async with pg_factory() as session:
             service = await _make_service(session, tmp_path)
             run, _ = await service.create(goal="g", url="http://example.com/static")
@@ -215,9 +207,7 @@ class TestPostgresConcurrency:
             )
             await coord_a.claim(run.id, owner_a, token=uuid4())
             # force expiry (simulated crash)
-            await WorkerLeaseManager(session).expire(
-                now=datetime.now(UTC) + timedelta(seconds=60)
-            )
+            await WorkerLeaseManager(session).expire(now=datetime.now(UTC) + timedelta(seconds=60))
             await session.commit()
             run_id = run.id
 
@@ -259,9 +249,7 @@ class TestPostgresConcurrency:
                 session, WorkerLeaseManager(session), lease_ttl_seconds=5
             )
             await coord_a.claim(run.id, owner_a, token=token_a)
-            await WorkerLeaseManager(session).expire(
-                now=datetime.now(UTC) + timedelta(seconds=60)
-            )
+            await WorkerLeaseManager(session).expire(now=datetime.now(UTC) + timedelta(seconds=60))
             await session.commit()
             run_id = run.id
 
@@ -414,9 +402,7 @@ class TestPostgresConcurrency:
 
         async def complete_side() -> None:
             async with pg_factory() as s:
-                coord = AcquisitionClaimCoordinator(
-                    s, WorkerLeaseManager(s), lease_ttl_seconds=120
-                )
+                coord = AcquisitionClaimCoordinator(s, WorkerLeaseManager(s), lease_ttl_seconds=120)
                 try:
                     await coord.verify_owner(run_id, worker_a, token_a)
                     run_f = await s.get(AcquisitionRun, run_id)
@@ -428,14 +414,10 @@ class TestPostgresConcurrency:
 
         async def reclaim_side() -> None:
             async with pg_factory() as s:
-                await WorkerLeaseManager(s).expire(
-                    now=datetime.now(UTC) + timedelta(seconds=60)
-                )
+                await WorkerLeaseManager(s).expire(now=datetime.now(UTC) + timedelta(seconds=60))
                 worker_b = uuid4()
                 await _register_worker(s, worker_b, "acq-pg-g-b")
-                coord = AcquisitionClaimCoordinator(
-                    s, WorkerLeaseManager(s), lease_ttl_seconds=120
-                )
+                coord = AcquisitionClaimCoordinator(s, WorkerLeaseManager(s), lease_ttl_seconds=120)
                 try:
                     await coord.reclaim_expired(run_id, worker_b, token=uuid4())
                 except AcquisitionClaimConflict:
@@ -468,9 +450,7 @@ class TestPostgresConcurrency:
             # renew exactly at the expiry boundary: either it wins (owner
             # stays A) or it is rejected (lease lost to reclaim)
             async with pg_factory() as s:
-                coord = AcquisitionClaimCoordinator(
-                    s, WorkerLeaseManager(s), lease_ttl_seconds=120
-                )
+                coord = AcquisitionClaimCoordinator(s, WorkerLeaseManager(s), lease_ttl_seconds=120)
                 try:
                     lease = await coord.renew(run_id, worker_a, token_a)
                     return lease is not None
@@ -479,14 +459,10 @@ class TestPostgresConcurrency:
 
         async def reclaim_side() -> None:
             async with pg_factory() as s:
-                await WorkerLeaseManager(s).expire(
-                    now=datetime.now(UTC) + timedelta(seconds=60)
-                )
+                await WorkerLeaseManager(s).expire(now=datetime.now(UTC) + timedelta(seconds=60))
                 worker_b = uuid4()
                 await _register_worker(s, worker_b, "acq-pg-g-b")
-                coord = AcquisitionClaimCoordinator(
-                    s, WorkerLeaseManager(s), lease_ttl_seconds=120
-                )
+                coord = AcquisitionClaimCoordinator(s, WorkerLeaseManager(s), lease_ttl_seconds=120)
                 try:
                     await coord.reclaim_expired(run_id, worker_b, token=uuid4())
                 except AcquisitionClaimConflict:
@@ -503,7 +479,6 @@ class TestPostgresConcurrency:
             else:
                 # reclaim won -> ownership moved to B
                 assert fresh.worker_id != worker_a
-
 
     # -- I. renew vs reclaim stress (Phase 28.5-RC) --------------------------
     @pytest.mark.stress
@@ -525,9 +500,7 @@ class TestPostgresConcurrency:
         for i in range(rounds):
             async with pg_factory() as session:
                 service = await _make_service(session, tmp_path)
-                run, _ = await service.create(
-                    goal=f"g{i}", url="http://example.com/static"
-                )
+                run, _ = await service.create(goal=f"g{i}", url="http://example.com/static")
                 await session.commit()
                 run_id = run.id
                 worker_a = uuid4()

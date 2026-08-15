@@ -27,12 +27,15 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-pytestmark = [pytest.mark.timeout(1800), pytest.mark.postgres, pytest.mark.object_store, pytest.mark.sandbox]
+pytestmark = [
+    pytest.mark.timeout(1800),
+    pytest.mark.postgres,
+    pytest.mark.object_store,
+    pytest.mark.sandbox,
+]
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-PG_DSN = os.environ.get(
-    "CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283"
-)
+PG_DSN = os.environ.get("CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283")
 PG_SYNC_DSN = PG_DSN.replace("postgresql+asyncpg://", "postgresql://")
 S3_ENDPOINT = os.environ.get("CAP283_S3_ENDPOINT", "127.0.0.1:9000")
 S3_ACCESS = os.environ.get("CAP283_S3_ACCESS", "capadmin")
@@ -109,9 +112,7 @@ async def _enqueue(engine, n: int, url: str, prefix: str) -> list[str]:
     run_ids: list[str] = []
     for _ in range(n):
         async with factory() as session:
-            evidence = EvidenceService(
-                session, publisher=None, storage_directory=Path("outputs")
-            )
+            evidence = EvidenceService(session, publisher=None, storage_directory=Path("outputs"))
             service = AcquisitionService(
                 session,
                 evidence,
@@ -179,9 +180,7 @@ class TestBenchmark284:
         # fetch costs ~3s of subprocess startup, so throughput scales with
         # worker-process count, not concurrency within a process)
         workers = int(os.environ.get("CAP284_BENCH_WORKERS", "8"))
-        procs = [
-            _start_daemon(f"bench-{i}-{os.getpid()}") for i in range(workers)
-        ]
+        procs = [_start_daemon(f"bench-{i}-{os.getpid()}") for i in range(workers)]
         try:
             statuses, drained = await _wait_terminal_counts(
                 engine, run_ids, timeout=max(300.0, BENCH_N * 0.9)
@@ -200,22 +199,21 @@ class TestBenchmark284:
         assert "RUNNING" not in terminal and "QUEUED" not in terminal
         drain_secs = drained if drained > 0 else 1.0
         print(
-            f"\nBENCH durability n={len(run_ids)} enqueue={len(run_ids)/max(enqueue_elapsed,1e-6):.1f}/s "
-            f"drain={len(run_ids)/drain_secs:.1f}/s statuses={sorted(terminal)}"
+            f"\nBENCH durability n={len(run_ids)} "
+            f"enqueue={len(run_ids) / max(enqueue_elapsed, 1e-6):.1f}/s "
+            f"drain={len(run_ids) / drain_secs:.1f}/s statuses={sorted(terminal)}"
         )
         assert len(statuses) == BENCH_N
         await engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_real_lab_acquisition_completes_with_durable_blobs(
-        self, tmp_path
-    ) -> None:
+    async def test_real_lab_acquisition_completes_with_durable_blobs(self, tmp_path) -> None:
         """Real synthetic-lab phase: public URL -> HTTP inside the sandbox
         subprocess -> COMPLETE -> evidence blob durably in MinIO."""
+        import asyncpg
+
         from app.acquisition.store import S3EvidenceStore
         from tests.acquisition_lab import AcquisitionLabServer
-
-        import asyncpg
 
         store = S3EvidenceStore(
             endpoint=S3_ENDPOINT,
@@ -233,9 +231,7 @@ class TestBenchmark284:
 
         try:
             t0 = time.monotonic()
-            run_ids = await _enqueue(
-                engine, BENCH_LAB, f"{lab.origin}/static", "lab"
-            )
+            run_ids = await _enqueue(engine, BENCH_LAB, f"{lab.origin}/static", "lab")
             enqueue_elapsed = time.monotonic() - t0
 
             procs = [
@@ -267,8 +263,9 @@ class TestBenchmark284:
             assert keys, "no evidence blobs written to object store"
             drain_secs = drained if drained > 0 else 1.0
             print(
-                f"\nBENCH lab n={len(run_ids)} enqueue={len(run_ids)/max(enqueue_elapsed,1e-6):.1f}/s "
-                f"execution={len(run_ids)/drain_secs:.1f}/s blobs={len(keys)} "
+                f"\nBENCH lab n={len(run_ids)} "
+                f"enqueue={len(run_ids) / max(enqueue_elapsed, 1e-6):.1f}/s "
+                f"execution={len(run_ids) / drain_secs:.1f}/s blobs={len(keys)} "
                 f"statuses={sorted(terminal)}"
             )
             assert len(keys) >= 1

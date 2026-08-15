@@ -28,9 +28,7 @@ pytestmark = pytest.mark.postgres
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 # default to the isolated Phase 28.3 cluster; override via env
-_ADMIN_DSN = os.environ.get(
-    "CAP283_PG_ADMIN_DSN", "postgresql://cap:cap@127.0.0.1:55432/postgres"
-)
+_ADMIN_DSN = os.environ.get("CAP283_PG_ADMIN_DSN", "postgresql://cap:cap@127.0.0.1:55432/postgres")
 # Database-LESS async URL used to build per-test databases (f"{_DB_DSN}{dbname}").
 # It must never carry a database name: CAP283_PG_DSN in CI points at the
 # already-migrated cap283 DB, and appending the dbname produced
@@ -75,9 +73,7 @@ async def _probe_pg() -> bool:
     try:
         import asyncpg
 
-        conn = await asyncio.wait_for(
-            asyncpg.connect(_ADMIN_DSN), timeout=3
-        )
+        conn = await asyncio.wait_for(asyncpg.connect(_ADMIN_DSN), timeout=3)
         await conn.close()
         return True
     except Exception:  # noqa: BLE001 -- no PG -> skip
@@ -122,8 +118,7 @@ class TestMigration:
             conn = await asyncpg.connect(f"postgresql://cap:cap@127.0.0.1:55432/{dbname}")
             try:
                 rows = await conn.fetch(
-                    "SELECT table_name FROM information_schema.tables "
-                    "WHERE table_schema='public'"
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
                 )
                 actual = {r["table_name"] for r in rows}
                 missing = EXPECTED_TABLES - actual
@@ -131,15 +126,12 @@ class TestMigration:
 
                 for table, cols in EXPECTED_COLUMNS.items():
                     rows = await conn.fetch(
-                        "SELECT column_name FROM information_schema.columns "
-                        "WHERE table_name=$1",
+                        "SELECT column_name FROM information_schema.columns WHERE table_name=$1",
                         table,
                     )
                     actual_cols = {r["column_name"] for r in rows}
                     missing_cols = cols - actual_cols
-                    assert not missing_cols, (
-                        f"missing columns on {table}: {missing_cols}"
-                    )
+                    assert not missing_cols, f"missing columns on {table}: {missing_cols}"
 
                 # unique index on idempotency_key must exist
                 idx = await conn.fetchrow(
@@ -248,8 +240,7 @@ class TestMigration:
             conn = await asyncpg.connect(f"postgresql://cap:cap@127.0.0.1:55432/{dbname}")
             try:
                 rows = await conn.fetch(
-                    "SELECT table_name FROM information_schema.tables "
-                    "WHERE table_schema='public'"
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
                 )
                 actual = {r["table_name"] for r in rows}
                 leftover = EXPECTED_TABLES & actual

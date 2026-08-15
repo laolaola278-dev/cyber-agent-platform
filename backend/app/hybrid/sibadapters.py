@@ -59,16 +59,11 @@ def engine_scorer(
             false_positive_probability=output.false_positive.false_positive_probability,
             false_positive=output.false_positive.likely_false_positive,
             techniques=list(output.technique_mapping.mapped_techniques),
-            technique_scores={
-                c.technique_id: c.score for c in output.technique_mapping.candidates
-            },
-            chain_stages=[
-                s.removeprefix("technique:") for s in output.chain_stages
-            ],
+            technique_scores={c.technique_id: c.score for c in output.technique_mapping.candidates},
+            chain_stages=[s.removeprefix("technique:") for s in output.chain_stages],
             entity_links=[],
             grounded=any(
-                c.status in ("SUPPORTED", "PARTIALLY_SUPPORTED")
-                for c in output.grounded_claims
+                c.status in ("SUPPORTED", "PARTIALLY_SUPPORTED") for c in output.grounded_claims
             ),
             explanations=[output.explanation.statement],
             knowledge_refs=[r.external_id for r in output.knowledge_hits],
@@ -108,6 +103,7 @@ def llm_only_scorer(llm_agent_factory: Any) -> Scorer:
     ``llm_agent_factory`` returns an object with an async ``triage`` method
     returning TriageResult-compatible output. Used for the LLM-only baseline.
     """
+
     async def _run(scenario: dict[str, Any]) -> SIBPrediction:
         source, context, events = _scenario_to_engine_input(scenario)
         agent = llm_agent_factory()

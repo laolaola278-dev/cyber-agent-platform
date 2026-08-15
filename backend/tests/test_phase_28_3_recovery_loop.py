@@ -28,8 +28,8 @@ from app.acquisition.worker_path import AcquisitionRunPayload, AcquisitionWorker
 from app.database import Base
 from app.evidence.service import EvidenceService
 from app.sandbox.policy import SandboxPolicyEngine
-from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
 from app.sandbox.profile import SandboxProfile
+from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
 from app.worker.contracts import WorkerHeartbeat, WorkerRecord, WorkerStatus
 from app.worker.lease import WorkerLeaseManager
 from app.worker.plugin_runtime import PluginWorkerRuntime
@@ -103,18 +103,14 @@ async def _make_worker_path(
     )
     plugin = PluginWorkerRuntime(runtime, SandboxProfile(name="acquisition-lab"))
     coordinator = AcquisitionClaimCoordinator(session, leases, lease_ttl_seconds=lease_ttl)
-    wp = AcquisitionWorkerPath(
-        plugin, service, coordinator, lease_ttl_seconds=lease_ttl
-    )
+    wp = AcquisitionWorkerPath(plugin, service, coordinator, lease_ttl_seconds=lease_ttl)
     wp._runtime_session = runtime_session  # type: ignore[attr-defined]
     return wp
 
 
 async def _expire_leases(session: AsyncSession, seconds: int = 60) -> None:
     """Simulate a crashed worker: force the lease past its TTL."""
-    await WorkerLeaseManager(session).expire(
-        now=datetime.now(UTC) + timedelta(seconds=seconds)
-    )
+    await WorkerLeaseManager(session).expire(now=datetime.now(UTC) + timedelta(seconds=seconds))
 
 
 async def _noop_runner(executed: list[UUID]):
@@ -234,9 +230,7 @@ async def test_concurrent_recovery_single_winner(p283_db, tmp_path) -> None:
     async def worker_loop(i: int) -> int:
         worker_id = worker_ids[i]
         async with SessionFactory() as s:
-            coord = AcquisitionClaimCoordinator(
-                s, WorkerLeaseManager(s), lease_ttl_seconds=120
-            )
+            coord = AcquisitionClaimCoordinator(s, WorkerLeaseManager(s), lease_ttl_seconds=120)
             loop = AcquisitionWorkerLoop(
                 session=s,
                 coordinator=coord,
@@ -302,9 +296,7 @@ async def test_checkpoint_survives_reclaim(session, tmp_path) -> None:
 # -- 5. stale worker commit rejected after automatic loop reclaim -------------
 
 
-async def test_stale_worker_commit_rejected_after_loop_reclaim(
-    session, tmp_path
-) -> None:
+async def test_stale_worker_commit_rejected_after_loop_reclaim(session, tmp_path) -> None:
     service = await _make_service(session, tmp_path)
     run, _ = await service.create(goal="g", url="http://example.com/static")
     await session.commit()
@@ -445,9 +437,7 @@ async def test_terminal_run_not_reclaimed(session, tmp_path) -> None:
     run.status = "COMPLETE"
     await session.commit()
     executed: list[UUID] = []
-    coord = AcquisitionClaimCoordinator(
-        session, WorkerLeaseManager(session), lease_ttl_seconds=120
-    )
+    coord = AcquisitionClaimCoordinator(session, WorkerLeaseManager(session), lease_ttl_seconds=120)
     loop = AcquisitionWorkerLoop(
         session=session,
         coordinator=coord,
@@ -477,9 +467,7 @@ async def test_cancel_requested_with_expired_lease(session, tmp_path) -> None:
     await session.commit()
 
     executed: list[UUID] = []
-    coord = AcquisitionClaimCoordinator(
-        session, WorkerLeaseManager(session), lease_ttl_seconds=120
-    )
+    coord = AcquisitionClaimCoordinator(session, WorkerLeaseManager(session), lease_ttl_seconds=120)
     loop = AcquisitionWorkerLoop(
         session=session,
         coordinator=coord,

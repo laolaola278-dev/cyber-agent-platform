@@ -138,9 +138,7 @@ def test_explanation_builder_llm_failure_falls_back() -> None:
             raise RuntimeError("down")
 
     builder = ExplanationBuilder(llm=BrokenLLM())
-    explanation = run(
-        builder.build(statement="s", factors=["cvss"], evidence_refs=["evidence:1"])
-    )
+    explanation = run(builder.build(statement="s", factors=["cvss"], evidence_refs=["evidence:1"]))
     assert explanation.statement == "s"
     assert explanation.model_generated is False
 
@@ -228,9 +226,7 @@ def test_ranker_clean() -> None:
 
 def test_retriever_lookup_fact_technique() -> None:
     retriever = MemoryKnowledgeRetriever(
-        entries=[
-            {"knowledge_type": "ATT&CK", "external_id": "T1566", "title": "t", "keywords": []}
-        ]
+        entries=[{"knowledge_type": "ATT&CK", "external_id": "T1566", "title": "t", "keywords": []}]
     )
     fact = SecurityFact(
         fact_type="technique", value="T1566", source_kind="knowledge", source_id="k", confidence=0.5

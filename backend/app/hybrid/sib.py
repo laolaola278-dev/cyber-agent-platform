@@ -70,10 +70,26 @@ ATTACK_TEMPLATES: dict[str, dict[str, Any]] = {
             "web-accessible path, then a callback to an external host."
         ),
         "events": [
-            {"event_type": "http_request", "detail": "GET /login?id=1' OR '1'='1", "ts_offset_s": 0},
-            {"event_type": "http_request", "detail": "POST /upload with shell.php", "ts_offset_s": 8},
-            {"event_type": "http_request", "detail": "GET /uploads/shell.php?cmd=id", "ts_offset_s": 20},
-            {"event_type": "http_request", "detail": "GET /uploads/shell.php?cmd=whoami", "ts_offset_s": 26},
+            {
+                "event_type": "http_request",
+                "detail": "GET /login?id=1' OR '1'='1",
+                "ts_offset_s": 0,
+            },
+            {
+                "event_type": "http_request",
+                "detail": "POST /upload with shell.php",
+                "ts_offset_s": 8,
+            },
+            {
+                "event_type": "http_request",
+                "detail": "GET /uploads/shell.php?cmd=id",
+                "ts_offset_s": 20,
+            },
+            {
+                "event_type": "http_request",
+                "detail": "GET /uploads/shell.php?cmd=whoami",
+                "ts_offset_s": 26,
+            },
         ],
         "techniques": ["T1190", "T1059"],
         "severity": "HIGH",
@@ -91,7 +107,11 @@ ATTACK_TEMPLATES: dict[str, dict[str, Any]] = {
             {"event_type": "logon_failure", "detail": "user enumeration pattern", "ts_offset_s": 0},
             {"event_type": "logon_failure", "detail": "400 distinct users", "ts_offset_s": 40},
             {"event_type": "account_created", "detail": "new admin-ish account", "ts_offset_s": 70},
-            {"event_type": "logon_success", "detail": "new account, high privilege", "ts_offset_s": 85},
+            {
+                "event_type": "logon_success",
+                "detail": "new account, high privilege",
+                "ts_offset_s": 85,
+            },
             {"event_type": "share_access", "detail": "sensitive share read", "ts_offset_s": 88},
         ],
         "techniques": ["T1110", "T1078"],
@@ -109,8 +129,16 @@ ATTACK_TEMPLATES: dict[str, dict[str, Any]] = {
         "events": [
             {"event_type": "file_create", "detail": "encoded payload in temp", "ts_offset_s": 0},
             {"event_type": "script_execution", "detail": "powershell -enc ...", "ts_offset_s": 5},
-            {"event_type": "network_connection", "detail": "download from unknown domain", "ts_offset_s": 12},
-            {"event_type": "process_create", "detail": "binary with renamed parent", "ts_offset_s": 18},
+            {
+                "event_type": "network_connection",
+                "detail": "download from unknown domain",
+                "ts_offset_s": 12,
+            },
+            {
+                "event_type": "process_create",
+                "detail": "binary with renamed parent",
+                "ts_offset_s": 18,
+            },
         ],
         "techniques": ["T1204", "T1059", "T1027"],
         "severity": "CRITICAL",
@@ -143,10 +171,22 @@ ATTACK_TEMPLATES: dict[str, dict[str, Any]] = {
             "domain controller minutes later."
         ),
         "events": [
-            {"event_type": "network_connection", "detail": "admin port to server A", "ts_offset_s": 0},
+            {
+                "event_type": "network_connection",
+                "detail": "admin port to server A",
+                "ts_offset_s": 0,
+            },
             {"event_type": "remote_command", "detail": "server A", "ts_offset_s": 4},
-            {"event_type": "network_connection", "detail": "admin port to server B", "ts_offset_s": 9},
-            {"event_type": "logon_success", "detail": "domain controller, same account", "ts_offset_s": 20},
+            {
+                "event_type": "network_connection",
+                "detail": "admin port to server B",
+                "ts_offset_s": 9,
+            },
+            {
+                "event_type": "logon_success",
+                "detail": "domain controller, same account",
+                "ts_offset_s": 20,
+            },
         ],
         "techniques": ["T1021", "T1059"],
         "severity": "HIGH",
@@ -181,7 +221,11 @@ ATTACK_TEMPLATES: dict[str, dict[str, Any]] = {
         "events": [
             {"event_type": "file_read", "detail": "bulk sensitive docs", "ts_offset_s": 0},
             {"event_type": "archive_create", "detail": "single large zip", "ts_offset_s": 30},
-            {"event_type": "network_connection", "detail": "upload to external share", "ts_offset_s": 40},
+            {
+                "event_type": "network_connection",
+                "detail": "upload to external share",
+                "ts_offset_s": 40,
+            },
         ],
         "techniques": ["T1567"],
         "severity": "CRITICAL",
@@ -233,7 +277,11 @@ ATTACK_TEMPLATES: dict[str, dict[str, Any]] = {
             "then compressed data for upload."
         ),
         "events": [
-            {"event_type": "email_attachment_open", "detail": "document with macro", "ts_offset_s": 0},
+            {
+                "event_type": "email_attachment_open",
+                "detail": "document with macro",
+                "ts_offset_s": 0,
+            },
             {"event_type": "script_execution", "detail": "downloaded RAT", "ts_offset_s": 10},
             {"event_type": "network_scan", "detail": "internal enumeration", "ts_offset_s": 40},
             {"event_type": "remote_command", "detail": "second host", "ts_offset_s": 70},
@@ -257,9 +305,21 @@ HARD_NEGATIVE_TEMPLATES: dict[str, dict[str, Any]] = {
             "backup."
         ),
         "events": [
-            {"event_type": "script_execution", "detail": "signed script, known admin", "ts_offset_s": 0},
-            {"event_type": "service_enumeration", "detail": "maintenance activity", "ts_offset_s": 5},
-            {"event_type": "scheduled_task_create", "detail": "nightly backup task", "ts_offset_s": 12},
+            {
+                "event_type": "script_execution",
+                "detail": "signed script, known admin",
+                "ts_offset_s": 0,
+            },
+            {
+                "event_type": "service_enumeration",
+                "detail": "maintenance activity",
+                "ts_offset_s": 5,
+            },
+            {
+                "event_type": "scheduled_task_create",
+                "detail": "nightly backup task",
+                "ts_offset_s": 12,
+            },
         ],
         "severity": "LOW",
         "classification": "BENIGN",
@@ -306,9 +366,17 @@ HARD_NEGATIVE_TEMPLATES: dict[str, dict[str, Any]] = {
             "reported back; the package hash matches the approved release."
         ),
         "events": [
-            {"event_type": "process_create", "detail": "installer from orchestrator", "ts_offset_s": 0},
+            {
+                "event_type": "process_create",
+                "detail": "installer from orchestrator",
+                "ts_offset_s": 0,
+            },
             {"event_type": "service_restart", "detail": "app service", "ts_offset_s": 3},
-            {"event_type": "network_connection", "detail": "orchestrator callback", "ts_offset_s": 8},
+            {
+                "event_type": "network_connection",
+                "detail": "orchestrator callback",
+                "ts_offset_s": 8,
+            },
         ],
         "severity": "LOW",
         "classification": "BENIGN",
@@ -355,9 +423,17 @@ HARD_NEGATIVE_TEMPLATES: dict[str, dict[str, Any]] = {
             "in the approved calendar and the operator's badge is recorded."
         ),
         "events": [
-            {"event_type": "network_connection", "detail": "test range, red-team", "ts_offset_s": 0},
+            {
+                "event_type": "network_connection",
+                "detail": "test range, red-team",
+                "ts_offset_s": 0,
+            },
             {"event_type": "script_execution", "detail": "authorized toolset", "ts_offset_s": 10},
-            {"event_type": "network_connection", "detail": "C2-like beacon (approved)", "ts_offset_s": 30},
+            {
+                "event_type": "network_connection",
+                "detail": "C2-like beacon (approved)",
+                "ts_offset_s": 30,
+            },
         ],
         "severity": "LOW",
         "classification": "BENIGN",
@@ -586,12 +662,12 @@ def build_sib_v1(*, rng_seed: int = 42) -> list[SIBScenario]:
                     "id": f"asset-{scenario_index}",
                     "value": f"10.0.{scenario_index % 250}.{1 + scenario_index % 250}",
                     "name": f"host-{scenario_index}",
-                    "criticality": (
-                        "CRITICAL" if scenario_index % 5 == 0 else "HIGH"
-                    ),
+                    "criticality": ("CRITICAL" if scenario_index % 5 == 0 else "HIGH"),
                 }
             ]
-            context = _context_for(scenario_index, template.get("severity", "MEDIUM"), hard_negative)
+            context = _context_for(
+                scenario_index, template.get("severity", "MEDIUM"), hard_negative
+            )
             scenario_input = _make_input(
                 template=template,
                 track=track,
@@ -624,8 +700,7 @@ def build_sib_v1(*, rng_seed: int = 42) -> list[SIBScenario]:
 def freeze_sib(dataset: list[SIBScenario]) -> str:
     """Deterministic serialization + SHA-256 (freeze before scoring)."""
     payload = [
-        {k: v for k, v in scenario.to_dict().items() if k != "labels"}
-        for scenario in dataset
+        {k: v for k, v in scenario.to_dict().items() if k != "labels"} for scenario in dataset
     ]
     serialized = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -661,8 +736,14 @@ def sib_stats(dataset: list[SIBScenario]) -> dict[str, Any]:
 
     splits = Counter(s.split for s in dataset)
     tracks = Counter(s.track for s in dataset)
-    hard_negatives = {split: sum(1 for s in dataset if s.split == split and s.hard_negative) for split in ("dev", "holdout")}
-    incomplete = {split: sum(1 for s in dataset if s.split == split and s.incomplete != "none") for split in ("dev", "holdout")}
+    hard_negatives = {
+        split: sum(1 for s in dataset if s.split == split and s.hard_negative)
+        for split in ("dev", "holdout")
+    }
+    incomplete = {
+        split: sum(1 for s in dataset if s.split == split and s.incomplete != "none")
+        for split in ("dev", "holdout")
+    }
     categories = Counter(s.category for s in dataset)
     return {
         "total": len(dataset),

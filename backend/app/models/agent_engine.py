@@ -92,9 +92,7 @@ class InvestigationSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     goal: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(
-        String(32), default="ACTIVE", index=True, nullable=False
-    )
+    status: Mapped[str] = mapped_column(String(32), default="ACTIVE", index=True, nullable=False)
     conclusion: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     conclusion_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 

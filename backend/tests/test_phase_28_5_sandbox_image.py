@@ -7,7 +7,6 @@ are gated on a live docker daemon.
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
@@ -29,7 +28,8 @@ def _docker_ready() -> bool:
     try:
         proc = subprocess.run(
             ["docker", "info", "--format", "{{.ServerVersion}}"],
-            capture_output=True, timeout=15,
+            capture_output=True,
+            timeout=15,
         )
         return proc.returncode == 0 and bool(proc.stdout.strip())
     except Exception:  # noqa: BLE001
@@ -70,7 +70,6 @@ def test_browser_dockerfile_is_minimal_and_safe() -> None:
 
 def test_shim_files_are_self_contained() -> None:
     """The image carries ONLY the protocol + shim, no worker code."""
-    from app.sandbox import oci_protocol as proto
 
     # the shim must not import app.* at module level (except the fallback)
     shim = (BACKEND / "app" / "sandbox" / "oci_shim.py").read_text(encoding="utf-8")
@@ -91,12 +90,10 @@ def test_build_http_image_and_inspect() -> None:
     """Build the image, verify non-root user, and run the shim with a request."""
     import json
     import tempfile
+    from uuid import uuid4
 
     from app.sandbox.oci_protocol import SandboxRequest
 
-    from uuid import uuid4
-
-    build_dir = HTTP_DF.parent
     # copy the protocol + shim into the build context (mirrors CI)
     with tempfile.TemporaryDirectory() as ctx:
         ctxp = Path(ctx)
@@ -113,14 +110,18 @@ def test_build_http_image_and_inspect() -> None:
         tag = f"cap-sandbox-http-test:{uuid4().hex[:8]}"
         build = subprocess.run(
             ["docker", "build", "-t", tag, "-f", str(HTTP_DF), str(ctxp)],
-            capture_output=True, text=True, timeout=600,
+            capture_output=True,
+            text=True,
+            timeout=600,
         )
         assert build.returncode == 0, build.stderr[-1000:]
 
     # inspect: non-root user + no privileged
     inspect = subprocess.run(
         ["docker", "image", "inspect", tag],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert inspect.returncode == 0
     data = json.loads(inspect.stdout)[0]
@@ -134,10 +135,20 @@ def test_build_http_image_and_inspect() -> None:
     ).model_dump_json()
     run = subprocess.run(
         [
-            "docker", "run", "--rm", "-i", "--network", "none",
-            "--user", "capuser", tag,
+            "docker",
+            "run",
+            "--rm",
+            "-i",
+            "--network",
+            "none",
+            "--user",
+            "capuser",
+            tag,
         ],
-        input=request, capture_output=True, text=True, timeout=60,
+        input=request,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert run.returncode == 0, run.stderr[-500:]
     assert '"status":"ok"' in run.stdout
@@ -151,7 +162,7 @@ def test_container_enforces_read_only_rootfs_and_tmpfs() -> None:
 
     from app.sandbox.oci_protocol import SandboxRequest
 
-    request = SandboxRequest(
+    SandboxRequest(
         operation="http_fetch",
         run_id=str(uuid4()),
         sandbox_execution_id=str(uuid4()),
@@ -160,12 +171,23 @@ def test_container_enforces_read_only_rootfs_and_tmpfs() -> None:
     # read-only rootfs + tmpfs /tmp: writes to / should fail, /tmp should work
     run = subprocess.run(
         [
-            "docker", "run", "--rm", "--network", "none",
-            "--read-only", "--tmpfs", "/tmp",
-            "--entrypoint", "sh", "cap-sandbox-http:latest",
-            "-c", "touch /tmp/ok && (touch /write-test 2>/dev/null && echo WRITABLE || echo RO-OK)",
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--read-only",
+            "--tmpfs",
+            "/tmp",
+            "--entrypoint",
+            "sh",
+            "cap-sandbox-http:latest",
+            "-c",
+            "touch /tmp/ok && (touch /write-test 2>/dev/null && echo WRITABLE || echo RO-OK)",
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     # --read-only forces RO on the rootfs: the touch must fail
     assert "RO-OK" in run.stdout, f"rootfs should be read-only: {run.stdout} {run.stderr}"

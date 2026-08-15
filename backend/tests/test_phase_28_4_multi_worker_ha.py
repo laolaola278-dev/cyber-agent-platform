@@ -22,7 +22,12 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-pytestmark = [pytest.mark.timeout(1800), pytest.mark.postgres, pytest.mark.object_store, pytest.mark.sandbox]
+pytestmark = [
+    pytest.mark.timeout(1800),
+    pytest.mark.postgres,
+    pytest.mark.object_store,
+    pytest.mark.sandbox,
+]
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 _CERT_PG = os.environ.get("CAP_CERT_PG_DSN", "")  # standard cert credential name
@@ -32,7 +37,11 @@ PG_DSN = os.environ.get(
 )
 PG_SYNC = os.environ.get(
     "CAP283_PG_SYNC",
-    (_CERT_PG.replace("asyncpg", "psycopg") if _CERT_PG else "postgresql://cap@127.0.0.1:55432/cap283"),
+    (
+        _CERT_PG.replace("asyncpg", "psycopg")
+        if _CERT_PG
+        else "postgresql://cap@127.0.0.1:55432/cap283"
+    ),
 )
 S3_ENDPOINT = os.environ.get("CAP283_S3_ENDPOINT", "127.0.0.1:9000")
 S3_ACCESS = os.environ.get("CAP283_S3_ACCESS", "capadmin")
@@ -103,12 +112,13 @@ def _start_daemon(name: str, run_seconds: float = 0.0, metrics_port: int = 9100)
 
 async def _enqueue(engine, n: int) -> list[str]:
     """Insert runs directly (durable queue is the source of truth)."""
-    from app.acquisition.models import AcquisitionPlan, AcquisitionPolicy, SourceType
+    from pathlib import Path as _P
+
+    from app.acquisition.models import AcquisitionPolicy
     from app.acquisition.service import AcquisitionService
-    from app.evidence.service import EvidenceService
     from app.acquisition.store import S3EvidenceStore
     from app.acquisition.urlpolicy import URLPolicyValidator
-    from pathlib import Path as _P
+    from app.evidence.service import EvidenceService
 
     factory = async_sessionmaker(engine, expire_on_commit=False)
     store = S3EvidenceStore(
@@ -119,9 +129,7 @@ async def _enqueue(engine, n: int) -> list[str]:
     )
     run_ids: list[str] = []
     async with factory() as session:
-        evidence = EvidenceService(
-            session, publisher=None, storage_directory=_P("outputs")
-        )
+        evidence = EvidenceService(session, publisher=None, storage_directory=_P("outputs"))
         policy = AcquisitionPolicy()
         service = AcquisitionService(
             session,
@@ -142,9 +150,7 @@ async def _enqueue(engine, n: int) -> list[str]:
     return run_ids
 
 
-async def _wait_drained(
-    engine, run_ids: list[str], timeout: float = 180.0
-) -> dict[str, str]:
+async def _wait_drained(engine, run_ids: list[str], timeout: float = 180.0) -> dict[str, str]:
     factory = async_sessionmaker(engine, expire_on_commit=False)
     deadline = time.monotonic() + timeout
     statuses: dict[str, str] = {}
@@ -172,9 +178,7 @@ async def _wait_drained(
 @_skip
 class TestMultiWorkerHA:
     @pytest.mark.asyncio
-    async def test_two_workers_consume_and_survivor_recovers_after_kill9(
-        self, tmp_path
-    ) -> None:
+    async def test_two_workers_consume_and_survivor_recovers_after_kill9(self, tmp_path) -> None:
         import asyncpg
 
         engine = create_async_engine(PG_DSN, pool_size=8)
@@ -211,7 +215,9 @@ class TestMultiWorkerHA:
                         or 0
                     )
                 if running >= 2 and not killed_a:
-                    os.kill(proc_a.pid, signal.SIGKILL) if hasattr(signal, "SIGKILL") else proc_a.kill()
+                    os.kill(proc_a.pid, signal.SIGKILL) if hasattr(
+                        signal, "SIGKILL"
+                    ) else proc_a.kill()
                     killed_a = True
                     break
                 await asyncio.sleep(0.5)
@@ -233,6 +239,7 @@ class TestMultiWorkerHA:
                 # diagnostic: surface both worker daemon logs so a stuck-QUEUED
                 # worker (crash / DB / S3 / sandbox init error) is visible.
                 import pathlib as _pl
+
                 for nm, p in (("A", proc_a), ("B", proc_b)):
                     lp = getattr(p, "_cap_log_path", None)
                     if not lp:
@@ -272,8 +279,7 @@ class TestMultiWorkerHA:
             # duplicate-owner proof is exercised by claim CAS tests; here we
             # assert the durable invariant definition from the schema docs
             rows = await admin.fetch(
-                "SELECT count(*) AS c FROM acquisition_runs "
-                "WHERE claim_token_hash IS NOT NULL"
+                "SELECT count(*) AS c FROM acquisition_runs WHERE claim_token_hash IS NOT NULL"
             )
             assert rows[0]["c"] == 0
         finally:

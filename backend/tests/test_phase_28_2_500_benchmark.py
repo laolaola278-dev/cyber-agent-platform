@@ -13,12 +13,9 @@ queue durability + claim correctness under volume, not throughput.
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
-import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,9 +35,7 @@ from app.worker.registry import WorkerRegistry
 from app.worker.runtime import WorkerRuntime
 from app.worker.scheduler import WorkerScheduler
 from tests.acquisition_lab import AcquisitionLabServer, lab_policy, lab_url_validator
-from tests.conftest import TestSessionFactory
 
-import pytest
 pytestmark = [pytest.mark.timeout(1200)]
 
 
@@ -58,7 +53,9 @@ async def _enqueue_all(
     session: AsyncSession, tmp_path: Path, lab: AcquisitionLabServer, count: int
 ) -> list:
     evidence = EvidenceService(
-        session, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+        session,
+        publisher=None,
+        storage_directory=tmp_path,  # type: ignore[arg-type]
     )
     service = AcquisitionService(
         session,
@@ -77,7 +74,7 @@ async def _enqueue_all(
 
 async def test_500_runs_durable_no_loss_no_duplicate(tmp_path, lab) -> None:
     from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from sqlalchemy.pool import NullPool
 
     from app.database import Base
@@ -117,9 +114,7 @@ async def test_500_runs_durable_no_loss_no_duplicate(tmp_path, lab) -> None:
             )
         )
         await reg.heartbeat(
-            WorkerHeartbeat(
-                worker_id=worker.id, status=WorkerStatus.ONLINE, active_executions=0
-            )
+            WorkerHeartbeat(worker_id=worker.id, status=WorkerStatus.ONLINE, active_executions=0)
         )
         leases = WorkerLeaseManager(work_session)
         coord = AcquisitionClaimCoordinator(work_session, leases, lease_ttl_seconds=60)
@@ -133,7 +128,9 @@ async def test_500_runs_durable_no_loss_no_duplicate(tmp_path, lab) -> None:
         )
         plugin = PluginWorkerRuntime(rt, SandboxProfile(name="acquisition-lab"))
         evidence = EvidenceService(
-            work_session, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+            work_session,
+            publisher=None,
+            storage_directory=tmp_path,  # type: ignore[arg-type]
         )
         service = AcquisitionService(
             work_session,
@@ -177,14 +174,16 @@ async def test_500_runs_durable_no_loss_no_duplicate(tmp_path, lab) -> None:
 
     # verify: every run reached a terminal state (no loss)
     async with SessionFactory() as verify_session:
-        total = (
-            await verify_session.scalar(select(func.count()).select_from(AcquisitionRun))
-        ) or 0
+        total = (await verify_session.scalar(select(func.count()).select_from(AcquisitionRun))) or 0
         terminal = (
             await verify_session.scalar(
                 select(func.count())
                 .select_from(AcquisitionRun)
-                .where(AcquisitionRun.status.in_(("COMPLETE", "PARTIAL", "FAILED", "BLOCKED", "CANCELLED")))
+                .where(
+                    AcquisitionRun.status.in_(
+                        ("COMPLETE", "PARTIAL", "FAILED", "BLOCKED", "CANCELLED")
+                    )
+                )
             )
         ) or 0
         non_terminal = total - terminal

@@ -46,10 +46,9 @@ class LLMRanker:
         await self._throttle()
         prompt = (
             "You rank ATT&CK technique candidates for a security investigation. "
-            "Respond ONLY with JSON: {\"order\": [\"T...\", ...], \"explanation\": \"...\"}. "
+            'Respond ONLY with JSON: {"order": ["T...", ...], "explanation": "..."}. '
             "Your order must be a permutation of the given candidates; you MUST NOT "
-            "invent or add techniques. Candidates: "
-            + ", ".join(technique_ids)
+            "invent or add techniques. Candidates: " + ", ".join(technique_ids)
         )
         content = await self._prompt(prompt)
         order, explanation = self._parse(content)

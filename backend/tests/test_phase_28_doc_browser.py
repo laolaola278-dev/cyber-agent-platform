@@ -76,9 +76,7 @@ def test_json_parse_metadata_type() -> None:
 
 
 def test_text_parse_clips_long() -> None:
-    result = DocumentAdapter().parse(
-        b"x" * 300000, content_type="text/plain", source_url="u"
-    )
+    result = DocumentAdapter().parse(b"x" * 300000, content_type="text/plain", source_url="u")
     assert result.ok is True
     assert len(result.document.text) <= 200000
 

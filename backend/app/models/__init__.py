@@ -1,5 +1,14 @@
 """ORM model exports used by Alembic and application services."""
 
+from app.acquisition.models_db import (
+    AcquisitionArtifactRecord,
+    AcquisitionPlanRecord,
+    AcquisitionRun,
+    AcquisitionStepRecord,
+    CompletenessReportRecord,
+    ExtractedDocumentRecord,
+    PublicEndpointCandidateRecord,
+)
 from app.models.agent import Agent, AgentHeartbeat, AgentVersion
 from app.models.agent_engine import (
     AgentDecision,
@@ -106,15 +115,6 @@ from app.models.workflow import (
     WorkflowInstance,
     WorkflowStep,
 )
-from app.acquisition.models_db import (
-    AcquisitionArtifactRecord,
-    AcquisitionPlanRecord,
-    AcquisitionRun,
-    AcquisitionStepRecord,
-    CompletenessReportRecord,
-    ExtractedDocumentRecord,
-    PublicEndpointCandidateRecord,
-)
 
 __all__ = [
     "Agent",
@@ -182,6 +182,7 @@ __all__ = [
     "IncidentKnowledge",
     "IncidentTimeline",
     "InvestigationCase",
+    "InvestigationHypothesisRecord",
     "InvestigationSession",
     "CaseComment",
     "Report",

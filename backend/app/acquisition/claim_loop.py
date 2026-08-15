@@ -22,14 +22,6 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-logger = logging.getLogger("cap.acquisition.claim_loop")
-
-# terminal run states: only these release the run lease after execution
-TERMINAL = ("COMPLETE", "BLOCKED", "CANCELLED", "FAILED")
-
-# terminal run states: only these release the run lease after execution
-TERMINAL = ("COMPLETE", "BLOCKED", "CANCELLED", "FAILED")
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +30,11 @@ from app.acquisition.exceptions import AcquisitionClaimConflict, AcquisitionNotF
 from app.acquisition.models_db import AcquisitionRun
 from app.worker.contracts import LeaseStatus, WorkerHeartbeat, WorkerStatus
 from app.worker.registry import WorkerRegistry
+
+logger = logging.getLogger("cap.acquisition.claim_loop")
+
+# terminal run states: only these release the run lease after execution
+TERMINAL = ("COMPLETE", "BLOCKED", "CANCELLED", "FAILED")
 
 ClaimRunner = Callable[[UUID, UUID], Awaitable[Any]]
 
@@ -149,9 +146,7 @@ class AcquisitionWorkerLoop:
         if self._metrics is not None:
             from app.acquisition.models_db import AcquisitionRun
 
-            self._metrics.set_gauge(
-                "acquisition_running", float(len(self._in_flight))
-            )
+            self._metrics.set_gauge("acquisition_running", float(len(self._in_flight)))
             try:
                 depth = int(
                     await self._session.scalar(
@@ -263,9 +258,7 @@ class AcquisitionWorkerLoop:
         """Atomically reclaim an expired RUNNING run and execute it here."""
         token = uuid4()
         try:
-            claimed = await self._coordinator.reclaim_expired(
-                run_id, self._worker_id, token=token
-            )
+            claimed = await self._coordinator.reclaim_expired(run_id, self._worker_id, token=token)
         except (AcquisitionClaimConflict, AcquisitionNotFound):
             await self._session.rollback()
             self.stats.skipped_terminal += 1

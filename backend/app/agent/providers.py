@@ -116,9 +116,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
             self._config.base_url.rstrip("/").startswith(url.rstrip("/"))
             for url in self._allowed_base_urls
         ):
-            raise ProviderUnavailableError(
-                f"base_url is not allowlisted: {self._config.base_url}"
-            )
+            raise ProviderUnavailableError(f"base_url is not allowlisted: {self._config.base_url}")
 
     async def _resolve_key(self) -> SecretStr:
         reference = SecretReference(

@@ -81,11 +81,12 @@ class SandboxedBrowserExecutor:
             )
 
         validator = self._validator
-        policy = self._policy
 
         async def operation() -> dict[str, Any]:
             from app.acquisition.browseradapter import (
                 BrowserObservation as _Obs,
+            )
+            from app.acquisition.browseradapter import (
                 PlaywrightAcquisitionAdapter,
             )
             from app.tools.playwright.adapter import PlaywrightAdapter
@@ -132,9 +133,7 @@ class SandboxedBrowserExecutor:
                 except Exception:  # noqa: BLE001
                     pass
 
-        sandbox_result = await self._runtime.execute(
-            self._profile, operation, execution_id=uuid4()
-        )
+        sandbox_result = await self._runtime.execute(self._profile, operation, execution_id=uuid4())
         if sandbox_result.status == "SUCCEEDED" and sandbox_result.output:
             try:
                 return BrowserObservation(**sandbox_result.output)
@@ -159,7 +158,6 @@ class SandboxedBrowserExecutor:
             available=False,
             error=sandbox_result.error or f"sandbox status: {sandbox_result.status}",
         )
-
 
     async def _browse_typed(
         self,

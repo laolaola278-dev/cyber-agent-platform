@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -22,8 +21,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.acquisition.agent import AdaptiveDataAcquisitionAgent, AgentConfig
-from app.acquisition.checkpoint import AcquisitionCheckpoint
 from app.acquisition.candidates import extract_candidates
+from app.acquisition.checkpoint import AcquisitionCheckpoint
 from app.acquisition.documentadapter import DocumentAdapter
 from app.acquisition.httpadapter import HTTPAdapter
 from app.acquisition.planner import AcquisitionPlanner, PlannerRequest
@@ -63,6 +62,7 @@ async def _agent(tmp_path: Path) -> AdaptiveDataAcquisitionAgent:
 
 
 # -- 1. evidence integrity: object key == Evidence.sha256 == artifact sha -------
+
 
 async def test_evidence_integrity_three_way_hash(session: AsyncSession, tmp_path, lab) -> None:
     evidence_svc = EvidenceService(session, publisher=None, storage_directory=tmp_path)  # type: ignore[arg-type]
@@ -117,16 +117,15 @@ async def test_evidence_integrity_tamper_detection(session: AsyncSession, tmp_pa
 
 # -- 2. hybrid E2E: acquisition -> evidence -> candidates -> knowledge -> hybrid -
 
+
 async def test_hybrid_e2e_explanation_cites_real_evidence(
     session: AsyncSession, tmp_path, lab
 ) -> None:
-    from app.hybrid.attck import HybridATTCMapper
+    # 1) real acquisition of the dynamic advisory page (with evidence sink)
+    from app.acquisition.service import _EvidenceSink
     from app.hybrid.engine import HybridEngine, HybridEngineConfig
     from app.hybrid.facts import SecurityFact
     from app.hybrid.retrieval import MemoryKnowledgeRetriever
-
-    # 1) real acquisition of the dynamic advisory page (with evidence sink)
-    from app.acquisition.service import _EvidenceSink
 
     evidence_svc = EvidenceService(session, publisher=None, storage_directory=tmp_path)  # type: ignore[arg-type]
     agent = AdaptiveDataAcquisitionAgent(
@@ -196,7 +195,9 @@ async def test_hybrid_e2e_explanation_cites_real_evidence(
             "evidence_refs": [evidence_ref],
         },
         context={"cvss": 9.0, "in_kev": True, "asset_criticality": "HIGH"},
-        events=[{"id": "evt-1", "title": result.documents[0].title, "evidence_refs": [evidence_ref]}],
+        events=[
+            {"id": "evt-1", "title": result.documents[0].title, "evidence_refs": [evidence_ref]}
+        ],
     )
     # the explanation must reference the REAL evidence id
     assert output.classification in ("CONFIRMED", "LIKELY", "POSSIBLE", "MALICIOUS")
@@ -213,9 +214,8 @@ async def test_hybrid_e2e_explanation_cites_real_evidence(
 
 # -- 3. safety regression on the real path ----------------------------------------
 
-async def test_safety_regression_restricted_pages(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+
+async def test_safety_regression_restricted_pages(session: AsyncSession, tmp_path, lab) -> None:
     evidence_svc = EvidenceService(session, publisher=None, storage_directory=tmp_path)  # type: ignore[arg-type]
     service = AcquisitionService(
         session,
@@ -231,16 +231,12 @@ async def test_safety_regression_restricted_pages(
     ):
         run, _ = await service.create(goal="g", url=f"{lab.origin}{path}")
         await session.flush()
-        out = await service.run_agent_operation(
-            run, AcquisitionCheckpoint(run_id=str(run.id))
-        )
+        out = await service.run_agent_operation(run, AcquisitionCheckpoint(run_id=str(run.id)))
         assert out.status == "BLOCKED", path
         assert out.blocked_reason == expected_reason, path
 
 
-async def test_safety_regression_robots_disallowed(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_safety_regression_robots_disallowed(session: AsyncSession, tmp_path, lab) -> None:
     evidence_svc = EvidenceService(session, publisher=None, storage_directory=tmp_path)  # type: ignore[arg-type]
     service = AcquisitionService(
         session,
@@ -259,8 +255,6 @@ async def test_safety_regression_robots_disallowed(
 async def test_safety_regression_scope_never_expands(session: AsyncSession, tmp_path, lab) -> None:
     agent = await _agent(tmp_path)
     # pagination next links stay same-origin; an off-origin target is blocked
-    result = await agent.acquire(
-        PlannerRequest(goal="g", url=f"{lab.origin}/pagination?page=1")
-    )
+    result = await agent.acquire(PlannerRequest(goal="g", url=f"{lab.origin}/pagination?page=1"))
     for url in result.visited_urls:
         assert url.startswith(lab.origin), f"scope expanded: {url}"

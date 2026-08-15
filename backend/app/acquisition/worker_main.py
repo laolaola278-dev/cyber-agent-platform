@@ -44,7 +44,6 @@ import os
 import signal
 import socket
 import sys
-from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID
 
@@ -55,8 +54,8 @@ from app.acquisition.worker_path import AcquisitionWorkerPath
 from app.database import AsyncSessionFactory, engine
 from app.evidence.service import EvidenceService
 from app.sandbox.policy import SandboxPolicyEngine
-from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
 from app.sandbox.profile import SandboxProfile
+from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
 from app.worker.contracts import WorkerHeartbeat, WorkerRecord, WorkerStatus
 from app.worker.lease import WorkerLeaseManager
 from app.worker.plugin_runtime import PluginWorkerRuntime
@@ -270,7 +269,9 @@ async def _amain() -> int:
 
         # service + full execution chain (NOT synthetic)
         evidence = EvidenceService(
-            work_session, publisher=None, storage_directory=store_root  # type: ignore[arg-type]
+            work_session,
+            publisher=None,
+            storage_directory=store_root,  # type: ignore[arg-type]
         )
         # URLPolicyValidator construction: allow_private is a TEST-ONLY hook
         # (benchmark lab) -- production default keeps private/loopback denied
@@ -365,7 +366,10 @@ async def _amain() -> int:
                 metrics=metrics,
             )
             reaper_task = asyncio.create_task(reaper.run_forever())
-            logger.info("oci sandbox reaper started (interval=%ss)", settings.sandbox_reaper_interval_seconds)
+            logger.info(
+                "oci sandbox reaper started (interval=%ss)",
+                settings.sandbox_reaper_interval_seconds,
+            )
 
         # -- graceful shutdown ----------------------------------------------
         stop_event = asyncio.Event()

@@ -143,9 +143,10 @@ async def test_rate_limit_persists_after_retries() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, json={"error": "rate limited"})
 
-    provider = _provider(transport=httpx.MockTransport(handler), config=ModelConfig(
-        model="m", base_url="https://api.openai.com/v1", retry_limit=1
-    ))
+    provider = _provider(
+        transport=httpx.MockTransport(handler),
+        config=ModelConfig(model="m", base_url="https://api.openai.com/v1", retry_limit=1),
+    )
     with pytest.raises(ModelRateLimitError):
         await provider.complete(ModelRequest(user_prompt="hi"))
 

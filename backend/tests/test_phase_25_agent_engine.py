@@ -108,9 +108,7 @@ def test_session_memory_operations() -> None:
     memory.set_plan(plan)
     memory.add_observation(AgentObservation(capability="asset.read", summary="s"))
     memory.add_decision(AgentDecision(decision_type="LOOP_FINISHED", rationale="ok"))
-    memory.add_handoff(
-        HandoffContract(source_agent="a", target_agent="b", reason="r")
-    )
+    memory.add_handoff(HandoffContract(source_agent="a", target_agent="b", reason="r"))
     memory.stage_knowledge_candidate(
         __import__("app.agent.contracts", fromlist=["KnowledgeCandidate"]).KnowledgeCandidate(
             title="t", content="c"
@@ -302,13 +300,9 @@ def test_capability_guardrail_checks() -> None:
 
 def test_output_guardrail_secret_and_hallucination() -> None:
     guardrail = OutputGuardrail()
-    secret = guardrail.check(
-        "done password=hunter2", evidence_refs=[], known_evidence=set()
-    )
+    secret = guardrail.check("done password=hunter2", evidence_refs=[], known_evidence=set())
     assert not secret.allowed
-    hallucinated = guardrail.check(
-        "done", evidence_refs=["evidence:missing"], known_evidence=set()
-    )
+    hallucinated = guardrail.check("done", evidence_refs=["evidence:missing"], known_evidence=set())
     assert not hallucinated.allowed
     ok = guardrail.check(
         "done", evidence_refs=["evidence:known"], known_evidence={"evidence:known"}

@@ -55,9 +55,7 @@ async def _make_service(session: AsyncSession, tmp_path) -> AcquisitionService:
 
 
 @pytest.mark.asyncio
-async def test_service_persists_successful_run(
-    session: AsyncSession, tmp_path
-) -> None:
+async def test_service_persists_successful_run(session: AsyncSession, tmp_path) -> None:
     service = await _make_service(session, tmp_path)
     # Public example URL: DNS-resolvable, no real network (validator passes but
     # fetch fails -> FAILED gracefully). Use a plan-level test instead below.
@@ -79,9 +77,7 @@ async def test_service_persists_successful_run(
 
 
 @pytest.mark.asyncio
-async def test_service_persists_blocked_run(
-    session: AsyncSession, tmp_path
-) -> None:
+async def test_service_persists_blocked_run(session: AsyncSession, tmp_path) -> None:
     service = await _make_service(session, tmp_path)
     created = await service.create_and_run(
         goal="reach restricted",
@@ -94,9 +90,7 @@ async def test_service_persists_blocked_run(
 
 
 @pytest.mark.asyncio
-async def test_service_artifact_and_document_tables(
-    session: AsyncSession, tmp_path
-) -> None:
+async def test_service_artifact_and_document_tables(session: AsyncSession, tmp_path) -> None:
     from app.acquisition.agent import AdaptiveDataAcquisitionAgent, AgentConfig
     from app.acquisition.dataset import (
         SyntheticResponse,
@@ -161,6 +155,7 @@ async def test_service_artifact_and_document_tables(
 @pytest.mark.asyncio
 async def test_seed_acquisition_capabilities(session: AsyncSession) -> None:
     service = CapabilityRegistryService(session, None)  # type: ignore[arg-type]
+
     # monkeypatch repository methods to avoid real DB rows
     class FakeRepo:
         async def get_by_name(self, name):

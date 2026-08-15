@@ -26,9 +26,7 @@ from typing import Any
 from uuid import UUID
 
 from app.sandbox.oci_provider import (
-    LABEL_ATTEMPT,
     LABEL_EXECUTION,
-    LABEL_IMAGE,
     LABEL_LEASE,
     LABEL_RUN,
     LABEL_WORKER,
@@ -95,8 +93,9 @@ class OCIContainerReaper:
             async with self._session_factory() as session:
                 row = (
                     await session.execute(
-                        select(AcquisitionRun.worker_id, AcquisitionRun.lease_id)
-                        .where(AcquisitionRun.id == self._as_uuid(run_id))
+                        select(AcquisitionRun.worker_id, AcquisitionRun.lease_id).where(
+                            AcquisitionRun.id == self._as_uuid(run_id)
+                        )
                     )
                 ).first()
             if row is None:
@@ -109,7 +108,6 @@ class OCIContainerReaper:
             return None, None
 
     async def _worker_alive(self, worker_id: str) -> bool:
-        from sqlalchemy import select
 
         from app.worker.contracts import WorkerStatus
         from app.worker.registry import WorkerRegistry
@@ -117,9 +115,7 @@ class OCIContainerReaper:
         try:
             async with self._session_factory() as session:
                 try:
-                    worker = await WorkerRegistry(session).require(
-                        self._as_uuid(worker_id)
-                    )
+                    worker = await WorkerRegistry(session).require(self._as_uuid(worker_id))
                 except Exception:  # noqa: BLE001 -- missing worker = dead
                     return False
             return worker.status == WorkerStatus.ONLINE
@@ -127,7 +123,7 @@ class OCIContainerReaper:
             return True
 
     async def _is_stale(self, container: dict[str, Any]) -> tuple[bool, str]:
-        labels = (container.get("Config", {}).get("Labels") or {})
+        labels = container.get("Config", {}).get("Labels") or {}
         execution_id = labels.get(LABEL_EXECUTION)
         run_id = labels.get(LABEL_RUN)
         worker_id = labels.get(LABEL_WORKER)
@@ -146,12 +142,11 @@ class OCIContainerReaper:
             # the run is now owned through a DIFFERENT lease (reclaimed by
             # another worker / new epoch) -> this container is stale
             return True, (
-                f"lease changed: container lease {lease_id[:8]} != "
-                f"current {cur_lease[:8]}"
+                f"lease changed: container lease {lease_id[:8]} != current {cur_lease[:8]}"
             )
         if worker_id and worker_id != cur_worker:
             # current owner is another worker -> stale
-            return True, f"owner changed: container worker != current worker"
+            return True, "owner changed: container worker != current worker"
         if worker_id and not await self._worker_alive(worker_id):
             # owning worker is dead/offline and no one reclaimed yet -> stale
             return True, f"owning worker {worker_id[:8]} is not ONLINE"

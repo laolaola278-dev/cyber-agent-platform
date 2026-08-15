@@ -22,7 +22,6 @@ For every cancelled run we prove:
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -49,7 +48,6 @@ from app.worker.scheduler import WorkerScheduler
 from tests.acquisition_lab import AcquisitionLabServer, lab_policy, lab_url_validator
 
 
-
 @pytest_asyncio.fixture
 async def db(tmp_path) -> tuple:
     """Per-test file-backed SQLite with per-session connections.
@@ -59,7 +57,7 @@ async def db(tmp_path) -> tuple:
     scenario this suite must exercise. A per-test file DB gives each session
     its own connection and full isolation between tests.
     """
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from sqlalchemy.pool import NullPool
 
     from app.database import Base
@@ -118,7 +116,9 @@ async def _make_service(
     session: AsyncSession, tmp_path: Path, lab: AcquisitionLabServer
 ) -> AcquisitionService:
     evidence = EvidenceService(
-        session, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+        session,
+        publisher=None,
+        storage_directory=tmp_path,  # type: ignore[arg-type]
     )
     return AcquisitionService(
         session,
@@ -165,9 +165,7 @@ async def _make_worker_path(
     return AcquisitionWorkerPath(plugin, service, coordinator), provider
 
 
-async def _cancel_via_api(
-    db, tmp_path: Path, run_id, worker, provider
-) -> dict:
+async def _cancel_via_api(db, tmp_path: Path, run_id, worker, provider) -> dict:
     """Cancel through a SEPARATE session (realistic API request path).
 
     The API cancel request uses its own DB session + its own WorkerRuntime.
@@ -183,7 +181,9 @@ async def _cancel_via_api(
     SessionFactory = _session_factory(db)
     async with SessionFactory() as cancel_session:
         evidence = EvidenceService(
-            cancel_session, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+            cancel_session,
+            publisher=None,
+            storage_directory=tmp_path,  # type: ignore[arg-type]
         )
         cancel_service = AcquisitionService(
             cancel_session,
@@ -204,7 +204,7 @@ async def _cancel_via_api(
         # of failing the whole scenario.
         from sqlalchemy.exc import OperationalError, PendingRollbackError
 
-        for attempt in range(50):
+        for _attempt in range(50):
             try:
                 payload = await wp.cancel(run_id)
                 break
@@ -226,14 +226,7 @@ async def _cancel_via_api(
 async def _evidence_count(session: AsyncSession) -> int:
     from app.models import Evidence
 
-    return int(
-        (
-            await session.scalar(
-                select(func.count()).select_from(Evidence)
-            )
-        )
-        or 0
-    )
+    return int((await session.scalar(select(func.count()).select_from(Evidence))) or 0)
 
 
 async def _network_count(session: AsyncSession, run_id) -> int:
@@ -276,9 +269,7 @@ async def test_cancel_before_claim(session: AsyncSession, tmp_path, lab) -> None
 async def test_cancel_during_http_fetch(db, session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     # /pagination?mode=timeout sleeps 8s inside the lab server (client fetch)
-    run, _ = await service.create(
-        goal="g", url=f"{lab.origin}/pagination?mode=timeout&page=1"
-    )
+    run, _ = await service.create(goal="g", url=f"{lab.origin}/pagination?mode=timeout&page=1")
     await session.flush()
     worker = await _register_worker(session, "acq-cancel-http")
     wp, provider = await _make_worker_path(session, service, worker)
@@ -306,12 +297,12 @@ async def test_cancel_during_http_fetch(db, session: AsyncSession, tmp_path, lab
 
 # -- 3. cancel during browser navigation ------------------------------------------
 
-async def test_cancel_during_browser_navigation(
-    db, session: AsyncSession, tmp_path, lab
-) -> None:
+
+async def test_cancel_during_browser_navigation(db, session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(
-        goal="g", url=f"{lab.origin}/pagination?mode=timeout&page=1", 
+        goal="g",
+        url=f"{lab.origin}/pagination?mode=timeout&page=1",
         expected_fields=["title"],
     )
     await session.flush()
@@ -336,6 +327,7 @@ async def test_cancel_during_browser_navigation(
 
 
 # -- 4. cancel during pagination ---------------------------------------------------
+
 
 async def test_cancel_during_pagination(db, session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
@@ -373,10 +365,9 @@ async def test_cancel_during_pagination(db, session: AsyncSession, tmp_path, lab
 
 # -- 5. cancel during evidence-write boundary --------------------------------------
 
+
 @pytest.mark.filterwarnings("ignore::ResourceWarning")
-async def test_cancel_during_evidence_write(
-    db, session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_cancel_during_evidence_write(db, session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
     await session.flush()
@@ -403,6 +394,7 @@ async def test_cancel_during_evidence_write(
 
 # -- 6. cancel immediately before completion ----------------------------------------
 
+
 async def test_cancel_just_before_completion(db, session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
@@ -418,7 +410,7 @@ async def test_cancel_just_before_completion(db, session: AsyncSession, tmp_path
     task = asyncio.create_task(wp.run_claimed(run.id, worker.id, token))
     await asyncio.sleep(0.25)  # near completion for a tiny /static page
     await _cancel_via_api(db, tmp_path, run.id, worker, provider)
-    result = await asyncio.wait_for(task, timeout=10)
+    await asyncio.wait_for(task, timeout=10)
     await session.refresh(run)
     # either CANCELLED (cancel won the race) or COMPLETE (finished first) --
     # but NEVER a stale success applied AFTER cancellation
@@ -429,6 +421,7 @@ async def test_cancel_just_before_completion(db, session: AsyncSession, tmp_path
 
 
 # -- 7. cancel AFTER completion -------------------------------------------------------
+
 
 async def test_cancel_after_completion(session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
@@ -454,6 +447,7 @@ async def test_cancel_after_completion(session: AsyncSession, tmp_path, lab) -> 
 
 # -- invariant: cancelled runs add zero network + zero evidence ----------------------
 
+
 async def test_cancelled_runs_have_zero_evidence_writes(
     db, session: AsyncSession, tmp_path, lab
 ) -> None:
@@ -477,8 +471,8 @@ async def test_cancelled_runs_have_zero_evidence_writes(
 
     task = asyncio.create_task(wp.run_claimed(run.id, worker.id, token))
     await asyncio.sleep(0.05)
-    cancelled = await _cancel_via_api(db, tmp_path, run.id, worker, provider)
-    result = await asyncio.wait_for(task, timeout=10)
+    await _cancel_via_api(db, tmp_path, run.id, worker, provider)
+    await asyncio.wait_for(task, timeout=10)
     await session.refresh(run)
 
     assert run.status == "CANCELLED"
@@ -487,10 +481,10 @@ async def test_cancelled_runs_have_zero_evidence_writes(
     from app.models import Evidence
 
     late_rows = (
-        await session.execute(
-            select(Evidence).where(Evidence.captured_at > run.cancelled_at)
-        )
-    ).scalars().all()
+        (await session.execute(select(Evidence).where(Evidence.captured_at > run.cancelled_at)))
+        .scalars()
+        .all()
+    )
     assert not late_rows, "cancellation must not add evidence after CANCELLED"
 
 
@@ -521,9 +515,7 @@ async def test_cancel_complete_race_stress_100(db, lab, tmp_path) -> None:
 
             token = uuid4()
             leases = WorkerLeaseManager(session)
-            coordinator = AcquisitionClaimCoordinator(
-                session, leases, lease_ttl_seconds=60
-            )
+            coordinator = AcquisitionClaimCoordinator(session, leases, lease_ttl_seconds=60)
             await coordinator.claim(run.id, worker.id, token=token)
 
             task = asyncio.create_task(wp.run_claimed(run.id, worker.id, token))
@@ -539,8 +531,7 @@ async def test_cancel_complete_race_stress_100(db, lab, tmp_path) -> None:
         async with SessionFactory() as check:
             fresh = await check.get(AcquisitionRun, run.id)
             assert fresh.status in ("COMPLETE", "CANCELLED"), (
-                f"iteration {i}: run stuck in {fresh.status} "
-                f"(cancel delay={delay})"
+                f"iteration {i}: run stuck in {fresh.status} (cancel delay={delay})"
             )
             assert fresh.stale_result_rejected == 0
             if fresh.status == "CANCELLED":

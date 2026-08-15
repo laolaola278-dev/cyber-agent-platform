@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+import sqlalchemy as sa
 from sqlalchemy import (
     JSON,
     CheckConstraint,
@@ -15,8 +16,6 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
 )
-import sqlalchemy as sa
-
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin

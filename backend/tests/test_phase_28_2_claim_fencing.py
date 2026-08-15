@@ -62,7 +62,9 @@ async def _make_service(
     session: AsyncSession, tmp_path: Path, lab: AcquisitionLabServer
 ) -> AcquisitionService:
     evidence = EvidenceService(
-        session, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+        session,
+        publisher=None,
+        storage_directory=tmp_path,  # type: ignore[arg-type]
     )
     return AcquisitionService(
         session,
@@ -113,12 +115,10 @@ def _coordinator(session: AsyncSession, leases: WorkerLeaseManager) -> Acquisiti
 # -- 3. atomic claim: 10 workers compete for 1 run -----------------------------
 
 
-async def test_atomic_claim_exactly_one_winner(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_atomic_claim_exactly_one_winner(session: AsyncSession, tmp_path, lab) -> None:
     # A real multi-worker race needs per-worker connections: use a file-backed
     # SQLite database so each worker session gets its own DB connection.
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.database import Base
 
@@ -162,9 +162,7 @@ async def test_atomic_claim_exactly_one_winner(
     await engine.dispose()
 
 
-async def test_claim_records_token_hash_not_plaintext(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_claim_records_token_hash_not_plaintext(session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
     await session.flush()
@@ -182,9 +180,7 @@ async def test_claim_records_token_hash_not_plaintext(
 # -- 4/5. fencing: stale writer rejected ---------------------------------------
 
 
-async def test_stale_commit_rejected_after_reclaim(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_stale_commit_rejected_after_reclaim(session: AsyncSession, tmp_path, lab) -> None:
     """Worker A owns the run; A's lease expires; Worker B reclaims;
     A then tries to commit -> MUST be rejected (Critical Gate)."""
     service = await _make_service(session, tmp_path, lab)
@@ -214,9 +210,7 @@ async def test_stale_commit_rejected_after_reclaim(
     assert run.worker_id == worker_b.id  # B is now the owner
 
 
-async def test_current_owner_can_commit(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_current_owner_can_commit(session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
     await session.flush()
@@ -233,9 +227,7 @@ async def test_current_owner_can_commit(
 # -- 4. crash recovery: A crashes -> B reclaims -> resumes -----------------------
 
 
-async def test_crash_recovery_reclaim_from_checkpoint(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_crash_recovery_reclaim_from_checkpoint(session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(
         goal="collect 30 advisories",
@@ -262,9 +254,7 @@ async def test_crash_recovery_reclaim_from_checkpoint(
     assert run.worker_id == worker_b.id
 
 
-async def test_reclaim_refused_while_lease_active(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_reclaim_refused_while_lease_active(session: AsyncSession, tmp_path, lab) -> None:
     """A still-active lease means the run is NOT reclaimable (no double owner)."""
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
@@ -278,9 +268,7 @@ async def test_reclaim_refused_while_lease_active(
     assert await coordinator.reclaim_expired(run.id, worker_b.id) is None
 
 
-async def test_duplicate_claim_rejected(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_duplicate_claim_rejected(session: AsyncSession, tmp_path, lab) -> None:
     """A second claim on an already-RUNNING run is rejected."""
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
@@ -297,9 +285,7 @@ async def test_duplicate_claim_rejected(
 # -- DB is the source of truth (no in-memory queue) ------------------------------
 
 
-async def test_queued_run_visible_in_db_until_claimed(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+async def test_queued_run_visible_in_db_until_claimed(session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
     await session.flush()
@@ -311,9 +297,8 @@ async def test_queued_run_visible_in_db_until_claimed(
 
 # -- full worker-path run through the claim loop runner --------------------------
 
-async def test_run_claimed_full_chain_completes(
-    session: AsyncSession, tmp_path, lab
-) -> None:
+
+async def test_run_claimed_full_chain_completes(session: AsyncSession, tmp_path, lab) -> None:
     """The Claim Loop runner executes a claimed run end-to-end (COMPLETE)."""
     service = await _make_service(session, tmp_path, lab)
     run, _ = await service.create(goal="g", url=f"{lab.origin}/static")

@@ -43,7 +43,9 @@ async def _make_service(
     session: AsyncSession, tmp_path: Path, lab: AcquisitionLabServer
 ) -> AcquisitionService:
     evidence = EvidenceService(
-        session, publisher=None, storage_directory=tmp_path  # type: ignore[arg-type]
+        session,
+        publisher=None,
+        storage_directory=tmp_path,  # type: ignore[arg-type]
     )
     return AcquisitionService(
         session,
@@ -117,6 +119,7 @@ async def test_supported_create_enqueues_durably(session, tmp_path, lab) -> None
 
 
 # -- 4. architecture: execution goes through the Worker boundary ---------------------
+
 
 async def test_worker_path_executes_claimed_run(session, tmp_path, lab) -> None:
     """A claimed QUEUED run is executed by the Worker path (the claim loop's

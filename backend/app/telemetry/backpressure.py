@@ -61,11 +61,9 @@ class BoundedTelemetryQueue[ItemT]:
         await self._queue.join()
 
 
-async def execute_with_backpressure[
-    ItemT
-](operation: Callable[[], Awaitable[ItemT]], policy: TelemetryPolicy) -> tuple[
-    ItemT | None, BackpressureResult
-]:
+async def execute_with_backpressure[ItemT](
+    operation: Callable[[], Awaitable[ItemT]], policy: TelemetryPolicy
+) -> tuple[ItemT | None, BackpressureResult]:
     """Retry only the configured finite number of times."""
 
     if policy.backpressure_action is not BackpressureAction.RETRY:

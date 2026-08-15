@@ -85,9 +85,7 @@ class AcquisitionClaimCoordinator:
         if run is None:
             raise AcquisitionNotFound(f"AcquisitionRun {run_id} not found")
         if run.status not in _CLAIMABLE:
-            raise AcquisitionClaimConflict(
-                f"run {run_id} is not claimable (status={run.status})"
-            )
+            raise AcquisitionClaimConflict(f"run {run_id} is not claimable (status={run.status})")
         fencing = token or uuid4()
         observed = datetime.now(UTC)
         statement = (
@@ -103,9 +101,7 @@ class AcquisitionClaimCoordinator:
                 claim_attempts=AcquisitionRun.claim_attempts + 1,
                 claimed_at=observed,
                 cancel_requested_at=(
-                    AcquisitionRun.cancel_requested_at
-                    if run.status == "CANCEL_REQUESTED"
-                    else None
+                    AcquisitionRun.cancel_requested_at if run.status == "CANCEL_REQUESTED" else None
                 ),
             )
         )
@@ -283,8 +279,7 @@ class AcquisitionClaimCoordinator:
             # the lease was expired/reclaimed concurrently -> ownership lost
             await self._session.rollback()
             raise AcquisitionStaleCommit(
-                f"run {run_id}: lease {lease.id} renewal lost ownership "
-                "(reclaimed or expired)"
+                f"run {run_id}: lease {lease.id} renewal lost ownership (reclaimed or expired)"
             ) from error
 
     # -- crash recovery ------------------------------------------------------
@@ -357,9 +352,7 @@ class AcquisitionClaimCoordinator:
         result = await self._session.execute(statement)
         if result.rowcount != 1:
             await self._session.rollback()
-            raise AcquisitionClaimConflict(
-                f"run {run_id} reclaim lost to a concurrent worker"
-            )
+            raise AcquisitionClaimConflict(f"run {run_id} reclaim lost to a concurrent worker")
         await self._session.flush()
         lease = await self._leases.acquire(
             worker_id=worker_id,

@@ -132,6 +132,7 @@ def test_browser_adapter_on_request_non_http() -> None:
     adapter._available = True
     adapter._platform = object()
     adapter._browser_manager = None
+
     # monkeypatch the manager used in browse
     class FakeManager:
         async def new_context(self):
@@ -183,11 +184,7 @@ def test_agent_robots_fetch_http_error_stops() -> None:
     origin = "https://bench.example"
     # robots.txt route missing -> 404; treat as allowed (no robots.txt)
     web = SyntheticWeb(
-        {
-            f"{origin}/page": SyntheticResponse(
-                200, {"content-type": "text/html"}, b"<html>x</html>"
-            )
-        }
+        {f"{origin}/page": SyntheticResponse(200, {"content-type": "text/html"}, b"<html>x</html>")}
     )
     policy = AcquisitionPolicy(request_rate=100.0)
     agent = AdaptiveDataAcquisitionAgent(

@@ -82,9 +82,7 @@ class ReadOnlyCapabilityExecutor:
         if capability not in allowed_capabilities:
             raise AgentExecutionError(f"Capability not granted to agent: {capability}")
         if not capability.endswith(".read"):
-            raise AgentExecutionError(
-                "Investigation agent may only execute read-only capabilities"
-            )
+            raise AgentExecutionError("Investigation agent may only execute read-only capabilities")
         handler = getattr(self, f"_read_{capability.split('.')[0].replace('-', '_')}", None)
         if handler is None:
             raise AgentExecutionError(f"No read-only executor for capability: {capability}")
@@ -124,9 +122,7 @@ class ReadOnlyCapabilityExecutor:
     async def _read_knowledge(self, parameters: dict[str, Any]) -> CapabilityResult:
         query = self._safe_str(parameters.get("query", ""))
         page = await self._knowledge.search(query=query, page=1, page_size=20)
-        items = [
-            {"id": str(item.id), "name": getattr(item, "name", None)} for item in page.items
-        ]
+        items = [{"id": str(item.id), "name": getattr(item, "name", None)} for item in page.items]
         return CapabilityResult(
             capability="knowledge.read",
             summary=f"Searched knowledge: {len(items)} result(s)",

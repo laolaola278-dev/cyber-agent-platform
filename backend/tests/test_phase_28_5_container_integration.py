@@ -10,7 +10,6 @@ reported accordingly (no fake PASS).
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import os
@@ -31,7 +30,8 @@ def _docker_ready() -> bool:
     try:
         proc = subprocess.run(
             ["docker", "info", "--format", "{{.ServerVersion}}"],
-            capture_output=True, timeout=15,
+            capture_output=True,
+            timeout=15,
         )
         return proc.returncode == 0 and bool(proc.stdout.strip())
     except Exception:  # noqa: BLE001
@@ -43,7 +43,9 @@ _need_docker = pytest.mark.skipif(not _docker_ready(), reason="docker daemon not
 
 def _image_exists(image: str) -> bool:
     return (
-        subprocess.run(["docker", "image", "inspect", image], capture_output=True, timeout=15).returncode
+        subprocess.run(
+            ["docker", "image", "inspect", image], capture_output=True, timeout=15
+        ).returncode
         == 0
     )
 
@@ -69,19 +71,21 @@ def lab():
     srv.server_close()
 
 
-def _shim_request(payload: str, *, image: str = "cap-sandbox-http:latest", extra_args=None, network: str = "none") -> subprocess.CompletedProcess:
+def _shim_request(
+    payload: str, *, image: str = "cap-sandbox-http:latest", extra_args=None, network: str = "none"
+) -> subprocess.CompletedProcess:
     args = ["docker", "run", "--rm", "-i", "--network", network, "--user", "capuser"]
-    args += (extra_args or [])
+    args += extra_args or []
     args += [image]
-    return subprocess.run(
-        args, input=payload, capture_output=True, text=True, timeout=90
-    )
+    return subprocess.run(args, input=payload, capture_output=True, text=True, timeout=90)
 
 
 @_need_docker
 def test_containerized_fetch_executes_in_isolated_domain(lab) -> None:
     if not _image_exists("cap-sandbox-http:latest"):
-        pytest.skip("sandbox image not built (run tests/test_phase_28_5_sandbox_image.py build first)")
+        pytest.skip(
+            "sandbox image not built (run tests/test_phase_28_5_sandbox_image.py build first)"
+        )
     from app.sandbox.oci_protocol import SandboxRequest
 
     # The lab target must live INSIDE the same isolated container network as
@@ -105,12 +109,23 @@ def test_containerized_fetch_executes_in_isolated_domain(lab) -> None:
     )
     lab_lc = subprocess.run(
         [
-            "docker", "run", "-d", "--rm", "--name", lab_name,
-            "--network", net,
-            "--entrypoint", "python", "cap-sandbox-http:latest",
-            "-c", lab_code,
+            "docker",
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            lab_name,
+            "--network",
+            net,
+            "--entrypoint",
+            "python",
+            "cap-sandbox-http:latest",
+            "-c",
+            lab_code,
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if lab_lc.returncode != 0:
         subprocess.run(["docker", "rm", "-f", lab_name], capture_output=True, timeout=30)
@@ -119,22 +134,38 @@ def test_containerized_fetch_executes_in_isolated_domain(lab) -> None:
         # resolve the lab container's sandbox-network IP (address Docker's
         # embedded DNS may not answer on an --internal net) and target that.
         lab_ip = subprocess.run(
-            ["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", lab_name],
-            capture_output=True, text=True, timeout=20,
+            [
+                "docker",
+                "inspect",
+                "-f",
+                "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+                lab_name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
         ).stdout.strip()
         assert lab_ip, "could not resolve lab container IP"
         # wait for the lab HTTP server to accept connections
         ready = subprocess.run(
             [
-                "docker", "exec", lab_name, "sh", "-c",
+                "docker",
+                "exec",
+                lab_name,
+                "sh",
+                "-c",
                 "i=0; until python -c "
                 f"\"import socket;socket.create_connection(('127.0.0.1',{lab_port}),1)\" "
                 "2>/dev/null; do sleep 0.5; i=$((i+1)); [ $i -ge 20 ] && exit 1; done; exit 0",
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if ready.returncode != 0:
-            logs = subprocess.run(["docker", "logs", lab_name], capture_output=True, text=True, timeout=20)
+            logs = subprocess.run(
+                ["docker", "logs", lab_name], capture_output=True, text=True, timeout=20
+            )
             pytest.skip(f"lab server not ready: {(logs.stdout or logs.stderr)[-300:]}")
         request = SandboxRequest(
             operation="http_fetch",
@@ -147,9 +178,7 @@ def test_containerized_fetch_executes_in_isolated_domain(lab) -> None:
         assert run.returncode == 0, run.stderr[-500:]
         assert '"status":"ok"' in run.stdout, run.stdout[-500:]
         payload = json.loads(run.stdout)
-        body = base64.b64decode(payload["result"]["content_b64"] or "").decode(
-            "utf-8", "replace"
-        )
+        body = base64.b64decode(payload["result"]["content_b64"] or "").decode("utf-8", "replace")
         assert "container-lab-ok" in body, run.stdout[-500:]
     finally:
         subprocess.run(["docker", "rm", "-f", lab_name], capture_output=True, timeout=30)
@@ -165,12 +194,23 @@ def test_ssrf_defense_in_depth_validator_bypass_still_blocked() -> None:
     # must fail at the network layer (this is the layer-2 proof)
     run = subprocess.run(
         [
-            "docker", "run", "--rm", "--network", "none",
-            "--user", "capuser", "--entrypoint", "sh", "cap-sandbox-http:latest",
-            "-c", "python -c 'import socket; s=socket.socket(); "
-            "s.settimeout(5); s.connect((\"127.0.0.1\", 80))' 2>&1 || echo NET-ISOLATED",
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--user",
+            "capuser",
+            "--entrypoint",
+            "sh",
+            "cap-sandbox-http:latest",
+            "-c",
+            "python -c 'import socket; s=socket.socket(); "
+            's.settimeout(5); s.connect(("127.0.0.1", 80))\' 2>&1 || echo NET-ISOLATED',
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert "NET-ISOLATED" in run.stdout, f"container unexpectedly reached a network: {run.stdout}"
 
@@ -183,13 +223,26 @@ def test_memory_limit_enforced() -> None:
         pytest.skip("sandbox image not built")
     run = subprocess.run(
         [
-            "docker", "run", "--rm", "--network", "none",
-            "--memory", "64m", "--memory-swap", "64m",
-            "--user", "capuser", "--entrypoint", "python", "cap-sandbox-http:latest",
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--memory",
+            "64m",
+            "--memory-swap",
+            "64m",
+            "--user",
+            "capuser",
+            "--entrypoint",
+            "python",
+            "cap-sandbox-http:latest",
             "-c",
             "x = bytearray(1024*1024*512); print('allocated')",
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     # the container must NOT have survived the 512MB alloc under a 64m cap
     assert run.returncode != 0, "container should be OOM-killed by the memory limit"
@@ -203,13 +256,24 @@ def test_pids_limit_enforced() -> None:
         pytest.skip("sandbox image not built")
     run = subprocess.run(
         [
-            "docker", "run", "--rm", "--network", "none",
-            "--pids-limit", "64",
-            "--user", "capuser", "--entrypoint", "sh", "cap-sandbox-http:latest",
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--pids-limit",
+            "64",
+            "--user",
+            "capuser",
+            "--entrypoint",
+            "sh",
+            "cap-sandbox-http:latest",
             "-c",
             "i=0; while true; do sh -c 'sleep 5' & i=$((i+1)); done",
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     # the bomb cannot exceed the pids limit; the process must eventually die
     assert run.returncode != 0, "pid bomb should be stopped by --pids-limit"
@@ -223,11 +287,23 @@ def test_cpu_limit_configured_and_observable() -> None:
     name = f"cap-cpu-test-{uuid4().hex[:8]}"
     subprocess.run(
         [
-            "docker", "run", "-d", "--name", name,
-            "--cpus", "0.5", "--network", "none",
-            "--entrypoint", "sleep", "cap-sandbox-http:latest", "30",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            name,
+            "--cpus",
+            "0.5",
+            "--network",
+            "none",
+            "--entrypoint",
+            "sleep",
+            "cap-sandbox-http:latest",
+            "30",
         ],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     try:
         inspect = subprocess.run(

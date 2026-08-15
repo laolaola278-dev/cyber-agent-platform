@@ -281,8 +281,7 @@ class S3EvidenceStore:
         actual = sha256_hex(data)
         if actual != digest:
             raise ObjectStoreError(
-                f"object {key} corrupted: sha256 mismatch "
-                f"(expected {digest}, got {actual})"
+                f"object {key} corrupted: sha256 mismatch (expected {digest}, got {actual})"
             )
         return data
 
@@ -293,7 +292,7 @@ class S3EvidenceStore:
         try:
             self._client.stat_object(self._bucket, self.object_key(digest))
             return True
-        except (S3Error, InvalidResponseError) as error:
+        except (S3Error, InvalidResponseError):
             return False
 
     async def metadata(self, key: str) -> dict[str, Any]:
@@ -315,9 +314,7 @@ class S3EvidenceStore:
         await self._ensure_bucket()
         keys: list[str] = []
         try:
-            for item in self._client.list_objects(
-                self._bucket, prefix="sha256/", recursive=True
-            ):
+            for item in self._client.list_objects(self._bucket, prefix="sha256/", recursive=True):
                 keys.append(self.digest_from_key(item.object_name))
         except Exception as error:  # noqa: BLE001
             raise ObjectStoreError(f"object listing failed: {error}") from error
@@ -330,7 +327,7 @@ class S3EvidenceStore:
         try:
             self._client.remove_object(self._bucket, self.object_key(digest))
             return True
-        except (S3Error, InvalidResponseError) as error:
+        except (S3Error, InvalidResponseError):
             return False
 
     async def health(self) -> bool:

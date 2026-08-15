@@ -201,18 +201,21 @@ def test_agent_store_failure_partial() -> None:
 
 def test_agent_verdict_retry_maps_partial() -> None:
     status = AdaptiveDataAcquisitionAgent._status_from_verdict(
-        Verdict.RETRY, None  # type: ignore[arg-type]
+        Verdict.RETRY,
+        None,  # type: ignore[arg-type]
     )
     assert status == AcquisitionStatus.PARTIAL
     status = AdaptiveDataAcquisitionAgent._status_from_verdict(
-        Verdict.REPLAN, None  # type: ignore[arg-type]
+        Verdict.REPLAN,
+        None,  # type: ignore[arg-type]
     )
     assert status == AcquisitionStatus.PARTIAL
 
 
 def test_agent_verdict_finish_complete() -> None:
     status = AdaptiveDataAcquisitionAgent._status_from_verdict(
-        Verdict.FINISH, None  # type: ignore[arg-type]
+        Verdict.FINISH,
+        None,  # type: ignore[arg-type]
     )
     assert status == AcquisitionStatus.COMPLETE
 

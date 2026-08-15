@@ -21,7 +21,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.acquisition.models_db import AcquisitionRun
@@ -31,9 +30,7 @@ from app.evidence.service import EvidenceService
 pytestmark = pytest.mark.postgres
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-PG_DSN = os.environ.get(
-    "CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283"
-)
+PG_DSN = os.environ.get("CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283")
 PG_SYNC_DSN = PG_DSN.replace("postgresql+asyncpg://", "postgresql://")
 
 
@@ -62,9 +59,7 @@ async def _make_service(session, tmp_path: Path) -> AcquisitionService:
     )
 
 
-def _start_worker_daemon(
-    worker_name: str, run_seconds: int, tmp_path: Path
-) -> subprocess.Popen:
+def _start_worker_daemon(worker_name: str, run_seconds: int, tmp_path: Path) -> subprocess.Popen:
     env = dict(os.environ)
     for k in (
         "CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR",
@@ -111,7 +106,6 @@ async def _wait_terminal(engine, run_id, timeout: float = 60) -> str:
 class TestProcessIsolation:
     @pytest.mark.asyncio
     async def test_api_enqueue_worker_process_executes(self, tmp_path) -> None:
-        import asyncpg
 
         # Process A: API-style enqueue (this test process)
         engine = create_async_engine(PG_DSN, pool_size=5)
@@ -152,7 +146,6 @@ class TestProcessIsolation:
 
     @pytest.mark.asyncio
     async def test_api_cancel_worker_process_observes(self, tmp_path) -> None:
-        import asyncpg
 
         from datetime import UTC, datetime
 

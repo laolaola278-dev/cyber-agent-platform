@@ -101,9 +101,7 @@ class EgressProxy:
         return self._port
 
     async def start(self) -> None:
-        self._server = await asyncio.start_server(
-            self._handle, self._host, self._port
-        )
+        self._server = await asyncio.start_server(self._handle, self._host, self._port)
         logger.info("egress proxy listening on %s:%s", self._host, self._port)
 
     async def stop(self) -> None:
@@ -183,9 +181,7 @@ class EgressProxy:
         await up_writer.drain()
         await self._pipe(reader, writer, up_reader, up_writer)
 
-    async def _deny_if_forbidden(
-        self, writer: asyncio.StreamWriter, host: str, port: int
-    ) -> bool:
+    async def _deny_if_forbidden(self, writer: asyncio.StreamWriter, host: str, port: int) -> bool:
         if self._allowlist.allows(host, port):
             return False
         blocked, reason = target_forbidden(host, port)

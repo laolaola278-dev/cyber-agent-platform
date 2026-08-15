@@ -20,9 +20,7 @@ def _escape(value: str) -> str:
 def _labels(values: dict[str, str]) -> str:
     if not values:
         return ""
-    body = ",".join(
-        f'{name}="{_escape(value)}"' for name, value in sorted(values.items())
-    )
+    body = ",".join(f'{name}="{_escape(value)}"' for name, value in sorted(values.items()))
     return "{" + body + "}"
 
 
@@ -30,25 +28,17 @@ def _labels(values: dict[str, str]) -> str:
 class AcquisitionMetrics:
     """Bounded metric set for the acquisition durable-execution pipeline."""
 
-    _counters: dict[tuple[str, frozenset[tuple[str, str]]], int] = field(
-        default_factory=dict
-    )
+    _counters: dict[tuple[str, frozenset[tuple[str, str]]], int] = field(default_factory=dict)
     _gauges: dict[str, float] = field(default_factory=dict)
-    _duration_count: dict[tuple[str, frozenset[tuple[str, str]]], int] = field(
+    _duration_count: dict[tuple[str, frozenset[tuple[str, str]]], int] = field(default_factory=dict)
+    _duration_sum: dict[tuple[str, frozenset[tuple[str, str]]], float] = field(default_factory=dict)
+    _duration_buckets: dict[tuple[str, frozenset[tuple[str, str]], float], int] = field(
         default_factory=dict
     )
-    _duration_sum: dict[tuple[str, frozenset[tuple[str, str]]], float] = field(
-        default_factory=dict
-    )
-    _duration_buckets: dict[
-        tuple[str, frozenset[tuple[str, str]], float], int
-    ] = field(default_factory=dict)
     _lock: Lock = field(default_factory=Lock)
 
     # -- counters ------------------------------------------------------------
-    def inc(
-        self, name: str, labels: dict[str, str] | None = None, amount: int = 1
-    ) -> None:
+    def inc(self, name: str, labels: dict[str, str] | None = None, amount: int = 1) -> None:
         key = (name, frozenset((labels or {}).items()))
         with self._lock:
             self._counters[key] = self._counters.get(key, 0) + amount
@@ -67,12 +57,8 @@ class AcquisitionMetrics:
     ) -> None:
         lkey = frozenset((labels or {}).items())
         with self._lock:
-            self._duration_count[(name, lkey)] = self._duration_count.get(
-                (name, lkey), 0
-            ) + 1
-            self._duration_sum[(name, lkey)] = (
-                self._duration_sum.get((name, lkey), 0.0) + seconds
-            )
+            self._duration_count[(name, lkey)] = self._duration_count.get((name, lkey), 0) + 1
+            self._duration_sum[(name, lkey)] = self._duration_sum.get((name, lkey), 0.0) + seconds
             for bucket in _DURATION_BUCKETS:
                 if seconds <= bucket:
                     self._duration_buckets[(name, lkey, bucket)] = (
@@ -99,20 +85,13 @@ class AcquisitionMetrics:
             label_dict = dict(labels)
             lines.append(f"# TYPE {name} summary")
             lines.append(
-                f'{name}_count{_labels({**label_dict, "quantile": ""})}'.replace(
-                    'quantile=""', ""
-                )
+                f"{name}_count{_labels({**label_dict, 'quantile': ''})}".replace('quantile=""', "")
                 + f" {count}"
             )
             lines.append(
-                f'{name}_sum{_labels(label_dict) if label_dict else ""} {ds[(name, labels)]:.6f}'
+                f"{name}_sum{_labels(label_dict) if label_dict else ''} {ds[(name, labels)]:.6f}"
             )
         for (name, labels, bucket), count in sorted(db.items()):
-            lines.append(
-                f'{name}_bucket{_labels({**dict(labels), "le": str(bucket)})} {count}'
-            )
-            lines.append(
-                f'{name}_bucket{_labels({**dict(labels), "le": "+Inf"})}'
-                f" {count}"
-            )
+            lines.append(f"{name}_bucket{_labels({**dict(labels), 'le': str(bucket)})} {count}")
+            lines.append(f"{name}_bucket{_labels({**dict(labels), 'le': '+Inf'})} {count}")
         return "\n".join(lines) + "\n"

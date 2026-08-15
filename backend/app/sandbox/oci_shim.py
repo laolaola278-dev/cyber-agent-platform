@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import json
 import os
 import socket
 import sys
@@ -24,16 +23,12 @@ try:  # image layout: /sandbox/oci_protocol.py (self-contained copy)
         PROTOCOL_VERSION,
         SandboxRequest,
         SandboxResponse,
-        browser_observation_to_dict,
-        http_fetch_result_to_dict,
     )
 except ModuleNotFoundError:  # worker-side layout (tests / local run)
     from app.sandbox.oci_protocol import (
         PROTOCOL_VERSION,
         SandboxRequest,
         SandboxResponse,
-        browser_observation_to_dict,
-        http_fetch_result_to_dict,
     )
 
 
@@ -137,9 +132,7 @@ async def _http_fetch(request: SandboxRequest) -> dict:
         try:
             resp = await client.get(request.url)
         except httpx.HTTPError as error:
-            reason_blocked = (
-                "TIMEOUT" if isinstance(error, httpx.TimeoutException) else None
-            )
+            reason_blocked = "TIMEOUT" if isinstance(error, httpx.TimeoutException) else None
             result = _failed_result(request.url, str(error)[:300])
             result["blocked_reason"] = reason_blocked
             return result

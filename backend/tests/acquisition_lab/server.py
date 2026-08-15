@@ -33,9 +33,7 @@ def _page_html(page: int, total_pages: int = 3, records_per_page: int = 10) -> b
             f"<td class='rec-date'>2026-08-0{(number % 9) + 1}</td></tr>"
         )
     next_link = (
-        f"<a href='/pagination?page={page + 1}' rel='next'>next</a>"
-        if page < total_pages
-        else ""
+        f"<a href='/pagination?page={page + 1}' rel='next'>next</a>" if page < total_pages else ""
     )
     return (
         "<!doctype html><html><head><title>Advisories page "
@@ -208,9 +206,7 @@ class AcquisitionLabServer:
         self._server._fail_page2 = enabled  # type: ignore[attr-defined]
 
     def start(self) -> AcquisitionLabServer:
-        self._thread = threading.Thread(
-            target=self._server.serve_forever, daemon=True
-        )
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         return self
 

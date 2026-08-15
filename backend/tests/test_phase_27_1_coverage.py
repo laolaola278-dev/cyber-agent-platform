@@ -90,7 +90,7 @@ def test_normalize_truncation_after_decode_rounds(monkeypatch: pytest.MonkeyPatc
     # contains the ligature \uFB00 (1 char); the second round's NFKC pass
     # expands it to "ff" (2 chars) and the post-round length guard fires.
     monkeypatch.setattr(normalize, "MAX_DECODED_CHARS", 50)
-    payload = base64.b64encode(("\uFB00" * 40).encode()).decode()
+    payload = base64.b64encode(("\ufb00" * 40).encode()).decode()
     rep = NormalizationReport()
     out = normalize_text(payload, report=rep)
     assert len(out) <= 50
@@ -395,9 +395,7 @@ def test_engine_scorer_produces_prediction() -> None:
     )
     prediction = scorer(scenario)
     assert prediction.completed is True
-    assert prediction.classification in (
-        "CONFIRMED", "LIKELY", "POSSIBLE", "BENIGN", "UNKNOWN"
-    )
+    assert prediction.classification in ("CONFIRMED", "LIKELY", "POSSIBLE", "BENIGN", "UNKNOWN")
     assert prediction.severity in ("LOW", "MEDIUM", "HIGH", "CRITICAL", "UNKNOWN")
 
 
