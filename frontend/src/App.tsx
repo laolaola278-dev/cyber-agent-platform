@@ -41,16 +41,13 @@ import {
 } from "antd";
 import type { MenuProps, TableProps } from "antd";
 import {
-  continueInvestigation,
   createInvestigation,
   getApprovals,
   getAudit,
   getDashboard,
   getDomainRecords,
   getEvaluations,
-  getEvaluationsV2,
   getHealth,
-  getInvestigation,
   getModelComparison,
   getPlugins,
   getRoles,

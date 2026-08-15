@@ -85,7 +85,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-capminio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-capminio-secret}
     volumes:
-      - minio-data:/data
+      - minio_data:/data
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -132,7 +132,6 @@ services:
       ACQ_LEASE_TTL_SECONDS: ${ACQ_LEASE_TTL_SECONDS:-120}
       ACQ_STORE_ROOT: ${ACQ_STORE_ROOT:-outputs/acquisition-objects}
       # Phase 28.4: production sandbox + durable object storage + metrics
-      SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-subprocess-sandbox}
       SANDBOX_TIMEOUT_SECONDS: ${SANDBOX_TIMEOUT_SECONDS:-120}
       SANDBOX_MEMORY_MB: ${SANDBOX_MEMORY_MB:-512}
       OBJECT_STORE_BACKEND: ${OBJECT_STORE_BACKEND:-s3}
@@ -258,7 +257,7 @@ volumes:
 networks:
   cap-network:
   # isolated bridge: sandbox containers can ONLY reach the egress proxy
+  # (internal: no default gateway -> no direct public/private egress)
   cap-sandbox-egress:
     driver: bridge
-    internal: false
-    driver: bridge
+    internal: true
