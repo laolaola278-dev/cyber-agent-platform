@@ -529,7 +529,7 @@ class AcquisitionWorkerPath:
         # first, so the UPDATE's `status IN (RUNNING, PARTIAL)` guard would
         # match 0 rows. Execute the guarded UPDATE against the committed state
         # instead; the pending writes commit atomically right after.
-        async with self._service.session.no_autoflush:
+        with self._service.session.no_autoflush:
             result = await self._service.session.execute(stmt)
         if result.rowcount != 1:
             # lost the race (cancelled or reclaimed): discard pending writes
