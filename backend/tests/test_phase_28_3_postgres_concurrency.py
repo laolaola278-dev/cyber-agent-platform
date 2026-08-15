@@ -555,3 +555,194 @@ class TestPostgresConcurrency:
             f"renew_wins={renew_wins} reclaim_wins={reclaim_wins} invalid={invalid}"
         )
         assert renew_wins + reclaim_wins + invalid == rounds
+
+
+class _Barrier:
+    """Deterministic fault-injection barrier: the worker sets `reached` then
+    waits for `release` -- no sleep-based timing in the race tests."""
+
+    def __init__(self) -> None:
+        self.reached = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def wait(self) -> None:
+        self.reached.set()
+        await self.release.wait()
+
+
+async def _complete_op(run, checkpoint):
+    """Mock operation that completes immediately with a COMPLETE payload."""
+    return AcquisitionRunPayload(status="COMPLETE", checkpoint={"status": "COMPLETE"})
+
+
+async def _complete_op_dirty_status(run, checkpoint):
+    """Mock operation that ALSO marks the ORM run status COMPLETE (dirty), to
+    exercise the §7 ORM-writeback hazard: a lost terminal CAS must roll back
+    this dirty status so it can never overwrite a won CANCEL_REQUESTED."""
+    run.status = "COMPLETE"
+    run.source_type = "HTML"
+    return AcquisitionRunPayload(status="COMPLETE", checkpoint={"status": "COMPLETE"})
+
+
+def _make_delayed_complete(delay: float):
+    async def op(run, checkpoint):
+        await asyncio.sleep(delay)
+        return AcquisitionRunPayload(status="COMPLETE", checkpoint={"status": "COMPLETE"})
+
+    return op
+
+
+# -- RC2 deterministic cancel/complete barrier tests (PostgreSQL) -------------
+
+
+@_skip
+@pytest.mark.asyncio
+async def test_cancel_before_terminal_cas_wins(pg_factory, tmp_path) -> None:
+    """Scenario K2→C2: CANCEL_REQUESTED is durable before the terminal CAS, so
+    the completion's conditional UPDATE matches 0 rows and the run converges to
+    CANCELLED -- never overwritten by a stale COMPLETE (also exercises §7)."""
+    async with pg_factory() as session:
+        service = await _make_service(session, tmp_path)
+        run, _ = await service.create(goal="g", url="http://example.com/static")
+        await session.commit()
+        run_id = run.id
+        worker = uuid4()
+        await _register_worker(session, worker, "acq-rc2-c1")
+        service.run_agent_operation = _complete_op_dirty_status
+        wp = await _make_worker_path(session, service)
+        token = uuid4()
+        await wp._ensure_coordinator().claim(run_id, worker, token=token)
+        barrier = _Barrier()
+        wp.race_barrier_before_terminal = barrier
+        task = asyncio.create_task(wp.run_claimed(run_id, worker, token))
+        await asyncio.wait_for(barrier.reached.wait(), timeout=10)
+        # K2: durably flip to CANCEL_REQUESTED on an independent API session
+        async with pg_factory() as api:
+            run_api = await api.get(AcquisitionRun, run_id)
+            run_api.status = "CANCEL_REQUESTED"
+            run_api.cancel_requested_at = datetime.now(UTC)
+            await api.commit()
+        barrier.release.set()
+        payload = await asyncio.wait_for(task, timeout=20)
+        assert payload.status == "CANCELLED"
+        await wp._runtime_session.close()
+        await session.rollback()
+        await session.close()
+    async with pg_factory() as s:
+        fresh = await s.get(AcquisitionRun, run_id)
+        assert fresh.status == "CANCELLED"
+        assert fresh.stale_result_rejected == 0
+
+
+@_skip
+@pytest.mark.asyncio
+async def test_completion_before_cancel_cas_wins(pg_factory, tmp_path) -> None:
+    """Scenario C2→K2: the terminal CAS commits first, so a later cancel
+    conditional UPDATE matches 0 rows and is a no-op -> terminal stays."""
+    async with pg_factory() as session:
+        service = await _make_service(session, tmp_path)
+        run, _ = await service.create(goal="g", url="http://example.com/static")
+        await session.commit()
+        run_id = run.id
+        worker = uuid4()
+        await _register_worker(session, worker, "acq-rc2-c2")
+        service.run_agent_operation = _complete_op
+        wp = await _make_worker_path(session, service)
+        token = uuid4()
+        await wp._ensure_coordinator().claim(run_id, worker, token=token)
+
+        # cancel side pauses right before the cancel-request CAS
+        async with pg_factory() as api_session:
+            api_service = await _make_service(api_session, tmp_path)
+            api_wp = await _make_worker_path(api_session, api_service)
+            cancel_barrier = _Barrier()
+            api_wp.race_barrier_before_cancel = cancel_barrier
+            cancel_task = asyncio.create_task(api_wp.cancel(run_id))
+            await asyncio.wait_for(cancel_barrier.reached.wait(), timeout=10)
+            # C2: completion commits COMPLETE while the cancel is paused
+            payload = await asyncio.wait_for(
+                wp.run_claimed(run_id, worker, token), timeout=20
+            )
+            assert payload.status == "COMPLETE"
+            # release K1 -> cancel CAS matches 0 rows -> no-op
+            cancel_barrier.release.set()
+            cancel_payload = await asyncio.wait_for(cancel_task, timeout=20)
+            assert cancel_payload.status == "COMPLETE"
+            await api_wp._runtime_session.close()
+            await api_session.rollback()
+            await api_session.close()
+        await wp._runtime_session.close()
+        await session.rollback()
+        await session.close()
+    async with pg_factory() as s:
+        fresh = await s.get(AcquisitionRun, run_id)
+        assert fresh.status == "COMPLETE"
+
+
+@_skip
+@pytest.mark.stress
+@pytest.mark.asyncio
+async def test_cancel_complete_pg_stress(pg_factory, tmp_path) -> None:
+    """Race cancel vs completion on real PostgreSQL across >=500 rounds.
+
+    Each round: claim, run a mock operation with a tiny deterministic delay,
+    concurrently cancel on an independent session. The ONLY requirement is that
+    the run converges to a terminal state (never stuck CANCEL_REQUESTED) with
+    zero stale result writes -- the exact cancel/complete winner is free.
+    """
+    rounds = int(os.environ.get("CAP285_STRESS_ROUNDS", "500"))
+    stuck = invalid = post_cancel = 0
+    cancel_wins = completion_wins = 0
+    for i in range(rounds):
+        async with pg_factory() as session:
+            service = await _make_service(session, tmp_path)
+            run, _ = await service.create(goal=f"g{i}", url="http://example.com/static")
+            await session.commit()
+            run_id = run.id
+            worker = uuid4()
+            await _register_worker(session, worker, f"acq-rc2-s{i}")
+            # 0 or a tiny deterministic delay -- alternate to cover both orderings
+            service.run_agent_operation = _make_delayed_complete(0.0 if i % 2 == 0 else 0.002)
+            wp = await _make_worker_path(session, service)
+            token = uuid4()
+            await wp._ensure_coordinator().claim(run_id, worker, token=token)
+            task = asyncio.create_task(wp.run_claimed(run_id, worker, token))
+
+            async def cancel_now(_run_id: UUID = run_id) -> None:
+                async with pg_factory() as api:
+                    run_api = await api.get(AcquisitionRun, _run_id)
+                    if run_api.status in ("RUNNING", "PARTIAL"):
+                        run_api.status = "CANCEL_REQUESTED"
+                        run_api.cancel_requested_at = datetime.now(UTC)
+                        await api.commit()
+
+            if i % 2 == 0:
+                await cancel_now()
+            try:
+                await asyncio.wait_for(task, timeout=20)
+            except Exception:  # noqa: BLE001 -- the durable state is the contract
+                pass
+            if i % 2 == 1:
+                await cancel_now()
+            await wp._runtime_session.close()
+            await session.rollback()
+            await session.close()
+
+        async with pg_factory() as s:
+            fresh = await s.get(AcquisitionRun, run_id)
+            if fresh.status == "CANCELLED":
+                cancel_wins += 1
+            elif fresh.status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED"):
+                completion_wins += 1
+            elif fresh.status == "CANCEL_REQUESTED":
+                stuck += 1
+            else:
+                invalid += 1
+            if fresh.stale_result_rejected != 0:
+                post_cancel += 1
+
+    assert stuck == 0, f"stuck CANCEL_REQUESTED: {stuck}"
+    assert invalid == 0, f"invalid terminal state: {invalid}"
+    assert post_cancel == 0, f"post-cancel stale writes: {post_cancel}"
+    assert cancel_wins + completion_wins + stuck + invalid == rounds
+

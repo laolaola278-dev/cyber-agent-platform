@@ -86,6 +86,12 @@ class AcquisitionWorkerPath:
         if lease_renew_interval is None:
             lease_renew_interval = max(1.0, lease_ttl_seconds / 3.0)
         self._lease_renew_interval = float(lease_renew_interval)
+        # Test-only deterministic fault-injection barriers (asyncio.Event).
+        # None in production. Tests set these to pause the runner at a precise
+        # linearization point (before the terminal CAS / before the cancel CAS)
+        # to construct exact cancel-vs-complete interleavings without sleeping.
+        self.race_barrier_before_terminal: Any | None = None
+        self.race_barrier_before_cancel: Any | None = None
 
     def _ensure_coordinator(self) -> Any:
         """Lazily build the claim coordinator from the service session."""
@@ -330,35 +336,29 @@ class AcquisitionWorkerPath:
             ck = AcquisitionCheckpoint.from_dict(fresh.checkpoint or {})
             return self._payload_from_run(fresh, ck, "ownership lost during execution")
 
-        # Read the LATEST state from a SEPARATE connection: the worker's own
-        # session holds a transaction snapshot from claim time, so a cancel
-        # committed by the API on another connection would be invisible here
-        # (SQLite snapshot isolation / any MVCC store). A dedicated read
-        # always sees the durable cancel flag.
-        from sqlalchemy.ext.asyncio import async_sessionmaker
+        # Critical Gate: atomically apply the terminal result via a DB
+        # conditional UPDATE guarded by a non-terminal pre-state + fencing
+        # ownership. This is the single linearization point: if a concurrent
+        # cancel already durably flipped the run to CANCEL_REQUESTED (or a
+        # reclaim swapped ownership), the UPDATE matches 0 rows and the stale
+        # completion is discarded (its pending evidence rolls back with it).
+        # rowcount decides the winner -- never a SELECT-then-Python-decision
+        # followed by an unconditional UPDATE.
+        await self._record_worker_identity(run, checkpoint)
+        applied = await self._finalize_terminal_atomic(run_id, worker_id, token, payload)
+        if applied:
+            return payload
 
-        cancel_poll_factory = async_sessionmaker(
-            self._service.session.bind, expire_on_commit=False
-        )
-        async with cancel_poll_factory() as cancel_poll:
-            current = await cancel_poll.get(AcquisitionRun, run_id)
-        if (
-            current is not None
-            and (
-                current.status == "CANCEL_REQUESTED"
-                or current.cancel_requested_at is not None
-            )
-        ):
-            # cancellation arrived while we were executing -- do NOT apply a
-            # success result; finalize CANCELLED instead
-            ck = AcquisitionCheckpoint.from_dict(current.checkpoint or {})
+        # The conditional transition lost. Read the durable state and converge
+        # to a terminal outcome (never leave CANCEL_REQUESTED lingering).
+        current = await self._service.get_run(run_id, fresh=True)
+        ck = AcquisitionCheckpoint.from_dict(current.checkpoint or {})
+        if current.status == "CANCEL_REQUESTED" or current.cancel_requested_at is not None:
+            # cancel won the race -> finalize CANCELLED (idempotent conditional)
             await self._finalize_cancelled(current, ck, worker_id=worker_id)
             return self._payload_from_run(current, ck, "cancelled before commit")
-
-        await self._record_worker_identity(run, checkpoint)
-        await self._apply_payload(run, payload)
-        await self._service.commit()
-        return payload
+        # reclaimed (ownership lost) or already terminal -> never touch it
+        return self._payload_from_run(current, ck, "ownership lost during execution")
 
     # -- lease heartbeat -----------------------------------------------------
 
@@ -464,6 +464,8 @@ class AcquisitionWorkerPath:
             )
             .execution_options(synchronize_session=False)
         )
+        if self.race_barrier_before_cancel is not None:
+            await self.race_barrier_before_cancel.wait()
         result = await self._service.session.execute(stmt)
         if result.rowcount != 1:
             # run became terminal between the read and this UPDATE -> no-op
@@ -497,6 +499,55 @@ class AcquisitionWorkerPath:
         # the executing worker (or the claim loop) finalizes CANCELLED after
         # the sandbox unwinds; we never flip CANCELLED while work may run.
         return self._payload_from_run(run, checkpoint, "cancel requested")
+
+    async def _finalize_terminal_atomic(
+        self, run_id: UUID, worker_id: UUID, token: UUID, payload: AcquisitionRunPayload
+    ) -> bool:
+        """Atomically apply the operation's terminal result.
+
+        Single DB linearization point: a conditional UPDATE guarded by a
+        non-terminal pre-state (RUNNING/PARTIAL) AND fencing ownership
+        (worker_id + claim_token_hash). If a concurrent cancel already flipped
+        the run to CANCEL_REQUESTED, or a reclaim swapped ownership, this
+        UPDATE matches 0 rows and the pending evidence/result is rolled back
+        (never attached post-cancel). Returns True when this worker's result
+        won the transition.
+        """
+        from sqlalchemy import update
+
+        now = datetime.now(UTC)
+        terminal = payload.status in TERMINAL
+        stmt = (
+            update(AcquisitionRun)
+            .where(
+                AcquisitionRun.id == run_id,
+                AcquisitionRun.status.in_(("RUNNING", "PARTIAL")),
+                AcquisitionRun.worker_id == worker_id,
+                AcquisitionRun.claim_token_hash == fencing_hash(token),
+            )
+            .values(
+                status=payload.status,
+                finished_at=now if terminal else None,
+                checkpoint=payload.checkpoint,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        # Disable autoflush: the worker session holds pending result/evidence
+        # writes (including run.status from _persist_result). Auto-flushing
+        # those BEFORE the guarded UPDATE would flip the DB status to COMPLETE
+        # first, so the UPDATE's `status IN (RUNNING, PARTIAL)` guard would
+        # match 0 rows. Execute the guarded UPDATE against the committed state
+        # instead; the pending writes commit atomically right after.
+        if self.race_barrier_before_terminal is not None:
+            await self.race_barrier_before_terminal.wait()
+        with self._service.session.no_autoflush:
+            result = await self._service.session.execute(stmt)
+        if result.rowcount != 1:
+            # lost the race (cancelled or reclaimed): discard pending writes
+            await self._service.session.rollback()
+            return False
+        await self._service.commit()
+        return True
 
     async def _finalize_cancelled_if_safe(
         self, run_id: UUID, worker_id: UUID, note: str
