@@ -120,13 +120,33 @@ def secret_canary_scan() -> list[str]:
     return leaks
 
 
+def _worker_mounts_control_socket() -> bool:
+    """Truthfully detect whether the production worker mounts a container
+    runtime control socket, by inspecting the real deployment config (NOT an
+    optional env var). A docker/podman/containerd control socket gives the
+    worker host-level container management -- worker-to-host control-plane
+    access, which is a documented limitation, not a blanket "isolated".
+    """
+    patterns = ("docker.sock", "podman.sock", "containerd.sock")
+    for candidate in (ROOT / "docker-compose.yml", ROOT / ".env.example"):
+        if not candidate.exists():
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for pattern in patterns:
+            if pattern in text:
+                return True
+    return False
+
+
 def docker_socket_control_plane() -> dict[str, object]:
-    """Detect whether the worker mounts the docker socket (control-plane risk)."""
-    mounts = os.environ.get("CAP_CERT_WORKER_MOUNTS", "")
-    has_socket = "docker.sock" in mounts
+    """Report the worker control-plane isolation fact (multi-state, not bool)."""
+    mounted = _worker_mounts_control_socket()
     return {
-        "worker_control_plane_isolation": "false" if has_socket else "true",
-        "unrestricted_docker_socket_mounted": has_socket,
+        "worker_control_plane_isolation": "NOT_CERTIFIED" if mounted else "PASS",
+        "unrestricted_docker_socket_mounted": mounted,
     }
 
 
@@ -163,6 +183,8 @@ def main() -> int:
         gates["secrets"] = "FAIL"  # canary found in artifacts
 
     socket_ctx = docker_socket_control_plane()
+    # Sandbox WORKLOAD isolation is the conjunction of the 12 certified gates.
+    sandbox_workload = "PASS" if all(v == "PASS" for v in gates.values()) else "NOT_CERTIFIED"
 
     payload = {
         "phase": "28.5-L",
@@ -170,7 +192,9 @@ def main() -> int:
         "environment": env,
         "images": images,
         "gates": gates,
-        "worker_control_plane": socket_ctx,
+        "sandbox_workload_isolation": sandbox_workload,
+        "worker_control_plane_isolation": socket_ctx["worker_control_plane_isolation"],
+        "unrestricted_docker_socket_mounted": socket_ctx["unrestricted_docker_socket_mounted"],
         "tests": {"total": len(results), "outcomes": {
             "passed": sum(1 for v in results.values() if v == "passed"),
             "failed": sum(1 for v in results.values() if v == "failed"),
@@ -210,8 +234,9 @@ def main() -> int:
         f"- skipped: {payload['tests']['outcomes']['skipped']}",
         "",
         "## Control plane",
-        f"- worker_control_plane_isolation: {socket_ctx['worker_control_plane_isolation']}",
-        f"- unrestricted_docker_socket_mounted: {socket_ctx['unrestricted_docker_socket_mounted']}",
+        f"- sandbox_workload_isolation: {payload['sandbox_workload_isolation']}",
+        f"- worker_control_plane_isolation: {payload['worker_control_plane_isolation']}",
+        f"- unrestricted_docker_socket_mounted: {payload['unrestricted_docker_socket_mounted']}",
         "",
     ]
     if canary_leaks:

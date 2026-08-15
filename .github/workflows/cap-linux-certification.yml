@@ -283,6 +283,16 @@ jobs:
           assert not bad, f"incomplete gates: {bad}"
           failed = [g for g, v in data["gates"].items() if v == "FAIL"]
           assert not failed, f"failed gates: {failed}"
+          # Truthful control-plane report: the worker mounts the docker control
+          # socket (docker-compose.yml), so worker_control_plane_isolation MUST
+          # be NOT_CERTIFIED -- a "PASS"/boolean-true here would be a false
+          # claim about worker-to-host isolation.
+          assert data["sandbox_workload_isolation"] == "PASS", \
+              f"sandbox_workload_isolation must be PASS, got {data.get('sandbox_workload_isolation')!r}"
+          assert data["worker_control_plane_isolation"] == "NOT_CERTIFIED", \
+              "worker_control_plane_isolation must be NOT_CERTIFIED (worker mounts docker.sock)"
+          assert data["unrestricted_docker_socket_mounted"] is True, \
+              "unrestricted_docker_socket_mounted must be True"
           print("release certification artifact OK")
           EOF
       - uses: actions/upload-artifact@v4
