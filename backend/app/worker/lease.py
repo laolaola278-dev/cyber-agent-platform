@@ -141,8 +141,10 @@ class WorkerLeaseManager:
         rows = await self._repository.expire_active(now=observed)
         for row in rows:
             await self._audit(EventType.WORKER_LEASE_EXPIRED, row)
-        if rows:
-            await self._session.commit()
+        # Always commit: expire_active is a conditional UPDATE which opens a
+        # write transaction even on 0 rows; leaving it open would hold the
+        # SQLite single-writer lock until the session closes.
+        await self._session.commit()
         return tuple(self._contract(row) for row in rows)
 
     async def _audit(self, event_type: EventType, lease: WorkerLeaseModel) -> None:
