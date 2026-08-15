@@ -23,7 +23,7 @@ from hashlib import sha256
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.acquisition.exceptions import (
@@ -32,6 +32,7 @@ from app.acquisition.exceptions import (
     AcquisitionStaleCommit,
 )
 from app.acquisition.models_db import AcquisitionRun
+from app.exceptions import WorkerLeaseConflict
 from app.models.worker import WorkerLease as WorkerLeaseModel
 from app.worker.contracts import LeaseStatus, WorkerLease
 from app.worker.lease import WorkerLeaseManager
@@ -235,42 +236,56 @@ class AcquisitionClaimCoordinator:
     ) -> WorkerLease | None:
         """Renew the current owner's lease while its operation is executing.
 
-        Phase 28.3 heartbeat semantics:
-          * only the CURRENT fencing owner may renew (verify_owner gate);
-          * renewal bumps the lease version (fencing CAS) and extends
-            expires_at, so a healthy long-running acquisition is never
-            falsely reclaimed;
-          * a STALE worker (whose run was reclaimed) raises
-            AcquisitionStaleCommit and cannot renew;
-          * an EXPIRED lease cannot be renewed (update_active requires
-            status == ACTIVE), so after a crash the renewal simply stops and
-            the run becomes reclaimable.
+        Phase 28.5-RC atomic ownership-aware semantics: the renewal is a SINGLE
+        conditional UPDATE that verifies (a) the lease is still ACTIVE with the
+        expected version + fencing token, AND (b) the referenced run still
+        points at THIS lease AND is owned by ``worker_id`` with
+        ``claim_token_hash`` (an EXISTS subquery). This closes the
+        verify-owner-then-renew TOCTOU: a reclaim that swapped the run to a new
+        worker/lease makes the EXISTS guard fail, so renew(A) can never report
+        success while the run is owned by B.
 
         Returns the renewed lease (or None when the run has no lease yet).
+        Raises AcquisitionStaleCommit when ownership was lost (reclaimed or
+        lease expired), so the executing worker's later commit is also rejected.
         """
-        run = await self.verify_owner(run_id, worker_id, token)
+        run = await self._session.get(AcquisitionRun, run_id)
+        if run is None:
+            raise AcquisitionNotFound(f"AcquisitionRun {run_id} not found")
         if run.lease_id is None:
             return None
         lease = await self._leases.require(run.lease_id)
-        # Fencing hardening (Phase 28.3 lease-race closure): a reclaim that
-        # wins between verify_owner and require() swaps run.lease_id to a NEW
-        # lease owned by the reclaiming worker. Renewing that lease here would
-        # report "renewed" while the run has actually moved to another worker
-        # (split-brain). The lease records its owning worker, so refuse to
-        # renew a lease we do not own.
         if lease.worker_id != worker_id:
             raise AcquisitionStaleCommit(
                 f"run {run_id}: lease {lease.id} is owned by "
                 f"{lease.worker_id}, not {worker_id} -- renewal rejected"
             )
-        renewed = await self._leases.renew(
-            lease.id,
-            owner=lease.owner,
-            fencing_token=lease.fencing_token,
-            expected_version=lease.version,
-            ttl_seconds=ttl_seconds or self._lease_ttl_seconds,
+        # ownership guard folded into the atomic lease UPDATE: the run must
+        # STILL reference this exact lease and be owned by this worker.
+        ownership_guard = exists(
+            select(1).where(
+                AcquisitionRun.id == run_id,
+                AcquisitionRun.lease_id == WorkerLeaseModel.id,
+                AcquisitionRun.worker_id == worker_id,
+                AcquisitionRun.claim_token_hash == fencing_hash(token),
+            )
         )
-        return renewed
+        try:
+            return await self._leases.renew(
+                lease.id,
+                owner=lease.owner,
+                fencing_token=lease.fencing_token,
+                expected_version=lease.version,
+                ttl_seconds=ttl_seconds or self._lease_ttl_seconds,
+                extra_guard=ownership_guard,
+            )
+        except WorkerLeaseConflict as error:
+            # the lease was expired/reclaimed concurrently -> ownership lost
+            await self._session.rollback()
+            raise AcquisitionStaleCommit(
+                f"run {run_id}: lease {lease.id} renewal lost ownership "
+                "(reclaimed or expired)"
+            ) from error
 
     # -- crash recovery ------------------------------------------------------
 

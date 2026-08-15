@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.events import EventType, PlatformEvent
@@ -86,21 +88,39 @@ class WorkerLeaseManager:
         expected_version: int,
         ttl_seconds: int,
         now: datetime | None = None,
+        extra_guard: Any | None = None,
     ) -> WorkerLease:
+        """Atomically renew a lease via a single conditional UPDATE.
+
+        ``extra_guard`` is an optional SQLAlchemy boolean clause AND-ed into the
+        UPDATE's WHERE (e.g. an ownership EXISTS subquery supplied by the claim
+        coordinator), so a renew can be gated on run ownership in the SAME
+        atomic statement -- closing any verify-then-renew TOCTOU.
+        """
         observed = now or datetime.now(UTC)
-        updated = await self._repository.update_active(
-            lease_id=lease_id,
-            owner=owner,
-            expected_version=expected_version,
-            expected_token=fencing_token,
-            values={
-                "renewed_at": observed,
-                "expires_at": observed + timedelta(seconds=ttl_seconds),
-                "version": expected_version + 1,
-            },
+        statement = (
+            update(WorkerLeaseModel)
+            .where(
+                WorkerLeaseModel.id == lease_id,
+                WorkerLeaseModel.owner == owner,
+                WorkerLeaseModel.status == LeaseStatus.ACTIVE.value,
+                WorkerLeaseModel.version == expected_version,
+                WorkerLeaseModel.fencing_token == fencing_token,
+            )
+            .values(
+                renewed_at=observed,
+                expires_at=observed + timedelta(seconds=ttl_seconds),
+                version=expected_version + 1,
+            )
+            .returning(WorkerLeaseModel)
+            .execution_options(synchronize_session=False)
         )
-        if updated is None:
+        if extra_guard is not None:
+            statement = statement.where(extra_guard)
+        rows = list((await self._session.scalars(statement)).all())
+        if not rows:
             raise WorkerLeaseConflict("Worker lease renewal failed fencing validation")
+        updated = rows[0]
         await self._audit(EventType.WORKER_LEASE_RENEWED, updated)
         await self._session.commit()
         return self._contract(updated)
@@ -131,8 +151,10 @@ class WorkerLeaseManager:
         rows = await self._repository.expire_active(now=observed)
         for row in rows:
             await self._audit(EventType.WORKER_LEASE_EXPIRED, row)
-        if rows:
-            await self._session.commit()
+        # Always commit: expire_active is now a conditional UPDATE which opens
+        # a write transaction even when 0 rows matched; leaving it open would
+        # hold the SQLite single-writer lock until the session is closed.
+        await self._session.commit()
         return tuple(self._contract(row) for row in rows)
 
     async def _audit(self, event_type: EventType, lease: WorkerLeaseModel) -> None:
