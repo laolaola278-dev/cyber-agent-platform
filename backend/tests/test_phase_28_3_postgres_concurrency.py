@@ -503,3 +503,82 @@ class TestPostgresConcurrency:
             else:
                 # reclaim won -> ownership moved to B
                 assert fresh.worker_id != worker_a
+
+
+    # -- I. renew vs reclaim stress (Phase 28.5-RC) --------------------------
+    @pytest.mark.stress
+    @pytest.mark.asyncio
+    async def test_renew_reclaim_race_stress(self, pg_factory, tmp_path) -> None:
+        """Race renew against reclaim hundreds of times on real PostgreSQL.
+
+        Each round races A's renewal against B's reclaim of A's expired lease.
+        Legal outcomes: renew wins (A still owns, lease ACTIVE) or reclaim
+        wins (owner moved to B). The split-brain outcome -- renew(A) reports
+        success while the run is owned by B -- is a Critical ownership
+        violation and must NEVER occur. Count rounds via CAP285_STRESS_ROUNDS
+        (default 500; PR may lower it, release keeps >= 500).
+        """
+        rounds = int(os.environ.get("CAP285_STRESS_ROUNDS", "500"))
+        renew_wins = 0
+        reclaim_wins = 0
+        invalid = 0
+        for i in range(rounds):
+            async with pg_factory() as session:
+                service = await _make_service(session, tmp_path)
+                run, _ = await service.create(
+                    goal=f"g{i}", url="http://example.com/static"
+                )
+                await session.commit()
+                run_id = run.id
+                worker_a = uuid4()
+                await _register_worker(session, worker_a, f"acq-stress-{i}-a")
+                token_a = uuid4()
+                coord_a = AcquisitionClaimCoordinator(
+                    session, WorkerLeaseManager(session), lease_ttl_seconds=5
+                )
+                await coord_a.claim(run.id, worker_a, token=token_a)
+
+            async def renew_side(_run_id=run_id, _worker_a=worker_a, _token_a=token_a) -> bool:
+                async with pg_factory() as s:
+                    coord = AcquisitionClaimCoordinator(
+                        s, WorkerLeaseManager(s), lease_ttl_seconds=120
+                    )
+                    try:
+                        lease = await coord.renew(_run_id, _worker_a, _token_a)
+                        return lease is not None
+                    except AcquisitionStaleCommit:
+                        return False
+
+            async def reclaim_side(_run_id=run_id, _i=i) -> None:
+                async with pg_factory() as s:
+                    await WorkerLeaseManager(s).expire(
+                        now=datetime.now(UTC) + timedelta(seconds=60)
+                    )
+                    worker_b = uuid4()
+                    await _register_worker(s, worker_b, f"acq-stress-{_i}-b")
+                    coord = AcquisitionClaimCoordinator(
+                        s, WorkerLeaseManager(s), lease_ttl_seconds=120
+                    )
+                    try:
+                        await coord.reclaim_expired(_run_id, worker_b, token=uuid4())
+                    except AcquisitionClaimConflict:
+                        pass
+
+            renewed, _ = await asyncio.gather(renew_side(), reclaim_side())
+            async with pg_factory() as s:
+                fresh = await s.get(AcquisitionRun, run_id)
+                if renewed and fresh.worker_id == worker_a:
+                    renew_wins += 1
+                    lease = await WorkerLeaseManager(s).require(fresh.lease_id)
+                    assert lease.status.value == "ACTIVE"
+                elif not renewed and fresh.worker_id != worker_a:
+                    reclaim_wins += 1
+                else:
+                    # split-brain: renew success + owner moved (or the inverse)
+                    invalid += 1
+
+        assert invalid == 0, (
+            "ownership split-brain observed: "
+            f"renew_wins={renew_wins} reclaim_wins={reclaim_wins} invalid={invalid}"
+        )
+        assert renew_wins + reclaim_wins + invalid == rounds

@@ -492,3 +492,58 @@ async def test_cancelled_runs_have_zero_evidence_writes(
         )
     ).scalars().all()
     assert not late_rows, "cancellation must not add evidence after CANCELLED"
+
+
+# -- stress: cancel vs complete race (Phase 28.5-RC) -------------------------
+
+
+@pytest.mark.stress
+@pytest.mark.asyncio
+async def test_cancel_complete_race_stress_100(db, lab, tmp_path) -> None:
+    """Race cancel against completion across the full interleaving space.
+
+    Each iteration cancels at a deterministic offset (before / at / after the
+    terminal commit), exercising both linearization outcomes. With the atomic
+    conditional UPDATE the run must ALWAYS converge to a terminal state --
+    never linger in CANCEL_REQUESTED, never double-transition. 100 iterations.
+    """
+    SessionFactory = _session_factory(db)
+    delays = (0.0, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.25, 0.4, 0.6)
+    terminal = 0
+    for i in range(100):
+        delay = delays[i % len(delays)]
+        async with SessionFactory() as session:
+            service = await _make_service(session, tmp_path, lab)
+            run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
+            await session.flush()
+            worker = await _register_worker(session, f"acq-race-{i}")
+            wp, provider = await _make_worker_path(session, service, worker)
+
+            token = uuid4()
+            leases = WorkerLeaseManager(session)
+            coordinator = AcquisitionClaimCoordinator(
+                session, leases, lease_ttl_seconds=60
+            )
+            await coordinator.claim(run.id, worker.id, token=token)
+
+            task = asyncio.create_task(wp.run_claimed(run.id, worker.id, token))
+            await asyncio.sleep(delay)
+            await _cancel_via_api(db, tmp_path, run.id, worker, provider)
+            try:
+                await asyncio.wait_for(task, timeout=15)
+            except Exception:  # noqa: BLE001 -- the durable state is the contract
+                pass
+
+        # read the durable state on a FRESH connection (the worker session may
+        # be committed/rolled back by now)
+        async with SessionFactory() as check:
+            fresh = await check.get(AcquisitionRun, run.id)
+            assert fresh.status in ("COMPLETE", "CANCELLED"), (
+                f"iteration {i}: run stuck in {fresh.status} "
+                f"(cancel delay={delay})"
+            )
+            assert fresh.stale_result_rejected == 0
+            if fresh.status == "CANCELLED":
+                assert fresh.cancelled_at is not None
+            terminal += 1
+    assert terminal == 100

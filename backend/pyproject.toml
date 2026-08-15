@@ -68,6 +68,7 @@ markers = [
   "security: adversarial security tests (network/secret/fs isolation)",
   "certification: tests that are REQUIRED for the Phase 28.5-L Linux release certification",
   "benchmark: throughput / correctness benchmarks (Phase 28.4/28.5)",
+  "stress: high-iteration concurrency stress tests (Phase 28.5-RC race hardening)",
 ]
 filterwarnings = [
   "error",
