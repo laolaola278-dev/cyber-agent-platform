@@ -6,7 +6,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.events import EventType, PlatformEvent
@@ -98,29 +97,20 @@ class WorkerLeaseManager:
         atomic statement -- closing any verify-then-renew TOCTOU.
         """
         observed = now or datetime.now(UTC)
-        statement = (
-            update(WorkerLeaseModel)
-            .where(
-                WorkerLeaseModel.id == lease_id,
-                WorkerLeaseModel.owner == owner,
-                WorkerLeaseModel.status == LeaseStatus.ACTIVE.value,
-                WorkerLeaseModel.version == expected_version,
-                WorkerLeaseModel.fencing_token == fencing_token,
-            )
-            .values(
-                renewed_at=observed,
-                expires_at=observed + timedelta(seconds=ttl_seconds),
-                version=expected_version + 1,
-            )
-            .returning(WorkerLeaseModel)
-            .execution_options(synchronize_session=False)
+        updated = await self._repository.update_active(
+            lease_id=lease_id,
+            owner=owner,
+            expected_version=expected_version,
+            expected_token=fencing_token,
+            values={
+                "renewed_at": observed,
+                "expires_at": observed + timedelta(seconds=ttl_seconds),
+                "version": expected_version + 1,
+            },
+            extra_guard=extra_guard,
         )
-        if extra_guard is not None:
-            statement = statement.where(extra_guard)
-        rows = list((await self._session.scalars(statement)).all())
-        if not rows:
+        if updated is None:
             raise WorkerLeaseConflict("Worker lease renewal failed fencing validation")
-        updated = rows[0]
         await self._audit(EventType.WORKER_LEASE_RENEWED, updated)
         await self._session.commit()
         return self._contract(updated)

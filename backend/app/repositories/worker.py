@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -85,6 +86,7 @@ class WorkerLeaseRepository(SQLAlchemyRepository[WorkerLease]):
         expected_version: int,
         expected_token: UUID,
         values: dict[str, object],
+        extra_guard: Any | None = None,
     ) -> WorkerLease | None:
         statement = (
             update(WorkerLease)
@@ -97,6 +99,8 @@ class WorkerLeaseRepository(SQLAlchemyRepository[WorkerLease]):
             )
             .values(**values)
         )
+        if extra_guard is not None:
+            statement = statement.where(extra_guard)
         result = await self.session.execute(statement)
         if result.rowcount != 1:
             return None
