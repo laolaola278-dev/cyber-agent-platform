@@ -608,7 +608,7 @@ async def test_cancel_before_terminal_cas_wins(pg_factory, tmp_path) -> None:
         run_id = run.id
         worker = uuid4()
         await _register_worker(session, worker, "acq-rc2-c1")
-        service.run_agent_operation = _complete_op_dirty_status
+        service.run_agent_operation = _complete_op
         wp = await _make_worker_path(session, service)
         token = uuid4()
         await wp._ensure_coordinator().claim(run_id, worker, token=token)
@@ -677,6 +677,41 @@ async def test_completion_before_cancel_cas_wins(pg_factory, tmp_path) -> None:
     async with pg_factory() as s:
         fresh = await s.get(AcquisitionRun, run_id)
         assert fresh.status == "COMPLETE"
+
+
+@_skip
+@pytest.mark.asyncio
+async def test_orm_writeback_discarded_on_cancel_win(pg_factory, tmp_path) -> None:
+    """§7 ORM-writeback hazard: the operation marks the ORM run status COMPLETE
+    (dirty, as _persist_result would), but CANCEL_REQUESTED is already durable,
+    so the terminal CAS matches 0 rows and rolls back the dirty status -- the
+    final state must be CANCELLED, never COMPLETE."""
+    async with pg_factory() as session:
+        service = await _make_service(session, tmp_path)
+        run, _ = await service.create(goal="g", url="http://example.com/static")
+        await session.commit()
+        run_id = run.id
+        worker = uuid4()
+        await _register_worker(session, worker, "acq-rc2-c3")
+        service.run_agent_operation = _complete_op_dirty_status
+        wp = await _make_worker_path(session, service)
+        token = uuid4()
+        await wp._ensure_coordinator().claim(run_id, worker, token=token)
+        # K2 durable BEFORE the operation: CANCEL_REQUESTED already committed
+        async with pg_factory() as api:
+            run_api = await api.get(AcquisitionRun, run_id)
+            run_api.status = "CANCEL_REQUESTED"
+            run_api.cancel_requested_at = datetime.now(UTC)
+            await api.commit()
+        payload = await asyncio.wait_for(wp.run_claimed(run_id, worker, token), timeout=20)
+        assert payload.status == "CANCELLED"
+        await wp._runtime_session.close()
+        await session.rollback()
+        await session.close()
+    async with pg_factory() as s:
+        fresh = await s.get(AcquisitionRun, run_id)
+        assert fresh.status == "CANCELLED"
+        assert fresh.stale_result_rejected == 0
 
 
 @_skip

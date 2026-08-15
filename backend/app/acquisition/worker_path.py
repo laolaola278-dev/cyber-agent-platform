@@ -544,6 +544,13 @@ class AcquisitionWorkerPath:
             result = await self._service.session.execute(stmt)
         if result.rowcount != 1:
             # lost the race (cancelled or reclaimed): discard pending writes
+            import sys
+
+            print(
+                f"RC2-DIAG finalize_terminal_atomic LOST rowcount={result.rowcount} "
+                f"run_id={run_id} payload_status={payload.status}",
+                file=sys.stderr,
+            )
             await self._service.session.rollback()
             return False
         await self._service.commit()
