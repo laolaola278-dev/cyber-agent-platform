@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: CAP Documentation
+    url: https://github.com/laolaola278-dev/cyber-agent-platform/tree/main/docs
+    about: 查阅架构文档、API 指南和部署文档
+  - name: Security Policy
+    url: https://github.com/laolaola278-dev/cyber-agent-platform/blob/main/SECURITY.md
+    about: 敏感安全问题请按 SECURITY.md 的指引私下报告
