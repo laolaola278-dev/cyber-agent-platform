@@ -1,0 +1,24 @@
+---
+name: Security Concern
+about: 报告安全相关问题（非敏感）或安全改进建议
+title: "[Security] "
+labels: security
+assignees: ''
+---
+
+> ⚠️ **敏感安全问题请私下报告**：见 `SECURITY.md` 中的联系方式，不要公开提交。
+
+## 描述
+
+<!-- 清晰描述安全发现或改进建议 -->
+
+## 影响评估
+
+- 严重程度: Low / Medium / High / Critical
+- 是否需要紧急修复: 是 / 否
+
+## 建议修复
+
+<!-- 如果有修复建议，请描述 -->
+
+## 补充信息
