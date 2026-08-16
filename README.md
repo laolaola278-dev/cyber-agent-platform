@@ -1,5 +1,12 @@
 # Cyber Agent Platform (CAP) 1.0.0-rc1
 
+[![CI](https://github.com/laolaola278-dev/cyber-agent-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/laolaola278-dev/cyber-agent-platform/actions/workflows/ci.yml)
+[![Linux Certification](https://github.com/laolaola278-dev/cyber-agent-platform/actions/workflows/cap-linux-certification.yml/badge.svg)](https://github.com/laolaola278-dev/cyber-agent-platform/actions/workflows/cap-linux-certification.yml)
+[![Release](https://github.com/laolaola278-dev/cyber-agent-platform/actions/workflows/release.yml/badge.svg)](https://github.com/laolaola278-dev/cyber-agent-platform/actions/workflows/release.yml)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](backend/pyproject.toml)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](backend/pyproject.toml)
+
 Cyber Agent Platform is an enterprise security-orchestration control plane that governs Asset, Knowledge, Assessment, Detection, Incident, Response, Notification, Worker, Sandbox, Telemetry, Plugin, and Playbook capabilities through stable interfaces, RBAC, approval, audit, and observability.
 
 ## Release status
