@@ -64,9 +64,9 @@ async def test_create_and_run_emits_deprecation_warning(session, tmp_path, lab) 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         await service.create_and_run(goal="g", url=f"{lab.origin}/static")
-    assert any(issubclass(w.category, DeprecationWarning) for w in caught), (
-        "create_and_run must emit a DeprecationWarning"
-    )
+    assert any(
+        issubclass(w.category, DeprecationWarning) for w in caught
+    ), "create_and_run must emit a DeprecationWarning"
 
 
 async def test_create_and_run_produces_pending_not_queued(session, tmp_path, lab) -> None:

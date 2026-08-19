@@ -215,9 +215,11 @@ class TestMultiWorkerHA:
                         or 0
                     )
                 if running >= 2 and not killed_a:
-                    os.kill(proc_a.pid, signal.SIGKILL) if hasattr(
-                        signal, "SIGKILL"
-                    ) else proc_a.kill()
+                    (
+                        os.kill(proc_a.pid, signal.SIGKILL)
+                        if hasattr(signal, "SIGKILL")
+                        else proc_a.kill()
+                    )
                     killed_a = True
                     break
                 await asyncio.sleep(0.5)

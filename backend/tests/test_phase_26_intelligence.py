@@ -287,7 +287,9 @@ async def test_triage_unknown_classification_rejected() -> None:
 
 async def test_triage_result_model_validation() -> None:
     with pytest.raises(ValueError):
-        TriageResult(classification="MALICIOUS", severity_assessment="HIGH", confidence=1.5)  # noqa: PLC0105
+        TriageResult(
+            classification="MALICIOUS", severity_assessment="HIGH", confidence=1.5
+        )  # noqa: PLC0105
     result = TriageResult(classification="MALICIOUS", severity_assessment="HIGH")
     assert result.validate_classification()
 

@@ -134,9 +134,9 @@ async def test_cancelled_run_leaves_no_evidence_after_cancel(session, tmp_path, 
     if run.status == "CANCELLED":
         evidence_rows = (await session.scalars(select(Evidence))).all()
         for row in evidence_rows:
-            assert row.captured_at <= run.cancelled_at, (
-                "cancelled run must not have evidence written after CANCELLED"
-            )
+            assert (
+                row.captured_at <= run.cancelled_at
+            ), "cancelled run must not have evidence written after CANCELLED"
 
 
 # -- 3. sandbox boundary is not bypassed ---------------------------------------------

@@ -70,7 +70,6 @@ async def _dispose_module_engines() -> AsyncIterator[None]:
             pass
 
 
-
 @pytest_asyncio.fixture
 async def client() -> AsyncIterator[AsyncClient]:
     app = create_app()

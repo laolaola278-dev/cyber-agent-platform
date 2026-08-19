@@ -534,12 +534,12 @@ async def test_cancel_complete_race_stress_100(db, lab, tmp_path) -> None:
         # be committed/rolled back by now)
         async with SessionFactory() as check:
             fresh = await check.get(AcquisitionRun, run.id)
-            assert fresh.status in ("COMPLETE", "CANCELLED"), (
-                f"iteration {i}: run stuck in {fresh.status} (cancel delay={delay})"
-            )
+            assert fresh.status in (
+                "COMPLETE",
+                "CANCELLED",
+            ), f"iteration {i}: run stuck in {fresh.status} (cancel delay={delay})"
             assert fresh.stale_result_rejected == 0
             if fresh.status == "CANCELLED":
                 assert fresh.cancelled_at is not None
             terminal += 1
     assert terminal == rounds
-

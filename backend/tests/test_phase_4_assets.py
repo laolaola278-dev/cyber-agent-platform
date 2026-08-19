@@ -457,14 +457,12 @@ async def test_workflow_propagates_asset_context_and_rejects_deleted_asset() -> 
             WorkflowRuntime(session, instances, InMemoryEventBus(), executor),
         )
         definition = await workflow_service.create_definition(
-            WorkflowDefinitionCreate(
-                yaml="""
+            WorkflowDefinitionCreate(yaml="""
 name: asset-aware-workflow
 version: 1.0.0
 steps:
   - capability: crawl.html
-"""
-            ),
+"""),
             trace_id="workflow-definition",
         )
         run = await workflow_service.create_run(

@@ -149,9 +149,9 @@ def test_sandbox_direct_public_egress_is_blocked() -> None:
     try:
         for ip in PUBLIC_IPS:
             reachable, _ = _direct_connect(cid, ip, 443)
-            assert not reachable, (
-                f"sandbox reached public {ip} directly -> network enforcement FAILED"
-            )
+            assert (
+                not reachable
+            ), f"sandbox reached public {ip} directly -> network enforcement FAILED"
     finally:
         subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=30)
 
@@ -180,9 +180,9 @@ def test_sandbox_direct_private_and_metadata_blocked() -> None:
     try:
         for host, port in targets:
             reachable, detail = _direct_connect(cid, host, port)
-            assert not reachable, (
-                f"sandbox reached {host}:{port} directly -> isolation FAILED ({detail})"
-            )
+            assert (
+                not reachable
+            ), f"sandbox reached {host}:{port} directly -> isolation FAILED ({detail})"
     finally:
         subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=30)
 
@@ -207,9 +207,9 @@ def test_sandbox_proxied_public_egress_works() -> None:
             timeout=60,
         )
         code = proc.stdout.strip()
-        assert code and code not in ("000",), (
-            f"proxied public egress failed (http={code}) stderr={proc.stderr[-300:]}"
-        )
+        assert code and code not in (
+            "000",
+        ), f"proxied public egress failed (http={code}) stderr={proc.stderr[-300:]}"
     finally:
         subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=30)
 
@@ -233,9 +233,9 @@ def test_proxy_denies_private_target() -> None:
             text=True,
             timeout=30,
         )
-        assert proc.stdout.strip() == "403", (
-            f"proxy did not deny metadata target: {proc.stdout.strip()}"
-        )
+        assert (
+            proc.stdout.strip() == "403"
+        ), f"proxy did not deny metadata target: {proc.stdout.strip()}"
     finally:
         subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=30)
 

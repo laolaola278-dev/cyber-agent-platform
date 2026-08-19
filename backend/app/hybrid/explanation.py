@@ -90,15 +90,14 @@ def evaluate_explanations(
             "unsupported_rate": 0.0,
         }
     evidence_coverage = sum(1 for e in explanations if e.evidence_refs) / total
-    factor_coverage = sum(
-        1 for e in explanations if set(e.factors) & required_factors
-    ) / total
-    correct = sum(
-        1 for e in explanations if e.evidence_refs and (set(e.factors) & required_factors)
-    ) / total
-    unsupported = sum(
-        1 for e in explanations if not e.evidence_refs and not e.knowledge_refs
-    ) / total
+    factor_coverage = sum(1 for e in explanations if set(e.factors) & required_factors) / total
+    correct = (
+        sum(1 for e in explanations if e.evidence_refs and (set(e.factors) & required_factors))
+        / total
+    )
+    unsupported = (
+        sum(1 for e in explanations if not e.evidence_refs and not e.knowledge_refs) / total
+    )
     return {
         "evidence_coverage": round(evidence_coverage, 4),
         "factor_coverage": round(factor_coverage, 4),

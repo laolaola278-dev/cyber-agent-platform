@@ -192,9 +192,7 @@ class AcquisitionWorkerPath:
             # visible across the process boundary (this is the production
             # cancel channel: DB flag + worker polling).
             poll_factory = async_sessionmaker(self._service.session.bind, expire_on_commit=False)
-            operation_task = asyncio.create_task(
-                self._service.run_agent_operation(run, checkpoint)
-            )
+            operation_task = asyncio.create_task(self._service.run_agent_operation(run, checkpoint))
             import time as _t
 
             _op_start = _t.monotonic()
@@ -345,9 +343,7 @@ class AcquisitionWorkerPath:
         # rowcount decides the winner -- never a SELECT-then-Python-decision
         # followed by an unconditional UPDATE.
         await self._record_worker_identity(run, checkpoint)
-        applied = await self._finalize_terminal_atomic(
-            run_id, worker_id, token, payload, run=run
-        )
+        applied = await self._finalize_terminal_atomic(run_id, worker_id, token, payload, run=run)
         if applied:
             return payload
 

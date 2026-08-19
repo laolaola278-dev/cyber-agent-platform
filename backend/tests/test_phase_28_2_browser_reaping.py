@@ -172,8 +172,8 @@ async def test_cancel_race_does_not_leak_browser_contexts(session, tmp_path, lab
                 # (allow a brief GC/cleanup tick before counting)
                 await asyncio.sleep(0.1)
                 live = await _count_live_contexts(adapter)
-                assert live == baseline, (
-                    f"browser contexts leaked across cancel race: {live} != baseline {baseline}"
-                )
+                assert (
+                    live == baseline
+                ), f"browser contexts leaked across cancel race: {live} != baseline {baseline}"
     finally:
         await adapter.shutdown()

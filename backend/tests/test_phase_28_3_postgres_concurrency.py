@@ -660,9 +660,7 @@ async def test_completion_before_cancel_cas_wins(pg_factory, tmp_path) -> None:
             cancel_task = asyncio.create_task(api_wp.cancel(run_id))
             await asyncio.wait_for(cancel_barrier.reached.wait(), timeout=10)
             # C2: completion commits COMPLETE while the cancel is paused
-            payload = await asyncio.wait_for(
-                wp.run_claimed(run_id, worker, token), timeout=20
-            )
+            payload = await asyncio.wait_for(wp.run_claimed(run_id, worker, token), timeout=20)
             assert payload.status == "COMPLETE"
             # release K1 -> cancel CAS matches 0 rows -> no-op
             cancel_barrier.release.set()
@@ -780,4 +778,3 @@ async def test_cancel_complete_pg_stress(pg_factory, tmp_path) -> None:
     assert invalid == 0, f"invalid terminal state: {invalid}"
     assert post_cancel == 0, f"post-cancel stale writes: {post_cancel}"
     assert cancel_wins + completion_wins + stuck + invalid == rounds
-

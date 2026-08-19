@@ -239,9 +239,7 @@ class ZeekResultNormalizer:
         return (
             value.strip()
             if isinstance(value, str)
-            else str(value)
-            if isinstance(value, int)
-            else ""
+            else str(value) if isinstance(value, int) else ""
         )
 
     @staticmethod

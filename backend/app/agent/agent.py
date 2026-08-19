@@ -148,9 +148,9 @@ class InvestigationAgent:
             self._output_guardrail.check(
                 content=conclusion.summary + " " + " ".join(conclusion.evidence_refs),
                 evidence_refs=conclusion.evidence_refs,
-                known_evidence=set(memory.observations[0].evidence_refs)
-                if memory.observations
-                else set(),
+                known_evidence=(
+                    set(memory.observations[0].evidence_refs) if memory.observations else set()
+                ),
             )
             memory.set_conclusion(conclusion)
             self._observability.record_conclusion(run.run_id, conclusion)

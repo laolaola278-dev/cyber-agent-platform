@@ -111,9 +111,9 @@ class TestMigration:
         try:
             url = f"{_DB_DSN}{dbname}"
             result = _alembic_upgrade(url)
-            assert result.returncode == 0, (
-                f"alembic upgrade head failed:\n{result.stdout[-1500:]}\n{result.stderr[-1500:]}"
-            )
+            assert (
+                result.returncode == 0
+            ), f"alembic upgrade head failed:\n{result.stdout[-1500:]}\n{result.stderr[-1500:]}"
 
             conn = await asyncpg.connect(f"postgresql://cap:cap@127.0.0.1:55432/{dbname}")
             try:

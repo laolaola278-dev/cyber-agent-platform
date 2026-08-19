@@ -305,9 +305,7 @@ class AcquisitionService:
             raise AcquisitionNotFound(f"AcquisitionRun {run_id} not found")
         return run
 
-    async def run_agent_operation(
-        self, run: AcquisitionRun, checkpoint: Any
-    ) -> Any:
+    async def run_agent_operation(self, run: AcquisitionRun, checkpoint: Any) -> Any:
         """Execute the acquisition INSIDE the worker operation.
 
         Adapters (HTTP/Document/Store/Evidence sink) are constructed here --
