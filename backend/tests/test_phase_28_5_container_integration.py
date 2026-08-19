@@ -185,6 +185,74 @@ def test_containerized_fetch_executes_in_isolated_domain(lab) -> None:
 
 
 @_need_docker
+def test_browser_renders_page_in_isolated_container() -> None:
+    """REAL Chromium runtime gate (Phase 28.5): the cap-sandbox-browser image
+    launches Chromium inside the container and actually renders a page --
+    proves the browser path works end-to-end, not just that the Dockerfile
+    mentions chromium (which is the static test_phase_28_5_sandbox_image
+    check)."""
+    if not _image_exists("cap-sandbox-browser:latest"):
+        pytest.skip("browser sandbox image not built")
+    from app.sandbox.oci_protocol import SandboxRequest
+
+    net = os.environ.get("CAP_SANDBOX_NETWORK", "cap-sandbox-egress")
+    lab_name = f"cap-cert-browser-lab-{uuid4().hex[:8]}"
+    lab_port = 28332
+    lab_code = (
+        "from http.server import BaseHTTPRequestHandler,HTTPServer;\n"
+        "class H(BaseHTTPRequestHandler):\n"
+        " def do_GET(self):\n"
+        "  b=b'<html><head><title>cap-browser-render</title></head>"
+        "<body>container-browser-ok</body></html>';\n"
+        "  self.send_response(200);self.send_header('Content-Length',str(len(b)));\n"
+        "  self.end_headers();self.wfile.write(b);\n"
+        " def log_message(self,*a):pass\n"
+        f"HTTPServer(('0.0.0.0',{lab_port}),H).serve_forever()\n"
+    )
+    lab_lc = subprocess.run(
+        [
+            "docker", "run", "-d", "--rm", "--name", lab_name, "--network", net,
+            "--entrypoint", "python", "cap-sandbox-http:latest", "-c", lab_code,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if lab_lc.returncode != 0:
+        subprocess.run(["docker", "rm", "-f", lab_name], capture_output=True, timeout=30)
+        pytest.skip(f"could not start lab container: {lab_lc.stderr[-300:]}")
+    try:
+        lab_ip = subprocess.run(
+            [
+                "docker", "inspect", "-f",
+                "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", lab_name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        ).stdout.strip()
+        assert lab_ip, "could not resolve lab container IP"
+        request = SandboxRequest(
+            operation="browser_browse",
+            run_id=str(uuid4()),
+            sandbox_execution_id=str(uuid4()),
+            url=f"http://{lab_ip}:{lab_port}/page",
+            policy={"allow_private": True},
+            wait_network_idle_ms=2000,
+        ).model_dump_json()
+        run = _shim_request(request, image="cap-sandbox-browser:latest", network=net)
+        assert run.returncode == 0, run.stderr[-500:]
+        assert '"status":"ok"' in run.stdout, run.stdout[-500:]
+        payload = json.loads(run.stdout)
+        result = payload["result"]
+        assert result.get("available") is True, f"browser did not render: {result}"
+        assert "cap-browser-render" in (result.get("title") or ""), f"title missing: {result}"
+        assert "container-browser-ok" in (result.get("html") or ""), f"html missing: {result}"
+    finally:
+        subprocess.run(["docker", "rm", "-f", lab_name], capture_output=True, timeout=30)
+
+
+@_need_docker
 def test_ssrf_defense_in_depth_validator_bypass_still_blocked() -> None:
     """The container network is isolated (--network none), so even a request
     that bypasses the shim's URL validator cannot reach private targets."""

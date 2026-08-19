@@ -16,7 +16,6 @@ exit non-zero so the release certification job FAILS (no silent green).
 
 from __future__ import annotations
 
-import glob
 import json
 import os
 import re
@@ -56,7 +55,10 @@ GATE_TESTS = {
     "ssrf_defense_in_depth": ("test_phase_28_5_linux_network", "test_sandbox_direct_private_and_metadata_blocked"),
     "hard_cancellation": ("test_phase_28_5_linux_reaper", "test_cancellation_ordering_timestamps"),
     "reaper": ("test_phase_28_5_linux_reaper", "test_reaper_fencing_on_real_containers"),
-    "browser": ("test_phase_28_5_sandbox_image", "browser"),
+    "browser": (
+        "test_phase_28_5_container_integration",
+        "test_browser_renders_page_in_isolated_container",
+    ),
     "secrets": ("test_phase_28_5_linux_secrets", "test_secret_never_appears_in_control_plane_artifacts"),
     "real_integration": ("test_phase_28_4_multi_worker_ha", "test_two_workers"),
 }
@@ -75,9 +77,7 @@ def parse_junit(junit: Path) -> dict[str, str]:
         # (e.g. TestMultiWorkerHA.test_two_workers...) still match the module
         # substring used by resolve_gate.
         test_id = f"{cls}.{name}" if cls else name
-        if case.find("failure") is not None:
-            result[test_id] = "failed"
-        elif case.find("error") is not None:
+        if case.find("failure") is not None or case.find("error") is not None:
             result[test_id] = "failed"
         elif case.find("skipped") is not None:
             result[test_id] = "skipped"
@@ -227,7 +227,7 @@ def main() -> int:
         lines.append(f"| {gate} | {value} |")
     lines += [
         "",
-        f"## Tests",
+        "## Tests",
         f"- total: {payload['tests']['total']}",
         f"- passed: {payload['tests']['outcomes']['passed']}",
         f"- failed: {payload['tests']['outcomes']['failed']}",
