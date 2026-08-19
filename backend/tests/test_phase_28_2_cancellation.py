@@ -499,12 +499,16 @@ async def test_cancel_complete_race_stress_100(db, lab, tmp_path) -> None:
     Each iteration cancels at a deterministic offset (before / at / after the
     terminal commit), exercising both linearization outcomes. With the atomic
     conditional UPDATE the run must ALWAYS converge to a terminal state --
-    never linger in CANCEL_REQUESTED, never double-transition. 100 iterations.
+    never linger in CANCEL_REQUESTED, never double-transition. 100 iterations
+    (override with CAP285_STRESS_ROUNDS, matching the PG stress tests).
     """
+    import os
+
     SessionFactory = _session_factory(db)
     delays = (0.0, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.25, 0.4, 0.6)
+    rounds = int(os.environ.get("CAP285_STRESS_ROUNDS", "100"))
     terminal = 0
-    for i in range(100):
+    for i in range(rounds):
         delay = delays[i % len(delays)]
         async with SessionFactory() as session:
             service = await _make_service(session, tmp_path, lab)
@@ -537,4 +541,5 @@ async def test_cancel_complete_race_stress_100(db, lab, tmp_path) -> None:
             if fresh.status == "CANCELLED":
                 assert fresh.cancelled_at is not None
             terminal += 1
-    assert terminal == 100
+    assert terminal == rounds
+

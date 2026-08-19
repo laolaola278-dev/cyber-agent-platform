@@ -44,6 +44,33 @@ async def reset_database() -> AsyncIterator[None]:
         await connection.run_sync(Base.metadata.drop_all)
 
 
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def _dispose_module_engines() -> AsyncIterator[None]:
+    """Dispose the module-level SQLAlchemy engines at session end.
+
+    ``create_async_engine("sqlite+aiosqlite://", ...)`` performs a dialect
+    initialization "first connect" (a probe connection). With aiosqlite that
+    probe connection runs in a background worker thread and is not cleanly
+    closed by SQLAlchemy, so it is only reclaimed by ``__del__`` during a
+    later ``gc.collect()`` -- which emits a ``ResourceWarning`` and, under
+    pytest's unraisable-exception hook, fails the test. Disposing every
+    module-level engine at session end closes the probe + pool connections
+    before they can be garbage-collected mid-run (third-party teardown defect:
+    SQLAlchemy + aiosqlite).
+    """
+    from app.worker.plugin_runtime import (
+        _SYNTHETIC_ENGINE as _synth_engine,
+    )
+
+    yield
+    for eng in (engine, _synth_engine):
+        try:
+            await eng.dispose()
+        except Exception:  # noqa: BLE001 -- best-effort teardown
+            pass
+
+
+
 @pytest_asyncio.fixture
 async def client() -> AsyncIterator[AsyncClient]:
     app = create_app()
