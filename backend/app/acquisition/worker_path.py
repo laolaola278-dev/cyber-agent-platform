@@ -345,7 +345,9 @@ class AcquisitionWorkerPath:
         # rowcount decides the winner -- never a SELECT-then-Python-decision
         # followed by an unconditional UPDATE.
         await self._record_worker_identity(run, checkpoint)
-        applied = await self._finalize_terminal_atomic(run_id, worker_id, token, payload)
+        applied = await self._finalize_terminal_atomic(
+            run_id, worker_id, token, payload, run=run
+        )
         if applied:
             return payload
 
@@ -501,7 +503,13 @@ class AcquisitionWorkerPath:
         return self._payload_from_run(run, checkpoint, "cancel requested")
 
     async def _finalize_terminal_atomic(
-        self, run_id: UUID, worker_id: UUID, token: UUID, payload: AcquisitionRunPayload
+        self,
+        run_id: UUID,
+        worker_id: UUID,
+        token: UUID,
+        payload: AcquisitionRunPayload,
+        *,
+        run: Any | None = None,
     ) -> bool:
         """Atomically apply the operation's terminal result.
 
@@ -532,28 +540,26 @@ class AcquisitionWorkerPath:
             )
             .execution_options(synchronize_session=False)
         )
-        # Disable autoflush: the worker session holds pending result/evidence
-        # writes (including run.status from _persist_result). Auto-flushing
-        # those BEFORE the guarded UPDATE would flip the DB status to COMPLETE
-        # first, so the UPDATE's `status IN (RUNNING, PARTIAL)` guard would
-        # match 0 rows. Execute the guarded UPDATE against the committed state
-        # instead; the pending writes commit atomically right after.
         if self.race_barrier_before_terminal is not None:
             await self.race_barrier_before_terminal.wait()
         with self._service.session.no_autoflush:
             result = await self._service.session.execute(stmt)
         if result.rowcount != 1:
             # lost the race (cancelled or reclaimed): discard pending writes
-            import sys
-
-            print(
-                f"RC2-DIAG finalize_terminal_atomic LOST rowcount={result.rowcount} "
-                f"run_id={run_id} payload_status={payload.status}",
-                file=sys.stderr,
-            )
             await self._service.session.rollback()
             return False
         await self._service.commit()
+        # Sync the in-memory run object with the durable terminal state. The
+        # raw UPDATE uses synchronize_session=False, so the ORM identity map is
+        # NOT updated -- and the worker session uses expire_on_commit=False, so
+        # without this the run object keeps the pre-transition status (a stale
+        # read for any subsequent access on this session). We won the CAS, so
+        # mirror the committed state (never re-flush it as a status write).
+        if run is not None:
+            run.status = payload.status
+            run.checkpoint = payload.checkpoint
+            if terminal:
+                run.finished_at = now
         return True
 
     async def _finalize_cancelled_if_safe(
@@ -671,7 +677,16 @@ class AcquisitionWorkerPath:
         execution = getattr(self._plugin, "last_execution", None)
         if execution is None:
             return
-        run.worker_id = execution.worker_id
+        # Only record the executing worker as the owner when the run is NOT
+        # fenced to a claiming worker (legacy Phase 28.1 direct-execution
+        # path). Once claimed, run.worker_id is the FENCING owner (guarded by
+        # the atomic terminal CAS) and MUST NOT be overwritten by the
+        # scheduler-selected execution worker: the scheduler picks the
+        # least-loaded worker, which may differ from the claiming worker, and
+        # overwriting worker_id would make the CAS's `worker_id ==
+        # :claiming_worker` guard lose spuriously (run stuck in RUNNING).
+        if run.claim_token_hash is None:
+            run.worker_id = execution.worker_id
         run.sandbox_execution_id = execution.sandbox_execution_id
         run.worker_execution_id = execution.execution_id
         try:

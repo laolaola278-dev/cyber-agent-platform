@@ -325,7 +325,12 @@ class AcquisitionService:
         agent = self._build_agent(str(run.id), run.trace_id)
         request = self._planner_request_from_state(run, state)
         result = await agent.acquire(request, checkpoint=checkpoint)
-        await self._persist_result(run, result, run.id)
+        # Defer the terminal status: the worker path applies it atomically via
+        # a conditional UPDATE (single linearization point). Writing status here
+        # would auto-flush COMPLETE before the guarded UPDATE (see
+        # _persist_result docstring). The legacy execute() path re-applies the
+        # status via _apply_payload afterwards, so this is safe for both.
+        await self._persist_result(run, result, run.id, apply_terminal=False)
 
         resumed = AcquisitionCheckpoint(run_id=str(run.id))
         resumed.snapshot(result)
@@ -466,6 +471,8 @@ class AcquisitionService:
         run: AcquisitionRun,
         result: AcquisitionResult,
         run_id: UUID,
+        *,
+        apply_terminal: bool = True,
     ) -> None:
         # idempotent: resume re-runs the agent, so drop this run's previous
         # detail rows before re-inserting the accumulated result
@@ -478,8 +485,17 @@ class AcquisitionService:
             PublicEndpointCandidateRecord,
         ):
             await self._session.execute(delete(model).where(model.run_id == run_id))
-        run.status = result.status.value
-        run.finished_at = result.finished_at
+        # The terminal status/finished_at is applied ONLY via the atomic
+        # conditional UPDATE in AcquisitionWorkerPath._finalize_terminal_atomic
+        # when apply_terminal=False. Writing it here (as a dirty ORM attribute)
+        # would be auto-flushed at the next SELECT -- flipping the DB status to
+        # COMPLETE BEFORE the guarded UPDATE, defeating its
+        # `status IN (RUNNING, PARTIAL)` pre-state check (the §7 ORM-writeback
+        # hazard). The atomic UPDATE is the SINGLE writer of the terminal
+        # transition; everything else (detail rows, plan metadata) is data.
+        if apply_terminal:
+            run.status = result.status.value
+            run.finished_at = result.finished_at
         run.source_type = result.plan.source_type.value if result.plan else "UNKNOWN"
         run.strategy = result.plan.strategy if result.plan else ""
         run.blocked_reason = result.blocked_reason.value
