@@ -342,6 +342,15 @@ class AcquisitionWorkerPath:
         # completion is discarded (its pending evidence rolls back with it).
         # rowcount decides the winner -- never a SELECT-then-Python-decision
         # followed by an unconditional UPDATE.
+        #
+        # Test-only fault-injection barrier (None in production): pause at the
+        # terminal-transition linearization point BEFORE _record_worker_identity
+        # so the worker does NOT yet hold the run row lock. Pausing after
+        # identity recording would deadlock the deterministic race test -- the
+        # worker would wait for the barrier while holding the row lock, and the
+        # test's concurrent CANCEL_REQUESTED flip would block on that lock.
+        if self.race_barrier_before_terminal is not None:
+            await self.race_barrier_before_terminal.wait()
         await self._record_worker_identity(run, checkpoint)
         applied = await self._finalize_terminal_atomic(run_id, worker_id, token, payload, run=run)
         if applied:
@@ -536,8 +545,6 @@ class AcquisitionWorkerPath:
             )
             .execution_options(synchronize_session=False)
         )
-        if self.race_barrier_before_terminal is not None:
-            await self.race_barrier_before_terminal.wait()
         with self._service.session.no_autoflush:
             result = await self._service.session.execute(stmt)
         if result.rowcount != 1:
