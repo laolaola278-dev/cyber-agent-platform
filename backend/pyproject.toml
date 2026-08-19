@@ -79,13 +79,16 @@ filterwarnings = [
   "error",
   "ignore::DeprecationWarning",
   # aiosqlite.Connection.__del__ emits a ResourceWarning when a connection is
-  # garbage-collected before .close(). SQLAlchemy's create_async_engine does a
-  # dialect-initialization "first connect" whose aiosqlite connection runs in a
-  # background worker thread and is not cleanly closed, so it is reclaimed by
-  # __del__ during a later gc.collect() (automatic cyclic GC under allocation
-  # churn). This is a third-party (SQLAlchemy + aiosqlite) teardown defect: the
-  # engines ARE disposed at session end (conftest._dispose_module_engines), so
-  # this only silences the spurious __del__ warning, not a real leak.
+  # garbage-collected before .close(); the raw sqlite3.Connection it wraps
+  # emits "unclosed database" the same way. SQLAlchemy's create_async_engine
+  # does a dialect-initialization "first connect" whose aiosqlite connection
+  # runs in a background worker thread and is not cleanly closed, so both are
+  # reclaimed by __del__ during a later gc.collect() (automatic cyclic GC
+  # under allocation churn). This is a third-party (SQLAlchemy + aiosqlite)
+  # teardown defect: the engines ARE disposed at session end
+  # (conftest._dispose_module_engines), so this only silences the spurious
+  # __del__ warning, not a real leak.
   "ignore:.*deleted before being closed.*:ResourceWarning:aiosqlite",
+  "ignore:unclosed database:ResourceWarning",
 ]
 

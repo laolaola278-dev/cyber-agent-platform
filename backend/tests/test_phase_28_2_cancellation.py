@@ -493,20 +493,25 @@ async def test_cancelled_runs_have_zero_evidence_writes(
 
 @pytest.mark.stress
 @pytest.mark.asyncio
-async def test_cancel_complete_race_stress_100(db, lab, tmp_path) -> None:
+async def test_cancel_complete_race_stress(db, lab, tmp_path) -> None:
     """Race cancel against completion across the full interleaving space.
 
     Each iteration cancels at a deterministic offset (before / at / after the
     terminal commit), exercising both linearization outcomes. With the atomic
     conditional UPDATE the run must ALWAYS converge to a terminal state --
-    never linger in CANCEL_REQUESTED, never double-transition. 100 iterations
-    (override with CAP285_STRESS_ROUNDS, matching the PG stress tests).
+    never linger in CANCEL_REQUESTED, never double-transition.
+
+    This SQLite run verifies the state MACHINE converges under the single-writer
+    lock (default 25 rounds). The authoritative concurrent-linearization proof
+    (cancel_wins / completion_wins / stuck == 0 over >=500 rounds) is
+    test_cancel_complete_pg_stress on real PostgreSQL, which is MVCC and can
+    actually interleave two writers.
     """
     import os
 
     SessionFactory = _session_factory(db)
     delays = (0.0, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.25, 0.4, 0.6)
-    rounds = int(os.environ.get("CAP285_STRESS_ROUNDS", "100"))
+    rounds = int(os.environ.get("CAP285_STRESS_ROUNDS", "25"))
     terminal = 0
     for i in range(rounds):
         delay = delays[i % len(delays)]
