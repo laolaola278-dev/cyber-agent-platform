@@ -34,10 +34,10 @@ class EvidenceService:
         """
         await self._session.commit()
 
-    def _emit(self, event: PlatformEvent) -> None:
+    async def _emit(self, event: PlatformEvent) -> None:
         """Publish an event; a null publisher (tests/embedded) is a no-op."""
         if self._publisher is not None:
-            self._publisher.publish(event)
+            await self._publisher.publish(event)
 
     async def save_capture(
         self,
@@ -83,7 +83,7 @@ class EvidenceService:
         if asset_id is not None:
             self._session.add(AssetEvidence(asset_id=asset_id, evidence_id=evidence.id))
             await self._session.flush()
-            self._emit(
+            await self._emit(
                 PlatformEvent(
                     type=EventType.ASSET_EVIDENCE_LINKED,
                     trace_id=trace_id,
@@ -95,7 +95,7 @@ class EvidenceService:
                     payload={"evidence_id": str(evidence.id), "source": "capture"},
                 )
             )
-        self._emit(
+        await self._emit(
             PlatformEvent(
                 type=EventType.EVIDENCE_SAVED,
                 trace_id=trace_id,
@@ -171,7 +171,7 @@ class EvidenceService:
         if asset_id is not None:
             self._session.add(AssetEvidence(asset_id=asset_id, evidence_id=evidence.id))
             await self._session.flush()
-            self._emit(
+            await self._emit(
                 PlatformEvent(
                     type=EventType.ASSET_EVIDENCE_LINKED,
                     trace_id=trace_id,
@@ -183,7 +183,7 @@ class EvidenceService:
                     payload={"evidence_id": str(evidence.id), "source": "object"},
                 )
             )
-        self._emit(
+        await self._emit(
             PlatformEvent(
                 type=EventType.EVIDENCE_SAVED,
                 trace_id=trace_id,

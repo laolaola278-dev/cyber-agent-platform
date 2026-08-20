@@ -149,9 +149,14 @@ class _RecordingSink:
     def __init__(self) -> None:
         self.saved: list[str] = []
 
-    async def save_evidence(self, artifact: RawArtifact, object_key: str) -> str:
+    async def save_evidence(
+        self, artifact: RawArtifact, object_key: str, content: bytes = b""
+    ) -> str:
         self.saved.append(object_key)
         return f"evidence-{object_key[:8]}"
+
+    async def commit(self) -> None:
+        return None
 
 
 def _agent_with_sink(sink, store=None):

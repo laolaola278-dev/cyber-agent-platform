@@ -252,9 +252,9 @@ def test_phase_20_migration_is_reversible() -> None:
 
     config = Config(str(backend / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
-    # Phase 25 (v2.0) adds the Agentic engine migration on top of the playbook
-    # chain; the chain must remain a single head.
-    assert script.get_heads() == ["20260808_0020"]
+    # Phase 28.3/28.5 adds the Acquisition durable-runtime migration on top of
+    # the playbook chain; the chain must remain a single head.
+    assert script.get_heads() == ["20260812_0021"]
     revision = script.get_revision("20260808_0019")
     assert revision is not None
     assert revision.down_revision == "20260803_0018"

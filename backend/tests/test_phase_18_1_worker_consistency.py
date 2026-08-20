@@ -307,8 +307,8 @@ async def test_sandbox_runtime_rejects_unsupported_capabilities_and_bad_identity
             await runtime.execute(profile, operation)
 
     class BadIdentityProvider(MemorySandboxProvider):
-        async def execute(self, execution_id, profile, callback):
-            result = await super().execute(execution_id, profile, callback)
+        async def execute(self, execution_id, profile, callback, secrets=None):
+            result = await super().execute(execution_id, profile, callback, secrets=secrets)
             return result.model_copy(update={"execution_id": uuid4()})
 
     bad_runtime = SandboxRuntime(BadIdentityProvider(), SandboxPolicyEngine())
@@ -431,8 +431,9 @@ def test_manifest_v1_compatible_and_v2_forbids_unknown_fields() -> None:
 def test_phase_18_1_migration_is_single_head_and_worker_scoped() -> None:
     alembic_config = Config(str(PROJECT_ROOT / "backend/alembic.ini"))
     script = ScriptDirectory.from_config(alembic_config)
-    # Phase 25 (v2.0) appends the Agentic engine migration; the chain stays single-head.
-    assert script.get_heads() == ["20260808_0020"]
+    # Phase 28.3/28.5 appends the Acquisition durable-runtime migration; the
+    # chain stays single-head.
+    assert script.get_heads() == ["20260812_0021"]
 
     revision = script.get_revision("20260802_0017")
     assert revision is not None
