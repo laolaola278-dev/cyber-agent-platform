@@ -20,7 +20,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # non-root master: nginx writes its pid file to /run by default, which uid 101
 # cannot open; redirect the pid to /tmp (world-writable) so the image runs
 # cleanly under runAsNonRoot (Kubernetes).
-RUN sed -i 's|pid /run/nginx.pid;|pid /tmp/nginx.pid;|' /etc/nginx/nginx.conf \
+RUN sed -i 's|/run/nginx.pid|/tmp/nginx.pid|g' /etc/nginx/nginx.conf \
     && chown -R 101:101 /var/cache/nginx /var/run /var/log/nginx /etc/nginx/conf.d /etc/nginx/templates /usr/share/nginx/html
 USER 101
 EXPOSE 8080
