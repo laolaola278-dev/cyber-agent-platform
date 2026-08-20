@@ -210,8 +210,10 @@ def test_gate5_worker_sa_adversarial_attempts_denied() -> None:
     context = _json(["config", "view", "--minify", "-o", "json"])
     cluster = context["clusters"][0]["cluster"]
     server = cluster.get("server")
-    ca = base64.b64decode(cluster.get("certificate-authority-data", "")).decode()
-    (tmp / "ca.crt").write_text(ca)
+    ca_raw = base64.b64decode(cluster.get("certificate-authority-data", ""))
+    # kind's CA is a DER-encoded certificate (not UTF-8 text); write the raw
+    # bytes so kubectl can verify TLS against it.
+    (tmp / "ca.crt").write_bytes(ca_raw)
     kubeconfig.write_text(
         json.dumps(
             {
@@ -296,6 +298,10 @@ def _create_sandbox_probe_pod(name: str) -> str:
                 {
                     "name": "probe",
                     "image": "cap-sandbox-http:latest",
+                    # kind has no registry; 'latest' defaults to pullPolicy
+                    # Always, which would ImagePullBackOff. Loaded local images
+                    # must use IfNotPresent.
+                    "imagePullPolicy": "IfNotPresent",
                     "command": ["python", "-m", "sandbox.shim", "--serve"],
                 }
             ],

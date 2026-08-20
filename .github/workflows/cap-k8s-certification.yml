@@ -190,13 +190,26 @@ jobs:
           RC=$?
           kubectl -n cap rollout status deploy/cap-cap-worker --timeout=480s
           RC=$((RC + $?))
+          kubectl -n cap rollout status deploy/cap-cap-frontend --timeout=240s
+          RC=$((RC + $?))
+          kubectl -n cap rollout status deploy/cap-cap-egress-proxy --timeout=240s
+          RC=$((RC + $?))
           set -e
           kubectl get pods -n cap -o wide
+          # unconditional short dump: gate harness also asserts rollout
+          # health, so surface component logs even when the wait passes
+          for COMP in backend worker frontend egress-proxy; do
+            POD=$(kubectl -n cap get pods -l "app.kubernetes.io/component=$COMP" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            if [ -n "$POD" ]; then
+              echo "--- $COMP/$POD logs (tail) ---"
+              kubectl -n cap logs "$POD" --tail=15 2>&1 | tail -15 || true
+            fi
+          done
           if [ $RC -ne 0 ]; then
             for COMP in backend worker frontend egress-proxy; do
               POD=$(kubectl -n cap get pods -l "app.kubernetes.io/component=$COMP" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
               if [ -n "$POD" ]; then
-                echo "--- $COMP/$POD logs ---"
+                echo "--- $COMP/$POD logs (full) ---"
                 kubectl -n cap logs "$POD" --tail=40 2>&1 || true
               fi
             done

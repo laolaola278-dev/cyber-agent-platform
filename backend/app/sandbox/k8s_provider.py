@@ -197,6 +197,10 @@ class KubernetesSandboxProvider:
                     {
                         "name": "sandbox",
                         "image": self._image,
+                        # local-loaded images (kind/CI) must not attempt a
+                        # registry pull; 'latest' defaults to pullPolicy
+                        # Always which ImagePullBackOffs without a registry.
+                        "imagePullPolicy": "IfNotPresent",
                         "command": ["python", "-m", "sandbox.shim", "--serve"],
                         "env": env,
                         "ports": [{"containerPort": self._shim_port, "protocol": "TCP"}],
