@@ -32,6 +32,13 @@ TEST_GATES: dict[str, list[str]] = {
     "test_gate12_worker_multi_replica_ownership": ["K8S-GATE 12"],
 }
 
+# gates certified by evidence OUTSIDE this run (historical / separately
+# certified): K8S-GATE 1 is the Phase 28.5-RC2 baseline (14/14 gates, commit
+# 705bdd2, v1.0.0-rc3), which this phase builds on and must not regress.
+BASELINE_GATES = {
+    "K8S-GATE 1": "PASS",  # 28.5-RC2 certified baseline (705bdd2, 14/14)
+}
+
 ALL_GATES = [f"K8S-GATE {i}" for i in range(1, 33)]
 
 
@@ -87,6 +94,8 @@ def main() -> int:
     gates: dict[str, str] = {}
     for gate in ALL_GATES:
         gates[gate] = "NOT_RUN"
+    for gate, status in BASELINE_GATES.items():
+        gates[gate] = status
     for test_name, test_gates in TEST_GATES.items():
         outcome = results.get(test_name, "NOT_RUN")
         for gate in test_gates:
