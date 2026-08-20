@@ -421,9 +421,25 @@ def _proxy_logs(tail: int = 25) -> str:
     return (proc.stdout or proc.stderr)[-800:]
 
 
+def _backend_logs(tail: int = 40) -> str:
+    """Latest API pod logs (diagnostics for GATE 11/12)."""
+    pods = _json(["get", "pods", "-n", NAMESPACE, "-l", "app.kubernetes.io/component=backend"])
+    if isinstance(pods, dict):
+        pods = pods.get("items", [])
+    if not pods:
+        return "(no backend pod)"
+    pod = pods[0]["metadata"]["name"]
+    proc = _kubectl(["logs", "-n", NAMESPACE, pod, "--tail", str(tail)], check=False)
+    return (proc.stdout or proc.stderr)[-1500:]
+
+
 def test_gate10_controlled_egress_via_proxy_works(probe_pod: str) -> None:
     _require_cluster()
-    # via the egress proxy (HTTP CONNECT): public target allowed
+    # GATE 10a: the sandbox CAN reach the egress proxy (NP allows :8080)
+    assert _sandbox_connect(probe_pod, f"cap-cap-egress-proxy.{NAMESPACE}.svc", 8080), (
+        "sandbox cannot reach the egress proxy (NetworkPolicy egress allow missing?)"
+    )
+    # GATE 10b: via the egress proxy (HTTP CONNECT): public target allowed
     proc = _kubectl(
         [
             "exec",
@@ -432,7 +448,7 @@ def test_gate10_controlled_egress_via_proxy_works(probe_pod: str) -> None:
             probe_pod,
             "--",
             "curl",
-            "-s",
+            "-v",
             "-o",
             "/dev/null",
             "-w",
@@ -447,7 +463,7 @@ def test_gate10_controlled_egress_via_proxy_works(probe_pod: str) -> None:
     )
     assert proc.returncode == 0 and proc.stdout.strip() == "200", (
         f"proxied public egress failed: rc={proc.returncode} "
-        f"out={proc.stdout[:200]} err={proc.stderr[:200]}\n"
+        f"out={proc.stdout[:200]} err={proc.stderr[:400]}\n"
         f"proxy logs: {_proxy_logs()}"
     )
     # proxy denies private targets
@@ -519,7 +535,9 @@ async def test_gate11_api_multi_replica_idempotency(api_port: int) -> None:
         *[_api_create(api_port, "g", "http://example.com/", key) for _ in range(100)]
     )
     run_ids = {res[1].get("id") for res in results if res[0] in (200, 201)}
-    assert run_ids, "no successful create"
+    assert run_ids, (
+        f"no successful create (statuses={[r[0] for r in results][:5]}...)\n{_backend_logs()}"
+    )
     assert len(run_ids) == 1, f"idempotency violated: {len(run_ids)} distinct runs for one key"
 
 
@@ -532,7 +550,7 @@ async def test_gate12_worker_multi_replica_ownership(api_port: int) -> None:
     assert len(_worker_pod_names()) >= 2, "expected >=2 worker replicas"
     key = f"k8s-workers-{uuid4().hex[:8]}"
     status, body = await _api_create(api_port, "g", "http://example.com/", key)
-    assert status in (200, 201)
+    assert status in (200, 201), f"create failed status={status}\n{_backend_logs()}"
     run_id = body.get("id")
     # wait for terminal (workers drain the durable queue)
     deadline = time.monotonic() + 90
