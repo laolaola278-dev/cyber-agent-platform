@@ -152,7 +152,15 @@ def test_gate2_required_pods_healthy() -> None:
         "deployment/cap-cap-egress-proxy",
     }
     for name in sorted(wanted):
-        proc = _kubectl(["rollout", "status", name, "-n", NAMESPACE, "--timeout=150s"], check=False)
+        # generous dedicated timeout (kind cold-start image unpack can exceed
+        # the shared 90s _kubectl ceiling)
+        proc = subprocess.run(
+            ["kubectl", "rollout", "status", name, "-n", NAMESPACE, "--timeout=300s"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=320,
+        )
         assert proc.returncode == 0, f"rollout not healthy: {name}\n{proc.stderr}"
     assert _worker_pod_names(), "no running worker pod"
 
@@ -612,9 +620,13 @@ def test_gate13_scale_up_improves_drain(api_port: int) -> None:
 
     n = 40
     key = f"k8s-scaleup-{uuid4().hex[:8]}"
-    results = _asyncio.run(
-        _asyncio.gather(*[_api_create(api_port, "g", "http://127.0.0.1:9/", key) for _ in range(n)])
-    )
+
+    async def _burst() -> list[tuple[int, dict]]:
+        return await _asyncio.gather(
+            *[_api_create(api_port, "g", "http://127.0.0.1:9/", key) for _ in range(n)]
+        )
+
+    results = _asyncio.run(_burst())
     run_ids = {res[1].get("id") for res in results if res[0] in (200, 201, 202)}
     assert len(run_ids) == n, f"expected {n} accepted runs, got {len(run_ids)}"
     deadline = time.monotonic() + 180
@@ -728,9 +740,9 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
     # find which node hosts the first worker, then stop that kind node
     pod = _worker_pod_names()[0]
     node = _json(["get", "pod", pod, "-n", NAMESPACE, "-o", "json"])["spec"]["nodeName"]
-    cluster = os.environ.get("KIND_CLUSTER", "cap-k8s")
+    # kind node container name == node name (already '<cluster>-worker')
     proc = subprocess.run(
-        ["docker", "stop", f"{cluster}-{node}"],
+        ["docker", "stop", node],
         capture_output=True,
         text=True,
         timeout=60,
@@ -738,7 +750,7 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
     assert proc.returncode == 0, f"docker stop node failed: {proc.stderr}"
     status = _wait_run_terminal(api_port, rid, timeout=300)
     # restart the node so later gates have a full cluster
-    subprocess.run(["docker", "start", f"{cluster}-{node}"], capture_output=True, timeout=120)
+    subprocess.run(["docker", "start", node], capture_output=True, timeout=120)
     assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
         f"run did not recover after node failure (status={status})"
     )
