@@ -45,7 +45,7 @@ jobs:
             --ignore=backend/tests/test_phase_28_5_linux_reaper.py \
             --ignore=backend/tests/test_phase_28_5_linux_resources.py \
             --ignore=backend/tests/test_phase_28_5_linux_secrets.py \
-            --deselect=backend/tests/test_phase_28_2_500_benchmark.py::test_500_runs_durable_no_loss_no_duplicate \
+            --deselect=tests/test_phase_28_2_500_benchmark.py::test_500_runs_durable_no_loss_no_duplicate \
             --timeout=300 --timeout-method=thread \
             --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=95
       - name: Validate Alembic head
