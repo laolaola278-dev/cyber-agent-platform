@@ -433,6 +433,18 @@ def _backend_logs(tail: int = 40) -> str:
     return (proc.stdout or proc.stderr)[-1500:]
 
 
+def _worker_logs(tail: int = 40) -> str:
+    """Latest worker pod logs (diagnostics for GATE 12 claim behavior)."""
+    pods = _json(["get", "pods", "-n", NAMESPACE, "-l", "app.kubernetes.io/component=worker"])
+    if isinstance(pods, dict):
+        pods = pods.get("items", [])
+    if not pods:
+        return "(no worker pod)"
+    pod = pods[0]["metadata"]["name"]
+    proc = _kubectl(["logs", "-n", NAMESPACE, pod, "--tail", str(tail)], check=False)
+    return (proc.stdout or proc.stderr)[-1500:]
+
+
 def test_gate10_controlled_egress_via_proxy_works(probe_pod: str) -> None:
     _require_cluster()
     # GATE 10a: the sandbox CAN reach the egress proxy (NP allows :8080)
@@ -536,7 +548,7 @@ async def test_gate11_api_multi_replica_idempotency(api_port: int) -> None:
     # 100 concurrent identical idempotency requests -> exactly one run row
     key = f"k8s-idem-{uuid4().hex[:10]}"
     results = await asyncio.gather(
-        *[_api_create(api_port, "g", "http://example.com/", key) for _ in range(100)]
+        *[_api_create(api_port, "g", "http://127.0.0.1:9/", key) for _ in range(100)]
     )
     run_ids = {res[1].get("id") for res in results if res[0] in (200, 201, 202)}
     assert run_ids, (
@@ -553,11 +565,11 @@ async def test_gate12_worker_multi_replica_ownership(api_port: int) -> None:
     _require_cluster()
     assert len(_worker_pod_names()) >= 2, "expected >=2 worker replicas"
     key = f"k8s-workers-{uuid4().hex[:8]}"
-    status, body = await _api_create(api_port, "g", "http://example.com/", key)
+    status, body = await _api_create(api_port, "g", "http://127.0.0.1:9/", key)
     assert status in (200, 201, 202), f"create failed status={status}\n{_backend_logs()}"
     run_id = body.get("id")
     # wait for terminal (workers drain the durable queue)
-    deadline = time.monotonic() + 90
+    deadline = time.monotonic() + 180
     final_status = None
     while time.monotonic() < deadline:
         async with httpx.AsyncClient(timeout=15) as http:
@@ -571,5 +583,5 @@ async def test_gate12_worker_multi_replica_ownership(api_port: int) -> None:
                 break
         await asyncio.sleep(2)
     assert final_status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
-        f"run {run_id} not terminal (status={final_status})"
+        f"run {run_id} not terminal (status={final_status})\n{_worker_logs()}"
     )

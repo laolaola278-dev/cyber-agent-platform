@@ -346,11 +346,16 @@ class KubernetesSandboxProvider:
 
     async def health(self) -> bool:
         try:
-            pod = await self._get_pod("no-such-probe")  # probe: API reachable?
-            del pod
+            # probe: API reachable? A NotFound (404) for a random name still
+            # proves the API + RBAC work; any other ApiException means the
+            # worker cannot manage sandbox Pods and must not claim work.
+            await self._get_pod(f"cap-health-probe-{os.getpid()}-{time.time_ns()}")
             return True
-        except Exception:  # noqa: BLE001
-            # API reachable -> we get 404 NotFound; unreachable -> ApiException
+        except Exception as error:  # noqa: BLE001
+            from kubernetes import client as k8s_client
+
+            if isinstance(error, k8s_client.ApiException) and error.status == 404:
+                return True
             return False
 
     async def reconcile_orphans(self, *, owned_executions: set[str]) -> int:
