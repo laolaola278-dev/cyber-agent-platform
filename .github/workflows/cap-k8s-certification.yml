@@ -179,16 +179,16 @@ jobs:
             echo "=== migration pod logs ==="; kubectl -n cap logs "$MIG_POD" 2>&1 | tail -40 || true
           fi
           [ $RC -eq 0 ] || exit $RC
-          kubectl -n cap wait --for=condition=available deploy/cap-backend --timeout=180s || true
-          kubectl -n cap wait --for=condition=available deploy/cap-worker --timeout=180s || true
+          kubectl -n cap wait --for=condition=available deploy/cap-cap-backend --timeout=180s || true
+          kubectl -n cap wait --for=condition=available deploy/cap-cap-worker --timeout=180s || true
           kubectl get deploy,pdb,hpa -n cap
 
       - name: Wait for CAP pods ready (dump logs on failure)
         run: |
           set +e
-          kubectl -n cap rollout status deploy/cap-backend --timeout=480s
+          kubectl -n cap rollout status deploy/cap-cap-backend --timeout=480s
           RC=$?
-          kubectl -n cap rollout status deploy/cap-worker --timeout=480s
+          kubectl -n cap rollout status deploy/cap-cap-worker --timeout=480s
           RC=$((RC + $?))
           set -e
           kubectl get pods -n cap -o wide
