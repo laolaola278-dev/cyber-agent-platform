@@ -41,13 +41,15 @@ RUN apt-get update \
               /usr/local/lib/python3.13/site-packages/pkg_resources* \
               /usr/local/lib/python3.13/site-packages/wheel* \
               /usr/local/lib/python3.13/site-packages/pip* \
-    && addgroup --system cap && adduser --system --ingroup cap cap
-COPY --from=builder --chown=cap:cap /app/.venv /app/.venv
+    && addgroup --system --gid 10001 cap && adduser --system --uid 10001 --ingroup cap cap
+COPY --from=builder --chown=10001:10001 /app/.venv /app/.venv
 COPY config ./config
 COPY alembic.ini ./
 COPY alembic ./alembic
 
-USER cap
+# numeric UID: Kubernetes runAsNonRoot requires a resolvable non-root user
+# (a named user like "cap" cannot be verified as non-root)
+USER 10001:10001
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"

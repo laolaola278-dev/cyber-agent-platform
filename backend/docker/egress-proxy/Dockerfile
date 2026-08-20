@@ -13,6 +13,6 @@ RUN adduser --system --uid 10001 --disabled-password --no-create-home --shell /u
 COPY app/sandbox/egress_proxy.py /srv/egress_proxy.py
 WORKDIR /srv
 
-USER capuser
+USER 10001:10001
 EXPOSE 8080
 CMD ["python", "-u", "-c", "import asyncio; from egress_proxy import run_egress_proxy; asyncio.run(run_egress_proxy(port=8080))"]
