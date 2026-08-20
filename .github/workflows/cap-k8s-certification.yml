@@ -148,7 +148,9 @@ jobs:
 
       - name: Helm install CAP (K8S-GATE 2)
         run: |
+          set +e
           helm install cap deployment/helm/cap --namespace cap --create-namespace \
+            --timeout 600s \
             --set backend.image.repository=cap-backend --set backend.image.tag=ci \
             --set frontend.image.repository=cap-frontend --set frontend.image.tag=ci \
             --set worker.image.repository=cap-backend --set worker.image.tag=ci \
@@ -156,10 +158,19 @@ jobs:
             --set worker.replicaCount=2 \
             --set worker.sandbox.egressProxyUrl=http://cap-egress-proxy.cap.svc:8080 \
             --set worker.sandbox.namespace=cap-sandbox
+          RC=$?
+          set -e
+          echo "=== pods -A ==="; kubectl get pods -A -o wide || true
+          echo "=== migration job/pods ==="; kubectl -n cap get jobs,pods -l app.kubernetes.io/component=migration -o wide || true
+          MIG_POD=$(kubectl -n cap get pods -l app.kubernetes.io/component=migration -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          if [ -n "$MIG_POD" ]; then
+            echo "=== migration pod events ==="; kubectl -n cap describe pod "$MIG_POD" 2>/dev/null | tail -30 || true
+            echo "=== migration pod logs ==="; kubectl -n cap logs "$MIG_POD" 2>&1 | tail -40 || true
+          fi
+          [ $RC -eq 0 ] || exit $RC
           kubectl -n cap wait --for=condition=available deploy/cap-backend --timeout=180s || true
           kubectl -n cap wait --for=condition=available deploy/cap-worker --timeout=180s || true
-          kubectl get pods -A -o wide
-          kubectl -n cap get deploy,pdb,hpa
+          kubectl get deploy,pdb,hpa -n cap
 
       - name: "Run K8s certification gates (strict: SKIP=FAIL)"
         working-directory: backend
