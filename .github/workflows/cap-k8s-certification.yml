@@ -60,9 +60,8 @@ jobs:
           helm install cilium cilium/cilium --namespace kube-system \
             --set operator.replicas=1 \
             --set ipam.mode=kubernetes \
-            --set kubeProxyReplacement=disabled \
-            --set cgroup.autoMount.enabled=false \
-            --set securityContext.capabilities.capNetAdmin=true
+            --set kubeProxyReplacement=false \
+            --set cgroup.autoMount.enabled=false
           kubectl -n kube-system rollout status ds/cilium --timeout=180s
           kubectl -n kube-system rollout status deployment/cilium-operator --timeout=120s
           kubectl get pods -n kube-system -l k8s-app=cilium
