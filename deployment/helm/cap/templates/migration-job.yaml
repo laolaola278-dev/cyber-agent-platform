@@ -21,7 +21,11 @@ spec:
         app.kubernetes.io/component: migration
     spec:
       restartPolicy: Never
-      serviceAccountName: {{ include "cap.serviceAccountName" . }}
+      # Use the namespace default ServiceAccount: a pre-install hook runs
+      # BEFORE the chart's regular ServiceAccounts are created, so referencing
+      # the chart SA here fails on a fresh cluster ("serviceaccount not found").
+      # A DB migration needs no Kubernetes API access.
+      serviceAccountName: default
       automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
