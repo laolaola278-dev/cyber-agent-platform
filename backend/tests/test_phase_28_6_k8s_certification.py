@@ -133,10 +133,10 @@ def _worker_sa_token() -> str:
 def test_gate2_required_pods_healthy() -> None:
     _require_cluster()
     wanted = {
-        f"deployment/cap-backend",
-        f"deployment/cap-worker",
-        f"deployment/cap-frontend",
-        f"deployment/cap-egress-proxy",
+        "deployment/cap-backend",
+        "deployment/cap-worker",
+        "deployment/cap-frontend",
+        "deployment/cap-egress-proxy",
     }
     for name in sorted(wanted):
         proc = _kubectl(["rollout", "status", name, "-n", NAMESPACE, "--timeout=150s"], check=False)
