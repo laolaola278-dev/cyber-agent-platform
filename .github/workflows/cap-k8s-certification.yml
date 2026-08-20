@@ -183,6 +183,26 @@ jobs:
           kubectl -n cap wait --for=condition=available deploy/cap-worker --timeout=180s || true
           kubectl get deploy,pdb,hpa -n cap
 
+      - name: Wait for CAP pods ready (dump logs on failure)
+        run: |
+          set +e
+          kubectl -n cap rollout status deploy/cap-backend --timeout=240s
+          RC=$?
+          kubectl -n cap rollout status deploy/cap-worker --timeout=240s
+          RC=$((RC + $?))
+          set -e
+          kubectl get pods -n cap -o wide
+          if [ $RC -ne 0 ]; then
+            for COMP in backend worker frontend egress-proxy; do
+              POD=$(kubectl -n cap get pods -l "app.kubernetes.io/component=$COMP" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+              if [ -n "$POD" ]; then
+                echo "--- $COMP/$POD logs ---"
+                kubectl -n cap logs "$POD" --tail=40 2>&1 || true
+              fi
+            done
+            exit $RC
+          fi
+
       - name: Install backend deps (dev extra for pytest)
         run: uv sync --project backend --frozen --extra dev
 
