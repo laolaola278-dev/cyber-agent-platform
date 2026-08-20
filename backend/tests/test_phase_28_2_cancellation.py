@@ -369,7 +369,17 @@ async def test_cancel_during_pagination(db, session: AsyncSession, tmp_path, lab
 @pytest.mark.filterwarnings("ignore::ResourceWarning")
 async def test_cancel_during_evidence_write(db, session: AsyncSession, tmp_path, lab) -> None:
     service = await _make_service(session, tmp_path, lab)
-    run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
+    # A slow acquisition (8s fetch) keeps the worker busy through the
+    # fetch -> extract -> evidence-persist phases, so the cancel below
+    # deterministically lands BEFORE the terminal CAS. Using the fast /static
+    # page made this test timing-sensitive: on a fast runner the run completed
+    # (<50ms) before the cancel, yielding COMPLETE instead of CANCELLED. The
+    # precise cancel-vs-complete interleavings are proven on PostgreSQL with
+    # the deterministic barrier tests; this SQLite test verifies the basic
+    # cancel-converges-to-CANCELLED state machine with no stale commit.
+    run, _ = await service.create(
+        goal="g", url=f"{lab.origin}/pagination?mode=timeout&page=1"
+    )
     await session.flush()
     worker = await _register_worker(session, "acq-cancel-ev")
     wp, provider = await _make_worker_path(session, service, worker)
@@ -380,9 +390,8 @@ async def test_cancel_during_evidence_write(db, session: AsyncSession, tmp_path,
     await coordinator.claim(run.id, worker.id, token=token)
 
     task = asyncio.create_task(wp.run_claimed(run.id, worker.id, token))
-    # cancel very quickly -- the run may or may not have written evidence yet;
-    # either way the terminal state must be CANCELLED with no stale commit
-    await asyncio.sleep(0.05)
+    # let the slow acquisition begin, then cancel mid-execution
+    await asyncio.sleep(0.6)
     cancelled = await _cancel_via_api(db, tmp_path, run.id, worker, provider)
     assert cancelled["status"] in ("CANCEL_REQUESTED", "CANCELLED")
     result = await asyncio.wait_for(task, timeout=10)

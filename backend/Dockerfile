@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM ghcr.io/astral-sh/uv:0.8.3 AS uv
 
-FROM python:3.12-slim AS builder
+FROM python:3.13-slim AS builder
 COPY --from=uv /uv /uvx /bin/
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
@@ -11,7 +11,7 @@ COPY pyproject.toml README.md uv.lock ./
 COPY app ./app
 RUN uv sync --frozen --no-dev --no-editable
 
-FROM python:3.12-slim AS runtime
+FROM python:3.13-slim AS runtime
 
 ARG VERSION=1.0.0-rc1
 ARG REVISION=unknown
@@ -26,7 +26,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_VERSION=$VERSION
 WORKDIR /app
 
-RUN addgroup --system cap && adduser --system --ingroup cap cap
+# Refresh OS packages to close known HIGH CVEs in the base image (e.g.
+# util-linux/bsdutils CVE-2026-53615) so the Trivy image scan reports
+# 0 blocking HIGH/CRITICAL. Removes the apt lists to keep the image lean.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && addgroup --system cap && adduser --system --ingroup cap cap
 COPY --from=builder --chown=cap:cap /app/.venv /app/.venv
 COPY config ./config
 COPY alembic.ini ./

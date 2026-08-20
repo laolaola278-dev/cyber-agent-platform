@@ -22,8 +22,6 @@ from app.sandbox.subprocess_provider import SubprocessSandboxProvider
 
 pytestmark = pytest.mark.sandbox
 
-PG_DSN = os.environ.get("CAP283_PG_DSN", "postgresql+asyncpg://cap@127.0.0.1:55432/cap283")
-
 
 def _profile(name: str = "p284", timeout: int = 30, memory_mb: int = 256) -> SandboxProfile:
     return SandboxProfile(
@@ -172,7 +170,11 @@ async def test_sandbox_crash_does_not_kill_worker(runtime) -> None:
 
 @pytest.mark.asyncio
 async def test_unserializable_operation_fails_closed(runtime) -> None:
-    engine = create_async_engine(PG_DSN)
+    # An in-memory SQLite AsyncEngine is not cloudpicklable and needs no
+    # external PostgreSQL server (the previous PG_DSN-based engine made this
+    # unit test fail with 'connection refused' in the general CI, which has no
+    # PostgreSQL service).
+    engine = create_async_engine("sqlite+aiosqlite://")
     async with engine.connect():
         # an operation holding an un-picklable resource must be rejected
         async def op():

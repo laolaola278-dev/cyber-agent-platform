@@ -32,7 +32,22 @@ jobs:
       - name: Lint
         run: uv run --project backend ruff check backend/app backend/tests benchmarks/phase22
       - name: Unit tests and coverage
-        run: uv run --project backend pytest backend/tests -p no:cacheprovider --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=95
+        # Exclude the Linux certification suite (network/reaper/resources/secrets):
+        # those tests need the cap-sandbox-* images + cap-sandbox-egress network
+        # that only the CAP certification workflow provisions. The 28.2 SQLite
+        # durability benchmark is also excluded (single-writer lock serializes it
+        # to 20+ min on a contended runner); its 500-run correctness is
+        # re-certified in the release-tag benchmark job. --timeout=300 catches any
+        # hang with a thread stack dump instead of letting the whole job time out.
+        run: |
+          uv run --project backend pytest backend/tests -p no:cacheprovider \
+            --ignore=backend/tests/test_phase_28_5_linux_network.py \
+            --ignore=backend/tests/test_phase_28_5_linux_reaper.py \
+            --ignore=backend/tests/test_phase_28_5_linux_resources.py \
+            --ignore=backend/tests/test_phase_28_5_linux_secrets.py \
+            --deselect=backend/tests/test_phase_28_2_500_benchmark.py::test_500_runs_durable_no_loss_no_duplicate \
+            --timeout=300 --timeout-method=thread \
+            --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=95
       - name: Validate Alembic head
         run: uv run --project backend alembic -c backend/alembic.ini heads | tee alembic-head.txt
       - uses: actions/upload-artifact@v4
