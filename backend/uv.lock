@@ -460,6 +460,7 @@ name = "cyber-agent-platform-backend"
 version = "1.0.0rc3"
 source = { editable = "." }
 dependencies = [
+    { name = "aiosqlite" },
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "cloudpickle" },
@@ -484,7 +485,6 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
-    { name = "aiosqlite" },
     { name = "black" },
     { name = "openpyxl" },
     { name = "pypdf" },
@@ -498,7 +498,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiosqlite", marker = "extra == 'dev'", specifier = ">=0.20.0,<1.0.0" },
+    { name = "aiosqlite", specifier = ">=0.20.0,<1.0.0" },
     { name = "alembic", specifier = ">=1.13.2,<2.0.0" },
     { name = "asyncpg", specifier = ">=0.29.0,<1.0.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=26.3.1,<27.0.0" },
