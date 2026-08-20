@@ -78,8 +78,18 @@ spec:
             httpGet: {path: /health, port: http}
             periodSeconds: {{ .Values.backend.probes.liveness.periodSeconds }}
             failureThreshold: {{ .Values.backend.probes.liveness.failureThreshold }}
+          volumeMounts:
+            # EvidenceService(storage_directory=Path("outputs")) is relative to
+            # the workdir; the image runs as a non-root user, so give it a
+            # writable emptyDir (API-side blob scratch; durable evidence for
+            # workers lives in the object store).
+            - name: api-scratch
+              mountPath: /app/outputs
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
+      volumes:
+        - name: api-scratch
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

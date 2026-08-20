@@ -126,7 +126,7 @@ class EgressProxy:
             else:
                 await self._handle_http(reader, writer, method, target, first)
         except Exception as error:  # noqa: BLE001
-            logger.debug("egress proxy connection error: %s", error)
+            logger.exception("egress proxy connection error: %s", error)
         finally:
             try:
                 writer.close()
@@ -142,20 +142,24 @@ class EgressProxy:
         except ValueError:
             await self._deny(writer, "bad target")
             return
+        logger.info("CONNECT %s:%s", host, port)
         if await self._deny_if_forbidden(writer, host, port):
             return
         # forward the TCP stream (IPv4-first: kind/CI nodes have no IPv6
         # route, and an AF_INET6 pick here would fail the whole CONNECT)
         try:
             up_reader, up_writer = await asyncio.wait_for(
-                _open_connection_v4_first(host, port), timeout=10
+                _open_connection_v4_first(host, port), timeout=15
             )
-        except OSError:
+        except (OSError, TimeoutError) as error:
+            logger.warning("CONNECT %s:%s upstream failed: %s", host, port, error)
             await self._deny(writer, "upstream unreachable")
             return
+        logger.info("CONNECT %s:%s established", host, port)
         writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         await writer.drain()
         await self._pipe(reader, writer, up_reader, up_writer)
+        logger.info("CONNECT %s:%s tunnel closed", host, port)
 
     async def _handle_http(
         self,
@@ -172,9 +176,9 @@ class EgressProxy:
             return
         try:
             up_reader, up_writer = await asyncio.wait_for(
-                _open_connection_v4_first(host, port), timeout=10
+                _open_connection_v4_first(host, port), timeout=15
             )
-        except OSError:
+        except (OSError, TimeoutError):
             await self._deny(writer, "upstream unreachable")
             return
         # forward the request verbatim + drain the rest of the request body
