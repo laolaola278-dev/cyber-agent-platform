@@ -85,6 +85,9 @@ worker:
   pdb:
     minAvailable: 1
   probes:
+    startup:
+      failureThreshold: 60
+      periodSeconds: 5
     readiness:
       periodSeconds: 10
       failureThreshold: 3

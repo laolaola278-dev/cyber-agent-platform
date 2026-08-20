@@ -121,6 +121,10 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ required "worker.existingSecret is required" .Values.worker.existingSecret }}
+          startupProbe:
+            tcpSocket: {port: metrics}
+            periodSeconds: {{ .Values.worker.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.worker.probes.startup.failureThreshold }}
           readinessProbe:
             tcpSocket: {port: metrics}
             periodSeconds: {{ .Values.worker.probes.readiness.periodSeconds }}

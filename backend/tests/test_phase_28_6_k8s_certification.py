@@ -133,10 +133,10 @@ def _worker_sa_token() -> str:
 def test_gate2_required_pods_healthy() -> None:
     _require_cluster()
     wanted = {
-        "deployment/cap-backend",
-        "deployment/cap-worker",
-        "deployment/cap-frontend",
-        "deployment/cap-egress-proxy",
+        "deployment/cap-cap-backend",
+        "deployment/cap-cap-worker",
+        "deployment/cap-cap-frontend",
+        "deployment/cap-cap-egress-proxy",
     }
     for name in sorted(wanted):
         proc = _kubectl(["rollout", "status", name, "-n", NAMESPACE, "--timeout=150s"], check=False)
@@ -309,7 +309,24 @@ def _create_sandbox_probe_pod(name: str) -> str:
         timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
-    _kubectl(["wait", "--for=condition=Ready", f"pod/{name}", "-n", SANDBOX_NS, "--timeout=120s"])
+    # kind cold-start: the sandbox image is unpacked lazily on first use
+    # (several minutes on a 2-CPU runner), so wait with a generous budget
+    # instead of the shared 90s _kubectl timeout.
+    wait = subprocess.run(
+        [
+            "kubectl",
+            "wait",
+            "--for=condition=Ready",
+            f"pod/{name}",
+            "-n",
+            SANDBOX_NS,
+            "--timeout=300s",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=320,
+    )
+    assert wait.returncode == 0, f"probe pod {name} not ready: {wait.stderr}"
     return name
 
 
