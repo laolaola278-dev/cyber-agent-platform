@@ -42,8 +42,11 @@ class Settings(BaseSettings):
 
     # -- Phase 28.4: production isolation / durable object storage ----------
     # Phase 28.5: sandbox_provider accepts "oci-sandbox" (container runtime)
+    # Phase 28.6: accepts "kubernetes-sandbox" (sandbox Pod in cap-sandbox ns;
+    # the worker never mounts a container runtime socket)
     sandbox_provider: str = (
-        "subprocess-sandbox"  # memory-sandbox | subprocess-sandbox | oci-sandbox
+        # memory-sandbox | subprocess-sandbox | oci-sandbox | kubernetes-sandbox
+        "subprocess-sandbox"
     )
     sandbox_timeout_seconds: int = 120
     sandbox_memory_mb: int = 512
@@ -59,6 +62,10 @@ class Settings(BaseSettings):
     egress_allow: str = ""  # test hook: "host:port" allowlist for local lab
     sandbox_reaper_interval_seconds: int = 60
     sandbox_runtime_driver: str = "docker"  # docker | podman | containerd
+    # -- Phase 28.6: Kubernetes sandbox ------------------------------------
+    sandbox_namespace: str = "cap-sandbox"
+    sandbox_shim_port: int = 8080
+    sandbox_pod_ready_timeout_seconds: int = 90
     object_store_backend: str = "local"  # local | s3
     object_store_endpoint: str = ""
     object_store_access_key: str = ""

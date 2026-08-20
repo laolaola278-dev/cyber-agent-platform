@@ -231,6 +231,29 @@ async def _amain() -> int:
                 settings.sandbox_network or "(default)",
                 settings.egress_proxy_url or "(direct, egress proxy required in prod)",
             )
+        elif settings.sandbox_provider.casefold() == "kubernetes-sandbox":
+            from app.sandbox.k8s_provider import KubernetesSandboxProvider
+
+            network_runtime = SandboxRuntime(
+                KubernetesSandboxProvider(
+                    namespace=settings.sandbox_namespace,
+                    image=settings.sandbox_image,
+                    shim_port=settings.sandbox_shim_port,
+                    egress_proxy=settings.egress_proxy_url,
+                    pod_ready_timeout=settings.sandbox_pod_ready_timeout_seconds,
+                    default_memory_mb=settings.sandbox_memory_mb,
+                    default_cpu_millicores=settings.sandbox_cpu_millicores,
+                    metrics=metrics,
+                ),
+                SandboxPolicyEngine(),
+                metrics=metrics,
+            )
+            logger.info(
+                "sandbox provider=kubernetes-sandbox image=%s namespace=%s egress=%s",
+                settings.sandbox_image,
+                settings.sandbox_namespace,
+                settings.egress_proxy_url or "(direct, egress proxy required in prod)",
+            )
         elif settings.sandbox_provider.casefold() == "subprocess-sandbox":
             from app.sandbox.subprocess_provider import SubprocessSandboxProvider
 

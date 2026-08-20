@@ -3,11 +3,16 @@ fullnameOverride: ""
 
 imagePullSecrets: []
 
+# Phase 28.6: dedicated namespace for short-lived sandbox Pods. The worker
+# ServiceAccount has a namespaced Role ONLY here (never cluster-wide, never
+# runtime sockets).
+sandboxNamespace: cap-sandbox
+
 backend:
-  replicaCount: 2
+  replicaCount: 3
   image:
     repository: ghcr.io/example/cap-backend
-    tag: "1.0.0-rc1"
+    tag: "1.0.0-rc3"
     pullPolicy: IfNotPresent
   service:
     port: 8000
@@ -19,6 +24,13 @@ backend:
     limits:
       cpu: "2"
       memory: 2Gi
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilization: 70
+  pdb:
+    minAvailable: 1
   env:
     logLevel: INFO
     metricsEnabled: "true"
@@ -36,11 +48,55 @@ backend:
       periodSeconds: 20
       failureThreshold: 3
 
+# Phase 28.6: worker Deployment. The worker NEVER mounts a container runtime
+# socket (docker/containerd/cri) -- sandbox execution goes through the
+# Kubernetes API (namespaced RBAC) to short-lived Pods in sandboxNamespace.
+worker:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/example/cap-backend
+    tag: "1.0.0-rc3"
+    pullPolicy: IfNotPresent
+  existingSecret: cap-runtime
+  command: ["python", "-m", "app.acquisition.worker_main"]
+  maxConcurrency: 4
+  pollIntervalSeconds: "0.05"
+  batchSize: "8"
+  leaseTtlSeconds: "60"
+  leaseRenewIntervalSeconds: "20"
+  # graceful shutdown: stop claiming, finish in-flight runs, then exit
+  terminationGracePeriodSeconds: 120
+  # Phase 28.6 sandbox: Kubernetes-sandbox provider (no runtime socket)
+  sandbox:
+    provider: kubernetes-sandbox
+    namespace: cap-sandbox
+    image: cap-sandbox-http:latest
+    browserImage: cap-sandbox-browser:latest
+    shimPort: "8080"
+    podReadyTimeoutSeconds: "90"
+    egressProxyUrl: ""          # e.g. http://cap-egress-proxy:8080
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  pdb:
+    minAvailable: 1
+  probes:
+    readiness:
+      periodSeconds: 10
+      failureThreshold: 3
+    liveness:
+      periodSeconds: 20
+      failureThreshold: 3
+
 frontend:
   replicaCount: 2
   image:
     repository: ghcr.io/example/cap-frontend
-    tag: "1.0.0-rc1"
+    tag: "1.0.0-rc3"
     pullPolicy: IfNotPresent
   service:
     port: 80

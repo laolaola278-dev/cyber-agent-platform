@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cap.fullname" . }}-worker
+  labels:
+    {{- include "cap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 600
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "cap.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "cap.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: worker
+    spec:
+      # Phase 28.6: the worker uses a DEDICATED ServiceAccount that carries
+      # the namespaced cap-sandbox Role (see rbac.yaml) -- never the shared
+      # backend SA, never cluster-admin.
+      serviceAccountName: {{ include "cap.fullname" . }}-worker
+      automountServiceAccountToken: true  # worker needs the K8s API for sandbox Pods
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      # Phase 28.6: NO docker.sock / containerd / cri socket, NO hostPath.
+      # Sandbox execution goes through the Kubernetes API (namespaced RBAC).
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+      containers:
+        - name: worker
+          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          command: {{ toYaml .Values.worker.command | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: metrics
+              containerPort: 9100
+          env:
+            - name: APP_ENVIRONMENT
+              value: production
+            - name: ACQ_WORKER_NAME
+              value: "{{ include "cap.fullname" . }}-worker"
+            - name: ACQ_MAX_CONCURRENCY
+              value: {{ .Values.worker.maxConcurrency | quote }}
+            - name: ACQ_POLL_INTERVAL
+              value: {{ .Values.worker.pollIntervalSeconds | quote }}
+            - name: ACQ_BATCH_SIZE
+              value: {{ .Values.worker.batchSize | quote }}
+            - name: ACQ_LEASE_TTL_SECONDS
+              value: {{ .Values.worker.leaseTtlSeconds | quote }}
+            - name: ACQ_METRICS_HOST
+              value: "0.0.0.0"
+            - name: ACQ_METRICS_PORT
+              value: "9100"
+            - name: METRICS_ENABLED
+              value: "true"
+            - name: LOG_LEVEL
+              value: {{ .Values.backend.env.logLevel | quote }}
+            # Phase 28.6 sandbox: Kubernetes-sandbox provider (no runtime socket)
+            - name: SANDBOX_PROVIDER
+              value: {{ .Values.worker.sandbox.provider | quote }}
+            - name: SANDBOX_NAMESPACE
+              value: {{ .Values.worker.sandbox.namespace | quote }}
+            - name: SANDBOX_IMAGE
+              value: {{ .Values.worker.sandbox.image | quote }}
+            - name: SANDBOX_BROWSER_IMAGE
+              value: {{ .Values.worker.sandbox.browserImage | quote }}
+            - name: SANDBOX_SHIM_PORT
+              value: {{ .Values.worker.sandbox.shimPort | quote }}
+            - name: SANDBOX_POD_READY_TIMEOUT_SECONDS
+              value: {{ .Values.worker.sandbox.podReadyTimeoutSeconds | quote }}
+            - name: EGRESS_PROXY_URL
+              value: {{ .Values.worker.sandbox.egressProxyUrl | quote }}
+            - name: SANDBOX_TIMEOUT_SECONDS
+              value: "120"
+            - name: OBJECT_STORE_BACKEND
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.existingSecret }}
+                  key: object-store-backend
+                  optional: true
+            - name: OBJECT_STORE_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.existingSecret }}
+                  key: object-store-endpoint
+                  optional: true
+            - name: OBJECT_STORE_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.existingSecret }}
+                  key: object-store-access-key
+                  optional: true
+            - name: OBJECT_STORE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.existingSecret }}
+                  key: object-store-secret-key
+                  optional: true
+            - name: OBJECT_STORE_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.existingSecret }}
+                  key: object-store-bucket
+                  optional: true
+          envFrom:
+            - secretRef:
+                name: {{ required "worker.existingSecret is required" .Values.worker.existingSecret }}
+          readinessProbe:
+            tcpSocket: {port: metrics}
+            periodSeconds: {{ .Values.worker.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.worker.probes.readiness.failureThreshold }}
+          livenessProbe:
+            tcpSocket: {port: metrics}
+            periodSeconds: {{ .Values.worker.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.worker.probes.liveness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+{{- if and .Values.podDisruptionBudget.enabled .Values.worker.pdb }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "cap.fullname" . }}-worker
+  labels:
+    {{- include "cap.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.worker.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "cap.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+{{- end }}

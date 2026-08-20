@@ -1,0 +1,9 @@
+# Phase 28.6 -- dedicated sandbox namespace. Short-lived sandbox Pods exist
+# ONLY here; the worker's namespaced Role is scoped to this namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.sandboxNamespace }}
+  labels:
+    cap.managed: "true"
+    app.kubernetes.io/managed-by: helm

@@ -1,0 +1,60 @@
+# Phase 28.6 -- controlled egress proxy (K8S-GATE 10). Sandbox Pods reach the
+# public Internet ONLY through this proxy; the cap-sandbox NetworkPolicy
+# blocks direct egress (NetworkPolicy is the enforcement, proxy is the
+# transport). The proxy itself denies private/metadata targets.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cap.fullname" . }}-egress-proxy
+  labels:
+    {{- include "cap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: egress-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "cap.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: egress-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "cap.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: egress-proxy
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: egress-proxy
+          image: "cap-egress-proxy:latest"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: CAP_EGRESS_ALLOW
+              value: ""  # deny private/metadata by default (production)
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cap.fullname" . }}-egress-proxy
+  labels:
+    {{- include "cap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: egress-proxy
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "cap.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: egress-proxy
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

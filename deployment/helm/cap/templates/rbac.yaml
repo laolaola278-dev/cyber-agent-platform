@@ -1,0 +1,48 @@
+# Phase 28.6 -- worker least-privilege RBAC (K8S-GATE 4 / 5).
+#
+# The worker ServiceAccount can ONLY manage CAP sandbox workloads inside
+# cap-sandbox (create/get/list/watch/delete pods + logs/status). It CANNOT:
+# read Secrets, write arbitrary ConfigMaps, touch Nodes/Namespaces/RBAC,
+# control Deployments, exec arbitrary Pods, or act cluster-wide.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "cap.fullname" . }}-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+automountServiceAccountToken: true  # worker needs the K8s API for sandbox Pods
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "cap.fullname" . }}-sandbox
+  namespace: {{ .Values.sandboxNamespace }}
+  labels:
+    {{- include "cap.labels" . | nindent 4 }}
+rules:
+  # sandbox workload lifecycle (namespaced to cap-sandbox)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log", "pods/status"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "cap.fullname" . }}-sandbox
+  namespace: {{ .Values.sandboxNamespace }}
+  labels:
+    {{- include "cap.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "cap.fullname" . }}-worker
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "cap.fullname" . }}-sandbox
+  apiGroup: rbac.authorization.k8s.io

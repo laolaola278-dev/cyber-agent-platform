@@ -1,0 +1,86 @@
+# Phase 28.6 -- cap-sandbox NetworkPolicy (K8S-GATE 7/8/9/10).
+#
+# Enforcement model (NOT just YAML -- verified by runtime connectivity tests
+# in the Phase 28.6 certification workflow with a NetworkPolicy-capable CNI):
+#   * default deny ALL ingress and ALL egress in cap-sandbox;
+#   * ingress: only the CAP worker pods (release namespace) on the shim port
+#     (the typed request channel);
+#   * egress: DNS (kube-dns) + the CAP egress proxy only. Kubernetes API,
+#     PG, MinIO, worker, API, metadata, other namespaces: all DENIED.
+{{- $sandboxNs := .Values.sandboxNamespace }}
+{{- $releaseNs := .Release.Namespace }}
+{{- $shimPort := int .Values.worker.sandbox.shimPort }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cap-sandbox-default-deny-ingress
+  namespace: {{ $sandboxNs }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cap-sandbox-default-deny-egress
+  namespace: {{ $sandboxNs }}
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+---
+# typed request channel: worker -> sandbox shim port
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cap-sandbox-allow-worker-shim
+  namespace: {{ $sandboxNs }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $releaseNs }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: worker
+      ports:
+        - protocol: TCP
+          port: {{ $shimPort }}
+---
+# egress: DNS + egress proxy ONLY (public targets via the proxy)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cap-sandbox-allow-dns-and-egress-proxy
+  namespace: {{ $sandboxNs }}
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $releaseNs }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: egress-proxy
+      ports:
+        - protocol: TCP
+          port: 8080
