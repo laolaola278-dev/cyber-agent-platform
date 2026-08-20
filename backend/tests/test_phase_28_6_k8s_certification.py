@@ -521,17 +521,26 @@ def test_gate10_controlled_egress_via_proxy_works(probe_pod: str) -> None:
 # -- GATE 11: API multi-replica idempotency -----------------------------------
 
 
+_API_HEADERS_CACHE: dict[str, str] = {}
+
+
 def _api_headers() -> dict[str, str]:
     """Trusted-proxy identity headers the deployed API requires.
 
     The chart reads RBAC_TRUSTED_PROXY_SECRET from the cap-runtime secret;
     the same value is not the local default, so fetch it from the cluster.
+    The value is stable for the whole run: cache it so 100-concurrent bursts
+    don't issue 100 kubectl secret reads (which thrashes the local kubeconfig
+    and drops requests).
     """
-    secret = _json(["get", "secret", "cap-runtime", "-n", NAMESPACE, "-o", "json"])
-    proxy_secret = base64.b64decode(secret["data"].get("RBAC_TRUSTED_PROXY_SECRET", "")).decode()
+    if "secret" not in _API_HEADERS_CACHE:
+        secret = _json(["get", "secret", "cap-runtime", "-n", NAMESPACE, "-o", "json"])
+        _API_HEADERS_CACHE["secret"] = base64.b64decode(
+            secret["data"].get("RBAC_TRUSTED_PROXY_SECRET", "")
+        ).decode()
     return {
         "X-CAP-User": "administrator",
-        "X-CAP-Proxy-Secret": proxy_secret,
+        "X-CAP-Proxy-Secret": _API_HEADERS_CACHE["secret"],
     }
 
 
@@ -632,6 +641,7 @@ def test_gate13_scale_up_improves_drain(api_port: int) -> None:
     deadline = time.monotonic() + 180
     done = 0
     while time.monotonic() < deadline:
+
         async def _poll() -> int:
             terminal = 0
             async with httpx.AsyncClient(timeout=15) as http:
@@ -641,7 +651,11 @@ def test_gate13_scale_up_improves_drain(api_port: int) -> None:
                         headers=_api_headers(),
                     )
                     if r.status_code == 200 and r.json().get("status") in (
-                        "COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED",
+                        "COMPLETE",
+                        "PARTIAL",
+                        "BLOCKED",
+                        "FAILED",
+                        "CANCELLED",
                     ):
                         terminal += 1
             return terminal
@@ -737,9 +751,27 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
         pytest.fail("GATE 17 requires a multi-node kind cluster (1 cp + 2 workers)")
     key = f"k8s-node-{uuid4().hex[:8]}"
     rid = _asyncio_run_create(api_port, key)
-    # find which node hosts the first worker, then stop that kind node
-    pod = _worker_pod_names()[0]
-    node = _json(["get", "pod", pod, "-n", NAMESPACE, "-o", "json"])["spec"]["nodeName"]
+    # pick a worker node that does NOT host a backend pod, so the API
+    # port-forward stays alive while the node is stopped
+    backend_nodes = {
+        p["spec"]["nodeName"]
+        for p in _json(
+            ["get", "pods", "-n", NAMESPACE, "-l", "app.kubernetes.io/component=backend"]
+        ).get("items", [])
+    }
+    worker_nodes = [
+        n["metadata"]["name"]
+        for n in nodes
+        if n["metadata"]["name"] not in backend_nodes
+        and "control-plane" not in n["metadata"]["name"]
+    ]
+    if not worker_nodes:
+        # fall back to any worker node (port-forward may blip; _run_status
+        # tolerates transient connection errors)
+        worker_nodes = [
+            n["metadata"]["name"] for n in nodes if "control-plane" not in n["metadata"]["name"]
+        ]
+    node = worker_nodes[0]
     # kind node container name == node name (already '<cluster>-worker')
     proc = subprocess.run(
         ["docker", "stop", node],
@@ -749,8 +781,17 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
     )
     assert proc.returncode == 0, f"docker stop node failed: {proc.stderr}"
     status = _wait_run_terminal(api_port, rid, timeout=300)
-    # restart the node so later gates have a full cluster
+    # restart the node and wait for it to be Ready again (later gates need it)
     subprocess.run(["docker", "start", node], capture_output=True, timeout=120)
+    deadline = time.monotonic() + 240
+    while time.monotonic() < deadline:
+        ready = _kubectl(
+            ["get", "node", node, "-o", 'jsonpath={.status.conditions[?(@.type=="Ready")].status}'],
+            check=False,
+        )
+        if ready.stdout.strip() == "True":
+            break
+        time.sleep(5)
     assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
         f"run did not recover after node failure (status={status})"
     )
@@ -770,7 +811,11 @@ def test_gate18_rolling_update(api_port: int) -> None:
     # patching the maxSurge/maxUnavailable and forcing a rollout restart)
     _kubectl(
         [
-            "rollout", "restart", "deploy/cap-cap-worker", "-n", NAMESPACE,
+            "rollout",
+            "restart",
+            "deploy/cap-cap-worker",
+            "-n",
+            NAMESPACE,
         ],
         check=False,
     )
@@ -818,11 +863,16 @@ def _run_status(port: int, run_id: str) -> str | None:
     import asyncio as _asyncio
 
     async def _get() -> str | None:
-        async with httpx.AsyncClient(timeout=15) as http:
-            r = await http.get(
-                f"http://127.0.0.1:{port}/acquisitions/{run_id}",
-                headers=_api_headers(),
-            )
+        # connection errors (e.g. port-forward briefly interrupted by a node
+        # stop/restart) are NOT a run status -- treat as None and keep polling
+        try:
+            async with httpx.AsyncClient(timeout=15) as http:
+                r = await http.get(
+                    f"http://127.0.0.1:{port}/acquisitions/{run_id}",
+                    headers=_api_headers(),
+                )
+        except Exception:  # noqa: BLE001 -- transient API unreachable
+            return None
         if r.status_code == 200:
             return r.json().get("status")
         return None
