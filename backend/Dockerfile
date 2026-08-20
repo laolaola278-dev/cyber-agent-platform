@@ -29,13 +29,18 @@ WORKDIR /app
 # Refresh OS packages to close known HIGH CVEs in the base image (e.g.
 # util-linux/bsdutils CVE-2026-53615) so the Trivy image scan reports
 # 0 blocking HIGH/CRITICAL. Removes the apt lists to keep the image lean.
-# Also uninstall the base image's stale seed setuptools (CVE-2025-47273,
-# CVE-2024-6345): it is build tooling, unused at runtime, and is the only
-# remaining Trivy HIGH. The app runs from /app/.venv, never the system Python.
+# Also remove the base image's seed build tooling (setuptools/wheel/pip) from
+# the SYSTEM Python: the app runs from /app/.venv, so these are unused at
+# runtime, and the bundled setuptools is the only remaining Trivy HIGH
+# (CVE-2025-47273, CVE-2024-6345). rm -rf (not pip uninstall, which silently
+# no-ops because python:3.13-slim no longer seeds pip) is used to be reliable.
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
-    && python -m pip uninstall -y setuptools wheel 2>/dev/null || true \
+    && rm -rf /usr/local/lib/python3.13/site-packages/setuptools* \
+              /usr/local/lib/python3.13/site-packages/pkg_resources* \
+              /usr/local/lib/python3.13/site-packages/wheel* \
+              /usr/local/lib/python3.13/site-packages/pip* \
     && addgroup --system cap && adduser --system --ingroup cap cap
 COPY --from=builder --chown=cap:cap /app/.venv /app/.venv
 COPY config ./config
