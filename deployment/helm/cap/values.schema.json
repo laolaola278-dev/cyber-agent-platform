@@ -3,6 +3,7 @@
   "type": "object",
   "required": ["backend", "frontend"],
   "properties": {
+    "sandboxNamespace": {"type": "string", "minLength": 1},
     "backend": {
       "type": "object",
       "required": ["replicaCount", "image", "existingSecret"],
@@ -14,9 +15,56 @@
           "required": ["repository", "tag"],
           "properties": {
             "repository": {"type": "string", "minLength": 1},
-            "tag": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"}
+            "tag": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"}
           }
-        }
+        },
+        "hpa": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "minReplicas": {"type": "integer", "minimum": 1},
+            "maxReplicas": {"type": "integer", "minimum": 1},
+            "targetCPUUtilization": {"type": "integer", "minimum": 1, "maximum": 100}
+          }
+        },
+        "pdb": {"type": "object", "properties": {"minAvailable": {"type": "integer", "minimum": 0}}}
+      }
+    },
+    "worker": {
+      "type": "object",
+      "required": ["replicaCount", "image", "existingSecret"],
+      "properties": {
+        "replicaCount": {"type": "integer", "minimum": 1},
+        "existingSecret": {"type": "string", "minLength": 1},
+        "image": {
+          "type": "object",
+          "required": ["repository", "tag"],
+          "properties": {
+            "repository": {"type": "string", "minLength": 1},
+            "tag": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"}
+          }
+        },
+        "command": {"type": "array", "items": {"type": "string"}},
+        "maxConcurrency": {"type": "integer", "minimum": 1},
+        "pollIntervalSeconds": {"type": "string"},
+        "batchSize": {"type": "string"},
+        "leaseTtlSeconds": {"type": "string"},
+        "leaseRenewIntervalSeconds": {"type": "string"},
+        "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
+        "sandbox": {
+          "type": "object",
+          "properties": {
+            "provider": {"type": "string", "enum": ["kubernetes-sandbox", "oci-sandbox", "subprocess-sandbox", "memory-sandbox"]},
+            "namespace": {"type": "string", "minLength": 1},
+            "image": {"type": "string", "minLength": 1},
+            "browserImage": {"type": "string", "minLength": 1},
+            "shimPort": {"type": "string"},
+            "podReadyTimeoutSeconds": {"type": "string"},
+            "egressProxyUrl": {"type": "string"}
+          }
+        },
+        "pdb": {"type": "object", "properties": {"minAvailable": {"type": "integer", "minimum": 0}}},
+        "probes": {"type": "object"}
       }
     },
     "frontend": {
@@ -33,6 +81,30 @@
         "enabled": {"type": "boolean"},
         "host": {"type": "string", "minLength": 1}
       }
-    }
+    },
+    "migration": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "backoffLimit": {"type": "integer"},
+        "activeDeadlineSeconds": {"type": "integer"}
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": {"type": "boolean"},
+        "name": {"type": "string"}
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "minAvailable": {"type": "integer", "minimum": 0}
+      }
+    },
+    "podSecurityContext": {"type": "object"},
+    "securityContext": {"type": "object"}
   }
 }
