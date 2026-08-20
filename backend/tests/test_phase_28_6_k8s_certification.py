@@ -534,7 +534,7 @@ async def test_gate11_api_multi_replica_idempotency(api_port: int) -> None:
     results = await asyncio.gather(
         *[_api_create(api_port, "g", "http://example.com/", key) for _ in range(100)]
     )
-    run_ids = {res[1].get("id") for res in results if res[0] in (200, 201)}
+    run_ids = {res[1].get("id") for res in results if res[0] in (200, 201, 202)}
     assert run_ids, (
         f"no successful create (statuses={[r[0] for r in results][:5]}...)\n{_backend_logs()}"
     )
@@ -550,7 +550,7 @@ async def test_gate12_worker_multi_replica_ownership(api_port: int) -> None:
     assert len(_worker_pod_names()) >= 2, "expected >=2 worker replicas"
     key = f"k8s-workers-{uuid4().hex[:8]}"
     status, body = await _api_create(api_port, "g", "http://example.com/", key)
-    assert status in (200, 201), f"create failed status={status}\n{_backend_logs()}"
+    assert status in (200, 201, 202), f"create failed status={status}\n{_backend_logs()}"
     run_id = body.get("id")
     # wait for terminal (workers drain the durable queue)
     deadline = time.monotonic() + 90

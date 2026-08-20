@@ -251,15 +251,25 @@ async def _open_connection_v4_first(
         raise OSError(f"resolution failed: {error}") from error
     infos.sort(key=lambda info: 0 if info[0] == socket.AF_INET else 1)
     last_error: OSError | None = None
-    for family, socktype, proto, _canon, _sockaddr in infos:
+    for family, socktype, proto, _canon, sockaddr in infos:
         try:
-            return await asyncio.open_connection(
-                host, port, family=family, proto=proto, socktype=socktype, local_addr=None
+            # asyncio.open_connection does NOT accept a socktype kwarg; create
+            # the socket explicitly and hand it over (IPv4-first ordering
+            # above keeps kind/CI on a routable family).
+            raw = socket.socket(family, socktype, proto)
+            raw.setblocking(False)
+            await asyncio.wait_for(
+                asyncio.get_running_loop().sock_connect(raw, sockaddr), timeout=15
             )
-        except OSError as error:
+            return await asyncio.open_connection(sock=raw)
+        except (OSError, TimeoutError) as error:
             last_error = error
+            try:
+                raw.close()  # noqa: F821 -- bound in the for body
+            except Exception:  # noqa: BLE001
+                pass
     raise (
-        OSError(f"all upstream addresses failed for {host}:{port}")
+        OSError(f"all upstream addresses failed for {host}:{port}: {last_error}")
         if last_error
         else OSError(f"no addresses for {host}:{port}")
     )
