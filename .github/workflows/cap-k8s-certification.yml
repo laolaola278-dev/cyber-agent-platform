@@ -179,6 +179,9 @@ jobs:
             echo "=== migration pod logs ==="; kubectl -n cap logs "$MIG_POD" 2>&1 | tail -40 || true
           fi
           [ $RC -eq 0 ] || exit $RC
+          echo "=== PG schema (alembic + idempotency unique) ==="
+          kubectl -n cap-infra exec deploy/postgres -- psql -U cap -d cap -c \
+            "SELECT version_num FROM alembic_version; SELECT indexname, indexdef FROM pg_indexes WHERE tablename='acquisition_runs' AND indexdef ILIKE '%idempotency%';" 2>&1 | head -12 || true
           kubectl -n cap wait --for=condition=available deploy/cap-cap-backend --timeout=180s || true
           kubectl -n cap wait --for=condition=available deploy/cap-cap-worker --timeout=180s || true
           kubectl get deploy,pdb,hpa -n cap
