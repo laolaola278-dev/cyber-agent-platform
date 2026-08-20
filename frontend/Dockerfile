@@ -9,7 +9,7 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build
 
 FROM nginx:1.30.4-alpine AS runtime
-ARG VERSION=1.0.0-rc1
+ARG VERSION=1.0.0-rc3
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="Cyber Agent Platform Console" \
       org.opencontainers.image.version="$VERSION" \

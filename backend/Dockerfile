@@ -13,7 +13,7 @@ RUN uv sync --frozen --no-dev --no-editable
 
 FROM python:3.13-slim AS runtime
 
-ARG VERSION=1.0.0-rc1
+ARG VERSION=1.0.0-rc3
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="Cyber Agent Platform Backend" \
       org.opencontainers.image.version="$VERSION" \
