@@ -256,5 +256,88 @@ def main() -> int:
     return 0
 
 
+async def _serve_once(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> bool:
+    """Handle ONE HTTP request. Returns True when the pod should exit
+    (a typed POST was served); healthz GETs keep the pod alive (the
+    readiness probe must not consume the single-shot execution)."""
+    response: SandboxResponse | None = None
+    should_exit = False
+    try:
+        request_line = await asyncio.wait_for(reader.readline(), timeout=60)
+        parts = request_line.decode("utf-8", "replace").split()
+        method = parts[0] if parts else "GET"
+        path = parts[1] if len(parts) > 1 else "/"
+        headers: dict[str, str] = {}
+        while True:
+            line = await asyncio.wait_for(reader.readline(), timeout=60)
+            if line in (b"\r\n", b"\n", b""):
+                break
+            name, _, value = line.decode("utf-8", "replace").partition(":")
+            headers[name.strip().lower()] = value.strip()
+        if method == "GET" and path in ("/healthz", "/health"):
+            response = SandboxResponse(
+                version=PROTOCOL_VERSION, status="ok", result={"health": "ok"}
+            )
+        elif method == "POST":
+            length = int(headers.get("content-length", "0") or 0)
+            body = await asyncio.wait_for(reader.readexactly(length), timeout=60) if length else b""
+            request = SandboxRequest.model_validate_json(body.decode("utf-8"))
+            response = await _dispatch(request)
+            should_exit = True
+        else:
+            response = SandboxResponse(
+                version=PROTOCOL_VERSION,
+                status="error",
+                error=f"unsupported {method} {path}",
+                error_type="SandboxServe",
+            )
+    except Exception as error:  # noqa: BLE001 -- report, never crash the shim
+        response = SandboxResponse(
+            version=PROTOCOL_VERSION,
+            status="error",
+            error=str(error)[:500],
+            error_type="SandboxServe",
+        )
+        should_exit = True
+    finally:
+        payload = response.model_dump_json().encode("utf-8") if response else b"{}"
+        try:
+            writer.write(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                + f"Content-Length: {len(payload)}\r\nConnection: close\r\n\r\n".encode()
+                + payload
+            )
+            await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    return should_exit
+
+
+async def serve() -> int:
+    """Single-shot HTTP server mode (Kubernetes sandbox pods)."""
+    port = int(os.environ.get("CAP_SHIM_PORT", "8080"))
+    done = asyncio.Event()
+
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            if await _serve_once(reader, writer):
+                done.set()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(handler, "0.0.0.0", port)
+    print(f"cap-sandbox shim serving on :{port}", flush=True)
+    async with server:
+        await done.wait()
+        server.close()
+    return 0
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--serve":
+        raise SystemExit(asyncio.run(serve()))
+    raise SystemExit(main())
     sys.exit(main())
