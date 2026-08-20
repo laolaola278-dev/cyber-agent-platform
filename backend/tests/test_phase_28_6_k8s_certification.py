@@ -74,6 +74,17 @@ def _worker_pod_names() -> list[str]:
     return [p["metadata"]["name"] for p in items if p.get("status", {}).get("phase") == "Running"]
 
 
+def _wait_running_worker(timeout: float = 120.0) -> str:
+    """Wait for at least one worker pod to be Running (startup can take a bit)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        pods = _worker_pod_names()
+        if pods:
+            return pods[0]
+        time.sleep(2)
+    pytest.fail("no Running worker pod after startup window")
+
+
 @pytest.fixture(scope="module")
 def api_port() -> int:
     """kubectl port-forward to the CAP API service (tests run on the runner)."""
@@ -101,7 +112,7 @@ def api_port() -> int:
 
 def _worker_sa_token() -> str:
     """Read the worker ServiceAccount token from a running worker Pod."""
-    pod = _worker_pod_names()[0]
+    pod = _wait_running_worker()
     proc = _kubectl(
         [
             "exec",
@@ -122,13 +133,13 @@ def _worker_sa_token() -> str:
 def test_gate2_required_pods_healthy() -> None:
     _require_cluster()
     wanted = {
-        f"{NAMESPACE}/deployment/cap-backend",
-        f"{NAMESPACE}/deployment/cap-worker",
-        f"{NAMESPACE}/deployment/cap-frontend",
-        f"{NAMESPACE}/deployment/cap-egress-proxy",
+        f"deployment/cap-backend",
+        f"deployment/cap-worker",
+        f"deployment/cap-frontend",
+        f"deployment/cap-egress-proxy",
     }
     for name in sorted(wanted):
-        proc = _kubectl(["rollout", "status", name, "--timeout=120s"], check=False)
+        proc = _kubectl(["rollout", "status", name, "-n", NAMESPACE, "--timeout=150s"], check=False)
         assert proc.returncode == 0, f"rollout not healthy: {name}\n{proc.stderr}"
     assert _worker_pod_names(), "no running worker pod"
 
@@ -155,7 +166,8 @@ def test_gate3_worker_has_no_runtime_socket() -> None:
 
 def test_gate4_worker_role_is_namespaced_least_privilege() -> None:
     _require_cluster()
-    role = _json(["get", "role", "-n", SANDBOX_NS, "cap-sandbox"])
+    # Role name from rbac.yaml: {{ include "cap.fullname" . }}-sandbox
+    role = _json(["get", "role", "-n", SANDBOX_NS, "cap-cap-sandbox"])
     allowed: dict[tuple[str, str], set[str]] = {}
     for rule in role.get("rules", []):
         for res in rule.get("resources", []):
@@ -260,7 +272,7 @@ def test_gate5_worker_sa_adversarial_attempts_denied() -> None:
     )
     assert proc.returncode != 0, "worker SA must NOT create privileged Pods"
     # exec into the API/worker Pod -> Forbidden
-    assert attempt(["exec", "-n", NAMESPACE, _worker_pod_names()[0], "--", "id"]), (
+    assert attempt(["exec", "-n", NAMESPACE, _wait_running_worker(), "--", "id"]), (
         "worker SA must NOT exec"
     )
     # modify RoleBinding / delete namespace -> Forbidden
@@ -278,8 +290,14 @@ def _create_sandbox_probe_pod(name: str) -> str:
         "metadata": {"name": name, "namespace": SANDBOX_NS, "labels": {"cap.managed": "true"}},
         "spec": {
             "automountServiceAccountToken": False,
+            # the shim --serve keeps the pod alive (no ready probe needed);
+            # 'sleep' is not guaranteed to exist in the slim sandbox image
             "containers": [
-                {"name": "probe", "image": "cap-sandbox-http:latest", "command": ["sleep", "300"]}
+                {
+                    "name": "probe",
+                    "image": "cap-sandbox-http:latest",
+                    "command": ["python", "-m", "sandbox.shim", "--serve"],
+                }
             ],
         },
     }
