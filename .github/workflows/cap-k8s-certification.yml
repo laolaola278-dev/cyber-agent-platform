@@ -227,7 +227,7 @@ jobs:
         run: |
           mkdir -p outputs/cap-cert
           uv run pytest tests/test_phase_28_6_k8s_certification.py \
-            -p no:cacheprovider --timeout=420 --tb=short -vv \
+            -p no:cacheprovider --timeout=900 --tb=short -vv \
             --junitxml=outputs/cap-cert/junit-k8s.xml
 
       - name: Generate K8s certification artifact

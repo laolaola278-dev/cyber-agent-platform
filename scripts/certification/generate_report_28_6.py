@@ -30,6 +30,13 @@ TEST_GATES: dict[str, list[str]] = {
     "test_gate10_controlled_egress_via_proxy_works": ["K8S-GATE 10"],
     "test_gate11_api_multi_replica_idempotency": ["K8S-GATE 11"],
     "test_gate12_worker_multi_replica_ownership": ["K8S-GATE 12"],
+    "test_gate13_scale_up_improves_drain": ["K8S-GATE 13"],
+    "test_gate14_scale_down_graceful": ["K8S-GATE 14"],
+    "test_gate15_graceful_pod_termination": ["K8S-GATE 15"],
+    "test_gate16_forced_pod_kill_recovers": ["K8S-GATE 16"],
+    "test_gate17_node_failure_recovers": ["K8S-GATE 17"],
+    "test_gate18_rolling_update": ["K8S-GATE 18"],
+    "test_gate19_version_skew_compatibility": ["K8S-GATE 19"],
 }
 
 # gates certified by evidence OUTSIDE this run (historical / separately

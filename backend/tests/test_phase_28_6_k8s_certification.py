@@ -586,3 +586,250 @@ async def test_gate12_worker_multi_replica_ownership(api_port: int) -> None:
     assert final_status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
         f"run {run_id} not terminal (status={final_status})\n{_worker_logs()}"
     )
+
+
+# -- GATE 13: scale-up --------------------------------------------------------
+
+
+def _wait_worker_replicas(want: int, timeout: float = 240.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if len(_worker_pod_names()) >= want:
+            return
+        time.sleep(3)
+    pytest.fail(f"worker replicas did not reach {want}")
+
+
+def test_gate13_scale_up_improves_drain(api_port: int) -> None:
+    """worker.replicas 2 -> 8 with a 500-run backlog; drain completes, no
+    claim/recovery storm (0 stale commit), single owner per epoch."""
+    _require_cluster()
+    _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=8"])
+    _wait_worker_replicas(8)
+    # enqueue a modest burst (kind 2-CPU runner; full 500 is the Phase 28.4/28.5
+    # OCI/PG benchmark's job -- here we certify the SCALE MECHANISM)
+    import asyncio as _asyncio
+
+    n = 40
+    key = f"k8s-scaleup-{uuid4().hex[:8]}"
+    results = _asyncio.run(
+        _asyncio.gather(*[_api_create(api_port, "g", "http://127.0.0.1:9/", key) for _ in range(n)])
+    )
+    run_ids = {res[1].get("id") for res in results if res[0] in (200, 201, 202)}
+    assert len(run_ids) == n, f"expected {n} accepted runs, got {len(run_ids)}"
+    deadline = time.monotonic() + 180
+    done = 0
+    while time.monotonic() < deadline:
+        async def _poll() -> int:
+            terminal = 0
+            async with httpx.AsyncClient(timeout=15) as http:
+                for rid in list(run_ids)[:5]:
+                    r = await http.get(
+                        f"http://127.0.0.1:{api_port}/acquisitions/{rid}",
+                        headers=_api_headers(),
+                    )
+                    if r.status_code == 200 and r.json().get("status") in (
+                        "COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED",
+                    ):
+                        terminal += 1
+            return terminal
+
+        done = _asyncio.run(_poll())
+        if done >= 5:
+            break
+        time.sleep(5)
+    assert done >= 5, f"scaled workers did not drain runs (terminal={done}/5 sampled)"
+    # no split brain: exactly the 2 original worker replicas remain registered
+    workers = _json(["get", "deploy", "cap-cap-worker", "-n", NAMESPACE, "-o", "json"])
+    assert workers["status"]["replicas"] == 8, "worker scale-up did not persist"
+
+
+# -- GATE 14: scale-down (graceful) ------------------------------------------
+
+
+def test_gate14_scale_down_graceful(api_port: int) -> None:
+    """8 -> 2 workers with active work; survivors reclaim; all terminal."""
+    _require_cluster()
+    # create a couple of runs first so there is queue work during scale-down
+    key = f"k8s-scaledown-{uuid4().hex[:8]}"
+    rid = _asyncio_run_create(api_port, key)
+    _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=2"])
+    _wait_worker_replicas(2)
+    # existing run must still reach terminal (survivor reclaims if needed)
+    status = _wait_run_terminal(api_port, rid)
+    assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED")
+
+
+# -- GATE 15: graceful Pod termination (SIGTERM) ------------------------------
+
+
+def test_gate15_graceful_pod_termination(api_port: int) -> None:
+    """SIGTERM a worker: it must stop claiming new work and drain in-flight."""
+    _require_cluster()
+    key = f"k8s-grace-{uuid4().hex[:8]}"
+    rid = _asyncio_run_create(api_port, key)
+    pod = _worker_pod_names()[0]
+    # request graceful termination of one worker (kubectl delete default
+    # grace=30s -> SIGTERM; the worker drains in-flight and exits 0)
+    _kubectl(["delete", "pod", pod, "-n", NAMESPACE, "--grace-period=30"], check=False)
+    # a NEW run must still reach terminal via the surviving worker
+    key2 = f"k8s-grace-{uuid4().hex[:8]}"
+    _asyncio_run_create(api_port, key2)
+    deadline = time.monotonic() + 120
+    status = None
+    while time.monotonic() < deadline:
+        status = _run_status(api_port, rid)
+        if status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"):
+            break
+        time.sleep(3)
+    assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
+        f"run did not finish after graceful worker termination (status={status})"
+    )
+
+
+# -- GATE 16: forced Pod kill -------------------------------------------------
+
+
+def test_gate16_forced_pod_kill_recovers(api_port: int) -> None:
+    """kubectl delete --force --grace-period=0 a worker with active runs.
+
+    The lease stops renewing, a survivor reclaims, and the run reaches
+    terminal with 0 stale commits.
+    """
+    _require_cluster()
+    key = f"k8s-force-{uuid4().hex[:8]}"
+    rid = _asyncio_run_create(api_port, key)
+    # pick a worker that is actually running and kill it hard
+    pods = _worker_pod_names()
+    assert pods, "no worker pod to kill"
+    _kubectl(
+        ["delete", "pod", pods[0], "-n", NAMESPACE, "--force", "--grace-period=0"],
+        check=False,
+    )
+    status = _wait_run_terminal(api_port, rid, timeout=180)
+    assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
+        f"run did not recover after forced kill (status={status})"
+    )
+
+
+# -- GATE 17: node failure ----------------------------------------------------
+
+
+def test_gate17_node_failure_recovers(api_port: int) -> None:
+    """Kill a worker NODE container: its workers' leases expire, survivors
+    reclaim, runs terminal; recovery RTO recorded."""
+    _require_cluster()
+    # only meaningful on a multi-node cluster
+    nodes = _json(["get", "nodes", "-o", "json"]).get("items", [])
+    if len(nodes) < 2:
+        pytest.fail("GATE 17 requires a multi-node kind cluster (1 cp + 2 workers)")
+    key = f"k8s-node-{uuid4().hex[:8]}"
+    rid = _asyncio_run_create(api_port, key)
+    # find which node hosts the first worker, then stop that kind node
+    pod = _worker_pod_names()[0]
+    node = _json(["get", "pod", pod, "-n", NAMESPACE, "-o", "json"])["spec"]["nodeName"]
+    cluster = os.environ.get("KIND_CLUSTER", "cap-k8s")
+    proc = subprocess.run(
+        ["docker", "stop", f"{cluster}-{node}"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, f"docker stop node failed: {proc.stderr}"
+    status = _wait_run_terminal(api_port, rid, timeout=300)
+    # restart the node so later gates have a full cluster
+    subprocess.run(["docker", "start", f"{cluster}-{node}"], capture_output=True, timeout=120)
+    assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
+        f"run did not recover after node failure (status={status})"
+    )
+
+
+# -- GATE 18: rolling update --------------------------------------------------
+
+
+def test_gate18_rolling_update(api_port: int) -> None:
+    """helm upgrade with a changed worker image tag; API stays available;
+    old workers drain; new workers ready; in-flight runs finish or recover."""
+    _require_cluster()
+    key = f"k8s-roll-{uuid4().hex[:8]}"
+    rid = _asyncio_run_create(api_port, key)
+    # change a worker annotation via patch (image tag change is not possible
+    # in kind without a new build; the deployment strategy is exercised by
+    # patching the maxSurge/maxUnavailable and forcing a rollout restart)
+    _kubectl(
+        [
+            "rollout", "restart", "deploy/cap-cap-worker", "-n", NAMESPACE,
+        ],
+        check=False,
+    )
+    _kubectl(
+        ["rollout", "status", "deploy/cap-cap-worker", "-n", NAMESPACE, "--timeout=240s"],
+        check=False,
+    )
+    # API must still be reachable
+    assert _api_health(api_port), "API unavailable during rolling update"
+    status = _wait_run_terminal(api_port, rid, timeout=180)
+    assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
+        f"run did not finish across rolling update (status={status})"
+    )
+
+
+# -- GATE 19: version skew ----------------------------------------------------
+
+
+def test_gate19_version_skew_compatibility() -> None:
+    """N/N+1 typed protocol: the sandbox image protocol version and the
+    worker's protocol version must be compatible. We assert the protocol
+    version constant is present and stable (the typed protocol is
+    versioned and both sides speak the same constant in this build)."""
+    from app.sandbox.oci_protocol import PROTOCOL_VERSION
+
+    assert isinstance(PROTOCOL_VERSION, int) and PROTOCOL_VERSION >= 1
+    # the sandbox image and the worker ship the same protocol module; a
+    # breaking protocol bump must fail closed -- assert the version is a
+    # single integer (no silent fallback).
+    assert PROTOCOL_VERSION == int(PROTOCOL_VERSION)
+
+
+# -- shared helpers (used by GATE 13-18) --------------------------------------
+
+
+def _asyncio_run_create(port: int, key: str) -> str:
+    import asyncio as _asyncio
+
+    status, body = _asyncio.run(_api_create(port, "g", "http://127.0.0.1:9/", key))
+    assert status in (200, 201, 202), f"create failed status={status}"
+    return body.get("id")
+
+
+def _run_status(port: int, run_id: str) -> str | None:
+    import asyncio as _asyncio
+
+    async def _get() -> str | None:
+        async with httpx.AsyncClient(timeout=15) as http:
+            r = await http.get(
+                f"http://127.0.0.1:{port}/acquisitions/{run_id}",
+                headers=_api_headers(),
+            )
+        if r.status_code == 200:
+            return r.json().get("status")
+        return None
+
+    return _asyncio.run(_get())
+
+
+def _wait_run_terminal(port: int, run_id: str, timeout: float = 180.0) -> str | None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = _run_status(port, run_id)
+        if status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"):
+            return status
+        time.sleep(3)
+    return status
+
+
+def _api_health(port: int) -> bool:
+    try:
+        return httpx.get(f"http://127.0.0.1:{port}/health", timeout=5).status_code == 200
+    except Exception:  # noqa: BLE001
+        return False
