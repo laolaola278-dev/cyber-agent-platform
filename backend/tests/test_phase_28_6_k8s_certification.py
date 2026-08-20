@@ -402,11 +402,23 @@ def test_gate7_sandbox_networkpolicy_enforced(probe_pod: str) -> None:
     )
     assert not _sandbox_connect(probe_pod, "minio.cap-infra.svc", 9000), "sandbox reached MinIO"
     # GATE 9: control plane (backend) denied
-    assert not _sandbox_connect(probe_pod, f"cap-backend.{NAMESPACE}.svc", 8000), (
+    assert not _sandbox_connect(probe_pod, f"cap-cap-backend.{NAMESPACE}.svc", 8000), (
         "sandbox reached API"
     )
     # direct public egress denied (raw socket, no proxy env)
     assert not _sandbox_connect(probe_pod, "1.1.1.1", 443), "sandbox has direct public egress"
+
+
+def _proxy_logs(tail: int = 25) -> str:
+    """Latest egress-proxy pod logs (diagnostics for GATE 10)."""
+    pods = _json(["get", "pods", "-n", NAMESPACE, "-l", "app.kubernetes.io/component=egress-proxy"])
+    if isinstance(pods, dict):
+        pods = pods.get("items", [])
+    if not pods:
+        return "(no egress-proxy pod)"
+    pod = pods[0]["metadata"]["name"]
+    proc = _kubectl(["logs", "-n", NAMESPACE, pod, "--tail", str(tail)], check=False)
+    return (proc.stdout or proc.stderr)[-800:]
 
 
 def test_gate10_controlled_egress_via_proxy_works(probe_pod: str) -> None:
@@ -435,7 +447,8 @@ def test_gate10_controlled_egress_via_proxy_works(probe_pod: str) -> None:
     )
     assert proc.returncode == 0 and proc.stdout.strip() == "200", (
         f"proxied public egress failed: rc={proc.returncode} "
-        f"out={proc.stdout[:200]} err={proc.stderr[:200]}"
+        f"out={proc.stdout[:200]} err={proc.stderr[:200]}\n"
+        f"proxy logs: {_proxy_logs()}"
     )
     # proxy denies private targets
     proc = _kubectl(
@@ -474,9 +487,7 @@ def _api_headers() -> dict[str, str]:
     the same value is not the local default, so fetch it from the cluster.
     """
     secret = _json(["get", "secret", "cap-runtime", "-n", NAMESPACE, "-o", "json"])
-    proxy_secret = base64.b64decode(
-        secret["data"].get("RBAC_TRUSTED_PROXY_SECRET", "")
-    ).decode()
+    proxy_secret = base64.b64decode(secret["data"].get("RBAC_TRUSTED_PROXY_SECRET", "")).decode()
     return {
         "X-CAP-User": "administrator",
         "X-CAP-Proxy-Secret": proxy_secret,
@@ -486,7 +497,7 @@ def _api_headers() -> dict[str, str]:
 async def _api_create(port: int, goal: str, url: str, key: str) -> tuple[int, dict]:
     async with httpx.AsyncClient(timeout=30) as http:
         resp = await http.post(
-            f"http://127.0.0.1:{port}/api/v1/acquisitions",
+            f"http://127.0.0.1:{port}/acquisitions",
             json={"goal": goal, "url": url, "idempotency_key": key},
             headers=_api_headers(),
         )
@@ -528,7 +539,7 @@ async def test_gate12_worker_multi_replica_ownership(api_port: int) -> None:
     final_status = None
     while time.monotonic() < deadline:
         async with httpx.AsyncClient(timeout=15) as http:
-            r = await http.get(f"http://127.0.0.1:{api_port}/api/v1/acquisitions/{run_id}")
+            r = await http.get(f"http://127.0.0.1:{api_port}/acquisitions/{run_id}")
         if r.status_code == 200:
             final_status = r.json().get("status")
             if final_status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"):

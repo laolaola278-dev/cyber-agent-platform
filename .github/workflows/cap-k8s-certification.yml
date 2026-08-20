@@ -156,7 +156,7 @@ jobs:
             --set worker.image.repository=cap-backend --set worker.image.tag=ci \
             --set backend.replicaCount=3 \
             --set worker.replicaCount=2 \
-            --set worker.sandbox.egressProxyUrl=http://cap-egress-proxy.cap.svc:8080 \
+            --set worker.sandbox.egressProxyUrl=http://cap-cap-egress-proxy.cap.svc:8080 \
             --set worker.sandbox.namespace=cap-sandbox
           RC=$?
           set -e
