@@ -21,6 +21,7 @@ Gates covered here:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import subprocess
@@ -213,7 +214,6 @@ def test_gate5_worker_sa_adversarial_attempts_denied() -> None:
     token = _worker_sa_token()
     assert token, "worker SA token not readable"
     # use kubectl with the worker token (least-privilege verification)
-    import base64
     import tempfile
 
     tmp = Path(tempfile.mkdtemp(dir=str(REPO_ROOT.parent)))
@@ -467,11 +467,28 @@ def test_gate10_controlled_egress_via_proxy_works(probe_pod: str) -> None:
 # -- GATE 11: API multi-replica idempotency -----------------------------------
 
 
+def _api_headers() -> dict[str, str]:
+    """Trusted-proxy identity headers the deployed API requires.
+
+    The chart reads RBAC_TRUSTED_PROXY_SECRET from the cap-runtime secret;
+    the same value is not the local default, so fetch it from the cluster.
+    """
+    secret = _json(["get", "secret", "cap-runtime", "-n", NAMESPACE, "-o", "json"])
+    proxy_secret = base64.b64decode(
+        secret["data"].get("RBAC_TRUSTED_PROXY_SECRET", "")
+    ).decode()
+    return {
+        "X-CAP-User": "administrator",
+        "X-CAP-Proxy-Secret": proxy_secret,
+    }
+
+
 async def _api_create(port: int, goal: str, url: str, key: str) -> tuple[int, dict]:
     async with httpx.AsyncClient(timeout=30) as http:
         resp = await http.post(
             f"http://127.0.0.1:{port}/api/v1/acquisitions",
             json={"goal": goal, "url": url, "idempotency_key": key},
+            headers=_api_headers(),
         )
         return resp.status_code, resp.json() if resp.content else {}
 

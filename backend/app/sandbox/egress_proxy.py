@@ -144,10 +144,11 @@ class EgressProxy:
             return
         if await self._deny_if_forbidden(writer, host, port):
             return
-        # forward the TCP stream
+        # forward the TCP stream (IPv4-first: kind/CI nodes have no IPv6
+        # route, and an AF_INET6 pick here would fail the whole CONNECT)
         try:
             up_reader, up_writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port), timeout=10
+                _open_connection_v4_first(host, port), timeout=10
             )
         except OSError:
             await self._deny(writer, "upstream unreachable")
@@ -171,7 +172,7 @@ class EgressProxy:
             return
         try:
             up_reader, up_writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port), timeout=10
+                _open_connection_v4_first(host, port), timeout=10
             )
         except OSError:
             await self._deny(writer, "upstream unreachable")
@@ -231,7 +232,40 @@ class EgressProxy:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+async def _open_connection_v4_first(
+    host: str, port: int
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    """Open an upstream connection preferring IPv4.
+
+    kind/CI nodes have no IPv6 route; asyncio.open_connection would happily
+    pick the first address (often the IPv6 AAAA), and every packet would then
+    blackhole the CONNECT tunnel.
+    """
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP, type=socket.SOCK_STREAM)
+    except OSError as error:
+        raise OSError(f"resolution failed: {error}") from error
+    infos.sort(key=lambda info: 0 if info[0] == socket.AF_INET else 1)
+    last_error: OSError | None = None
+    for family, socktype, proto, _canon, _sockaddr in infos:
+        try:
+            return await asyncio.open_connection(
+                host, port, family=family, proto=proto, socktype=socktype, local_addr=None
+            )
+        except OSError as error:
+            last_error = error
+    raise (
+        OSError(f"all upstream addresses failed for {host}:{port}")
+        if last_error
+        else OSError(f"no addresses for {host}:{port}")
+    )
+
+
 async def run_egress_proxy(*, port: int = 8080) -> None:
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     proxy = EgressProxy(port=port)
     await proxy.start()
     try:
