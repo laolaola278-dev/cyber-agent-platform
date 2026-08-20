@@ -1,0 +1,182 @@
+name: K8s Certification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: k8s-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CAP_K8S_STRICT: "1"
+  CAP_CERT_OUT: outputs/cap-cert
+  CAP_SANDBOX_NAMESPACE: cap-sandbox
+
+jobs:
+  k8s-certification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      KIND_CLUSTER: cap-k8s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: azure/setup-helm@v4
+        with: { version: v3.17.3 }
+
+      - name: Install kind
+        run: |
+          curl -sSLo kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+          chmod +x kind && sudo mv kind /usr/local/bin/
+          kind version
+
+      - name: Create multi-node kind cluster (1 control-plane + 2 workers)
+        run: |
+          cat > /tmp/kind-config.yaml <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+            - role: worker
+            - role: worker
+          EOF
+          kind create cluster --name "$KIND_CLUSTER" --config /tmp/kind-config.yaml
+          kubectl cluster-info
+          kubectl get nodes -o wide
+          echo "kind=$(kind --version) k8s=$(kubectl version -o json | jq -r '.serverVersion.gitVersion') runtime=$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.containerRuntimeVersion}') cni=$(kubectl get node -o jsonpath='{.items[0].metadata.annotations}') kernel=$(uname -r)"
+
+      - name: Install Cilium CNI (real NetworkPolicy enforcement)
+        run: |
+          helm repo add cilium https://helm.cilium.io/
+          helm install cilium cilium/cilium --namespace kube-system \
+            --set operator.replicas=1 \
+            --set ipam.mode=kubernetes \
+            --set kubeProxyReplacement=disabled \
+            --set cgroup.autoMount.enabled=false \
+            --set securityContext.capabilities.capNetAdmin=true
+          kubectl -n kube-system rollout status ds/cilium --timeout=180s
+          kubectl -n kube-system rollout status deployment/cilium-operator --timeout=120s
+          kubectl get pods -n kube-system -l k8s-app=cilium
+
+      - name: Build + load images into kind
+        run: |
+          docker build -t cap-backend:ci -f backend/Dockerfile backend/
+          docker build -t cap-frontend:ci -f frontend/Dockerfile frontend/
+          bash backend/docker/build_sandbox_images.sh --with-browser
+          kind load docker-image cap-backend:ci cap-frontend:ci \
+            cap-sandbox-http:latest cap-sandbox-browser:latest cap-egress-proxy:latest \
+            --name "$KIND_CLUSTER"
+
+      - name: Deploy PostgreSQL + MinIO (kind-internal)
+        run: |
+          kubectl create namespace cap-infra
+          cat <<'EOF' | kubectl apply -f -
+          apiVersion: v1
+          kind: Service
+          metadata: {name: postgres, namespace: cap-infra}
+          spec:
+            selector: {app: postgres}
+            ports: [{port: 5432, targetPort: 5432}]
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata: {name: postgres, namespace: cap-infra}
+          spec:
+            replicas: 1
+            selector: {matchLabels: {app: postgres}}
+            template:
+              metadata: {labels: {app: postgres}}
+              spec:
+                containers:
+                  - name: postgres
+                    image: postgres:16-alpine
+                    env:
+                      - {name: POSTGRES_USER, value: cap}
+                      - {name: POSTGRES_PASSWORD, value: cap}
+                      - {name: POSTGRES_DB, value: cap}
+                    ports: [{containerPort: 5432}]
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata: {name: minio, namespace: cap-infra}
+          spec:
+            selector: {app: minio}
+            ports: [{port: 9000, targetPort: 9000}]
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata: {name: minio, namespace: cap-infra}
+          spec:
+            replicas: 1
+            selector: {matchLabels: {app: minio}}
+            template:
+              metadata: {labels: {app: minio}}
+              spec:
+                containers:
+                  - name: minio
+                    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+                    command: ["minio", "server", "/data", "--console-address", ":9001"]
+                    env:
+                      - {name: MINIO_ROOT_USER, value: capadmin}
+                      - {name: MINIO_ROOT_PASSWORD, value: capadmin123}
+                    ports: [{containerPort: 9000}]
+          EOF
+          kubectl -n cap-infra rollout status deployment/postgres --timeout=120s
+          kubectl -n cap-infra rollout status deployment/minio --timeout=120s
+
+      - name: Create cap-runtime secret
+        run: |
+          kubectl create namespace cap
+          kubectl -n cap create secret generic cap-runtime \
+            --from-literal=DATABASE_URL=postgresql+asyncpg://cap:cap@postgres.cap-infra.svc:5432/cap \
+            --from-literal=SECRET_KEY=cap-k8s-secret-key-at-least-32-characters \
+            --from-literal=JWT_SECRET=cap-k8s-jwt-secret-at-least-32-characters \
+            --from-literal=RBAC_TRUSTED_PROXY_SECRET=cap-k8s-proxy-secret-at-least-32 \
+            --from-literal=OBJECT_STORE_BACKEND=s3 \
+            --from-literal=OBJECT_STORE_ENDPOINT=minio.cap-infra.svc:9000 \
+            --from-literal=OBJECT_STORE_ACCESS_KEY=capadmin \
+            --from-literal=OBJECT_STORE_SECRET_KEY=capadmin123 \
+            --from-literal=OBJECT_STORE_BUCKET=cap-evidence
+
+      - name: Helm install CAP (K8S-GATE 2)
+        run: |
+          helm install cap deployment/helm/cap --namespace cap --create-namespace \
+            --set backend.image.repository=cap-backend --set backend.image.tag=ci \
+            --set frontend.image.repository=cap-frontend --set frontend.image.tag=ci \
+            --set worker.image.repository=cap-backend --set worker.image.tag=ci \
+            --set backend.replicaCount=3 \
+            --set worker.replicaCount=2 \
+            --set worker.sandbox.egressProxyUrl=http://cap-egress-proxy.cap.svc:8080 \
+            --set worker.sandbox.namespace=cap-sandbox
+          kubectl -n cap wait --for=condition=available deploy/cap-backend --timeout=180s || true
+          kubectl -n cap wait --for=condition=available deploy/cap-worker --timeout=180s || true
+          kubectl get pods -A -o wide
+          kubectl -n cap get deploy,pdb,hpa
+
+      - name: Run K8s certification gates (strict: SKIP=FAIL)
+        working-directory: backend
+        run: |
+          mkdir -p outputs/cap-cert
+          uv run pytest tests/test_phase_28_6_k8s_certification.py \
+            -p no:cacheprovider --timeout=420 --tb=short -vv \
+            --junitxml=outputs/cap-cert/junit-k8s.xml
+
+      - name: Generate K8s certification artifact
+        run: |
+          mkdir -p outputs/cap-cert
+          python scripts/certification/generate_report_28_6.py
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k8s-cert-artifacts
+          path: outputs/cap-cert/
