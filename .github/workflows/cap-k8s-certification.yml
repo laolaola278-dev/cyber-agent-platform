@@ -162,7 +162,7 @@ jobs:
           kubectl get pods -A -o wide
           kubectl -n cap get deploy,pdb,hpa
 
-      - name: Run K8s certification gates (strict: SKIP=FAIL)
+      - name: "Run K8s certification gates (strict: SKIP=FAIL)"
         working-directory: backend
         run: |
           mkdir -p outputs/cap-cert
