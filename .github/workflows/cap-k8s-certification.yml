@@ -173,6 +173,9 @@ jobs:
           kubectl -n cap wait --for=condition=available deploy/cap-worker --timeout=180s || true
           kubectl get deploy,pdb,hpa -n cap
 
+      - name: Install backend deps (dev extra for pytest)
+        run: uv sync --project backend --frozen --extra dev
+
       - name: "Run K8s certification gates (strict: SKIP=FAIL)"
         working-directory: backend
         run: |
