@@ -115,11 +115,12 @@ def _worker_sa_token() -> str:
     """Read the worker ServiceAccount token from a running worker Pod.
 
     The worker automounts its SA token (needed for the K8s API); exec 'cat'
-    may race the container's first start, so retry a few times.
+    may race the container's first start / a rolling restart, so retry with a
+    generous window (container 'not found' during CrashLoop/restart).
     """
     pod = _wait_running_worker()
     last_err = ""
-    for _ in range(5):
+    for _ in range(12):
         proc = _kubectl(
             [
                 "exec",
@@ -135,7 +136,7 @@ def _worker_sa_token() -> str:
         if proc.returncode == 0 and proc.stdout.strip():
             return proc.stdout.strip()
         last_err = proc.stderr.strip() or f"rc={proc.returncode}"
-        time.sleep(2)
+        time.sleep(5)
     raise AssertionError(f"worker SA token not readable from {pod}: {last_err}")
 
 
