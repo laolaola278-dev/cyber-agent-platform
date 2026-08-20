@@ -91,7 +91,7 @@ def api_port() -> int:
     _require_cluster()
     port = 18080
     proc = subprocess.Popen(
-        ["kubectl", "port-forward", "-n", NAMESPACE, "svc/cap-backend", f"{port}:8000"],
+        ["kubectl", "port-forward", "-n", NAMESPACE, "svc/cap-cap-backend", f"{port}:8000"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -111,20 +111,31 @@ def api_port() -> int:
 
 
 def _worker_sa_token() -> str:
-    """Read the worker ServiceAccount token from a running worker Pod."""
+    """Read the worker ServiceAccount token from a running worker Pod.
+
+    The worker automounts its SA token (needed for the K8s API); exec 'cat'
+    may race the container's first start, so retry a few times.
+    """
     pod = _wait_running_worker()
-    proc = _kubectl(
-        [
-            "exec",
-            "-n",
-            NAMESPACE,
-            pod,
-            "--",
-            "cat",
-            "/var/run/secrets/kubernetes.io/serviceaccount/token",
-        ]
-    )
-    return proc.stdout.strip()
+    last_err = ""
+    for _ in range(5):
+        proc = _kubectl(
+            [
+                "exec",
+                "-n",
+                NAMESPACE,
+                pod,
+                "--",
+                "cat",
+                "/var/run/secrets/kubernetes.io/serviceaccount/token",
+            ],
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout.strip()
+        last_err = proc.stderr.strip() or f"rc={proc.returncode}"
+        time.sleep(2)
+    raise AssertionError(f"worker SA token not readable from {pod}: {last_err}")
 
 
 # -- GATE 2: fresh kind helm install ------------------------------------------
@@ -415,7 +426,7 @@ def test_gate10_controlled_egress_via_proxy_works(probe_pod: str) -> None:
             "-w",
             "%{http_code}",
             "-x",
-            f"http://cap-egress-proxy.{NAMESPACE}.svc:8080",
+            f"http://cap-cap-egress-proxy.{NAMESPACE}.svc:8080",
             "--max-time",
             "30",
             "https://example.com/",
@@ -441,7 +452,7 @@ def test_gate10_controlled_egress_via_proxy_works(probe_pod: str) -> None:
             "-w",
             "%{http_code}",
             "-x",
-            f"http://cap-egress-proxy.{NAMESPACE}.svc:8080",
+            f"http://cap-cap-egress-proxy.{NAMESPACE}.svc:8080",
             "--max-time",
             "20",
             "http://10.0.0.1/",
