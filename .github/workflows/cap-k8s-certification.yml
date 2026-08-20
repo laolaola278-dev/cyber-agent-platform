@@ -161,6 +161,7 @@ jobs:
           RC=$?
           set -e
           echo "=== pods -A ==="; kubectl get pods -A -o wide || true
+          echo "=== events (cap ns) ==="; kubectl -n cap get events --sort-by=.lastTimestamp 2>/dev/null | tail -25 || true
           echo "=== migration job/pods ==="; kubectl -n cap get jobs,pods -l app.kubernetes.io/component=migration -o wide || true
           MIG_POD=$(kubectl -n cap get pods -l app.kubernetes.io/component=migration -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           if [ -n "$MIG_POD" ]; then
