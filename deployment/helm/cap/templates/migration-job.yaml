@@ -37,6 +37,8 @@ spec:
           env:
             - name: APP_ENVIRONMENT
               value: production
+            - name: CONFIG_DIRECTORY
+              value: /app/config
           envFrom:
             - secretRef:
                 name: {{ required "backend.existingSecret is required" .Values.backend.existingSecret }}

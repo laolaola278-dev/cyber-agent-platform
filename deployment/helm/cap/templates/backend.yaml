@@ -46,6 +46,9 @@ spec:
               value: {{ .Chart.AppVersion | quote }}
             - name: APP_ENVIRONMENT
               value: production
+            # the image installs the app as a wheel; config/ lives at /app/config
+            - name: CONFIG_DIRECTORY
+              value: /app/config
             - name: API_DOCS_ENABLED
               value: "false"
             - name: DEBUG

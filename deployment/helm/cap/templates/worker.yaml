@@ -51,6 +51,8 @@ spec:
           env:
             - name: APP_ENVIRONMENT
               value: production
+            - name: CONFIG_DIRECTORY
+              value: /app/config
             - name: ACQ_WORKER_NAME
               value: "{{ include "cap.fullname" . }}-worker"
             - name: ACQ_MAX_CONCURRENCY
