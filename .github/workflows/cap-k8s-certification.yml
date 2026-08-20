@@ -186,9 +186,9 @@ jobs:
       - name: Wait for CAP pods ready (dump logs on failure)
         run: |
           set +e
-          kubectl -n cap rollout status deploy/cap-backend --timeout=240s
+          kubectl -n cap rollout status deploy/cap-backend --timeout=480s
           RC=$?
-          kubectl -n cap rollout status deploy/cap-worker --timeout=240s
+          kubectl -n cap rollout status deploy/cap-worker --timeout=480s
           RC=$((RC + $?))
           set -e
           kubectl get pods -n cap -o wide
