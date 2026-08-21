@@ -62,6 +62,7 @@ from app.worker.plugin_runtime import PluginWorkerRuntime
 from app.worker.registry import WorkerRegistry
 from app.worker.runtime import WorkerRuntime
 from app.worker.scheduler import WorkerScheduler
+from app.exceptions import WorkerConflict
 
 logging.basicConfig(
     level=logging.INFO,
@@ -159,14 +160,26 @@ async def _amain() -> int:
             ),
             actor="acquisition-worker",
         )
-        await registry.heartbeat(
-            WorkerHeartbeat(
-                worker_id=worker.id,
-                status=WorkerStatus.ONLINE,
-                active_executions=0,
-            ),
-            actor="acquisition-worker",
-        )
+        # Phase 28.6: concurrent worker Pods may share the same name (e.g.
+        # cap-cap-worker from a Deployment). After register() returns the
+        # shared row, another Pod can heartbeat first and bump state_version.
+        # Retry the initial heartbeat with a fresh DB read on conflict so
+        # startup is eventually consistent instead of crashing.
+        for _heartbeat_attempt in range(5):
+            try:
+                await registry.heartbeat(
+                    WorkerHeartbeat(
+                        worker_id=worker.id,
+                        status=WorkerStatus.ONLINE,
+                        active_executions=0,
+                    ),
+                    actor="acquisition-worker",
+                )
+                break
+            except WorkerConflict:
+                worker = await registry.require(worker.id)
+        else:
+            raise
         logger.info(
             "worker registered id=%s name=%s capabilities=%s max_concurrency=%d "
             "poll_interval=%.2fs batch_size=%d lease_ttl=%ds",

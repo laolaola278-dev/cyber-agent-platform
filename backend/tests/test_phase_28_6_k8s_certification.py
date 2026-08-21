@@ -1053,16 +1053,22 @@ def _wait_infra_ready(deploy: str, timeout: float = 180.0) -> None:
 
 def _run_pg_migrations() -> None:
     """Run alembic upgrade head against the cap database from a backend pod."""
-    pod = _kubectl(
-        [
-            "get", "pods", "-n", NAMESPACE, "-l", "app.kubernetes.io/component=backend",
-            "-o", "jsonpath={.items[0].metadata.name}",
-        ],
-        check=False,
-    ).stdout.strip()
+    deadline = time.monotonic() + 180
+    pod = ""
+    while time.monotonic() < deadline:
+        pod = _kubectl(
+            [
+                "get", "pods", "-n", NAMESPACE, "-l", "app.kubernetes.io/component=backend",
+                "-o", "jsonpath={.items[0].metadata.name}",
+            ],
+            check=False,
+        ).stdout.strip()
+        if pod:
+            break
+        time.sleep(3)
     if not pod:
-        return
-    _kubectl(
+        pytest.fail("no backend pod available to run migrations")
+    result = _kubectl(
         [
             "exec", "-n", NAMESPACE, pod, "--", "alembic", "-c", "/app/alembic.ini",
             "upgrade", "head",
@@ -1070,6 +1076,8 @@ def _run_pg_migrations() -> None:
         check=False,
         timeout=180,
     )
+    if result.returncode != 0:
+        pytest.fail(f"alembic upgrade failed: {result.stderr[:500]}")
 
 
 def _pause_postgres() -> None:
