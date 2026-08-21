@@ -1007,7 +1007,7 @@ def test_gate20_postgres_outage_fails_closed(api_port: int) -> None:
             except Exception:  # noqa: BLE001 -- connect refused / timeout
                 return 503
 
-        results = await _asyncio.gather(*[_probe() for _ in range(3)])
+        results = _asyncio.run(_asyncio.gather(*[_probe() for _ in range(3)]))
         codes = sorted(results)
         assert codes and all(c >= 500 for c in codes), (
             f"API accepted work with PG down (codes={codes})\n{_backend_logs()}"
