@@ -53,6 +53,7 @@ from app.acquisition.service import AcquisitionService
 from app.acquisition.worker_path import AcquisitionWorkerPath
 from app.database import AsyncSessionFactory, engine
 from app.evidence.service import EvidenceService
+from app.exceptions import WorkerConflict
 from app.sandbox.policy import SandboxPolicyEngine
 from app.sandbox.profile import SandboxProfile
 from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
@@ -62,7 +63,6 @@ from app.worker.plugin_runtime import PluginWorkerRuntime
 from app.worker.registry import WorkerRegistry
 from app.worker.runtime import WorkerRuntime
 from app.worker.scheduler import WorkerScheduler
-from app.exceptions import WorkerConflict
 
 logging.basicConfig(
     level=logging.INFO,
