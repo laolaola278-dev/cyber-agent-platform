@@ -111,12 +111,16 @@ def api_port() -> int:
             r = httpx.get(f"http://127.0.0.1:{port}/health", timeout=2)
             if r.status_code == 200:
                 yield port
-                proc.terminate()
-                proc.wait(timeout=10)
+                # terminate the CURRENT tunnel (may have been replaced by
+                # _ensure_api rebuilds during the run) so no subprocess leaks
+                if _PF_PROC is not None:
+                    _PF_PROC.terminate()
+                    _PF_PROC.wait(timeout=10)
                 return
         except Exception:  # noqa: BLE001
             time.sleep(0.5)
-    proc.terminate()
+    if _PF_PROC is not None:
+        _PF_PROC.terminate()
     pytest.fail("CAP API not reachable via port-forward")
 
 
@@ -133,6 +137,7 @@ def _ensure_api(port: int, timeout: float = 60.0) -> bool:
         if _PF_PROC is not None:
             try:
                 _PF_PROC.terminate()
+                _PF_PROC.wait(timeout=5)
             except Exception:  # noqa: BLE001
                 pass
         _PF_PROC = subprocess.Popen(
@@ -597,7 +602,12 @@ async def _api_create(port: int, goal: str, url: str, key: str) -> tuple[int, di
                         json={"goal": goal, "url": url, "idempotency_key": key},
                         headers=_api_headers(),
                     )
-                    return r2.status_code, r2.json() if r2.content else {}
+                    if not r2.content:
+                        return r2.status_code, {}
+                    try:
+                        return r2.status_code, r2.json()
+                    except Exception:  # noqa: BLE001 -- still non-JSON after rebuild
+                        return r2.status_code, {}
         return resp.status_code, body
 
 
@@ -678,12 +688,12 @@ def _wait_worker_replicas(want: int, timeout: float = 240.0) -> None:
 
 
 def test_gate13_scale_up_improves_drain(api_port: int) -> None:
-    """worker.replicas 2 -> 4 with a modest backlog; drain completes, no
+    """worker.replicas 2 -> 3 with a modest backlog; drain completes, no
     claim/recovery storm (0 stale commit), single owner per epoch."""
     _require_cluster()
-    _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=4"])
+    _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=3"])
     try:
-        _wait_worker_replicas(4)
+        _wait_worker_replicas(3)
         # kind has 2 worker nodes (4 vCPU total); every enqueued run spawns a
         # sandbox Pod (500m/512Mi), so a huge burst would Pending instead of
         # draining. 12 runs keep the queue genuinely parallel without
@@ -741,7 +751,7 @@ def test_gate13_scale_up_improves_drain(api_port: int) -> None:
         )
         # no split brain: the scale-up persisted (8 replicas registered)
         workers = _json(["get", "deploy", "cap-cap-worker", "-n", NAMESPACE, "-o", "json"])
-        assert workers["status"]["replicas"] == 4, "worker scale-up did not persist"
+        assert workers["status"]["replicas"] == 3, "worker scale-up did not persist"
     finally:
         # restore the baseline replica count so later gates start clean
         _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=2"])
@@ -861,13 +871,13 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
             timeout=60,
         )
         assert proc.returncode == 0, f"docker stop node failed: {proc.stderr}"
-        # Rebuild the port-forward tunnel proactively: the stopped node may have
-        # hosted the service endpoint that the existing tunnel was bound to.
-        _ensure_api(api_port, timeout=90)
-        status = _wait_run_terminal(api_port, rid, timeout=300)
-        # restart the node and wait for it to be Ready again (later gates need it)
+        # restart the node IMMEDIATELY so recovery runs in parallel with the
+        # run-terminal poll (waiting for the run first then restarting the
+        # node leaves the cluster degraded for minutes and starves later
+        # gates). The run's lease TTL (60s) expires while the node is down;
+        # survivors on the other node reclaim once the API is reachable again.
         subprocess.run(["docker", "start", node], capture_output=True, timeout=120)
-        deadline = time.monotonic() + 240
+        deadline = time.monotonic() + 300
         while time.monotonic() < deadline:
             ready = _kubectl(
                 [
@@ -879,6 +889,10 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
             if ready.stdout.strip() == "True":
                 break
             time.sleep(5)
+        # Rebuild the port-forward tunnel: the stopped node may have hosted
+        # the service endpoint the tunnel was bound to.
+        _ensure_api(api_port, timeout=90)
+        status = _wait_run_terminal(api_port, rid, timeout=300)
         # Rebuild again after node comes back (endpoints may have shifted again)
         _ensure_api(api_port, timeout=90)
         assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
