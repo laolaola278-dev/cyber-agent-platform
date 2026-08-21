@@ -86,9 +86,15 @@ def _wait_running_worker(timeout: float = 120.0) -> str:
     pytest.fail("no Running worker pod after startup window")
 
 
+_PF_PROC: subprocess.Popen | None = None
+"""Module-level handle to the kubectl port-forward process (rebuilt on demand
+by _ensure_api after a node failure takes down its endpoint)."""
+
+
 @pytest.fixture(scope="module")
 def api_port() -> int:
     """kubectl port-forward to the CAP API service (tests run on the runner)."""
+    global _PF_PROC
     _require_cluster()
     port = 18080
     proc = subprocess.Popen(
@@ -96,6 +102,7 @@ def api_port() -> int:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    _PF_PROC = proc
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         try:
@@ -109,6 +116,30 @@ def api_port() -> int:
             time.sleep(0.5)
     proc.terminate()
     pytest.fail("CAP API not reachable via port-forward")
+
+
+def _ensure_api(port: int, timeout: float = 60.0) -> bool:
+    """Rebuild the kubectl port-forward if the API endpoint became unreachable
+    (e.g. the backend pod the tunnel pointed at was killed with its node).
+    Returns True once /health answers."""
+    global _PF_PROC
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _api_health(port):
+            return True
+        # tunnel may be dead -- restart it
+        if _PF_PROC is not None:
+            try:
+                _PF_PROC.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+        _PF_PROC = subprocess.Popen(
+            ["kubectl", "port-forward", "-n", NAMESPACE, "svc/cap-cap-backend", f"{port}:8000"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(3)
+    return False
 
 
 def _worker_sa_token() -> str:
@@ -628,11 +659,18 @@ def test_gate13_scale_up_improves_drain(api_port: int) -> None:
     import asyncio as _asyncio
 
     n = 40
-    key = f"k8s-scaleup-{uuid4().hex[:8]}"
+    # NOTE: every request needs its OWN idempotency key -- sharing one key
+    # across the burst deduplicates all 40 requests into a single run (the
+    # unique index is doing its job), which makes the scale-drain assertion
+    # meaningless. Keys are unique per request so 40 distinct runs enqueue.
+    prefix = f"k8s-scaleup-{uuid4().hex[:8]}"
 
     async def _burst() -> list[tuple[int, dict]]:
         return await _asyncio.gather(
-            *[_api_create(api_port, "g", "http://127.0.0.1:9/", key) for _ in range(n)]
+            *[
+                _api_create(api_port, "g", "http://127.0.0.1:9/", f"{prefix}-{i}")
+                for i in range(n)
+            ]
         )
 
     results = _asyncio.run(_burst())
@@ -683,7 +721,9 @@ def test_gate14_scale_down_graceful(api_port: int) -> None:
     _wait_worker_replicas(2)
     # existing run must still reach terminal (survivor reclaims if needed)
     status = _wait_run_terminal(api_port, rid)
-    assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED")
+    assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
+        f"run did not finish across scale-down (status={status})\n{_worker_logs()}"
+    )
 
 
 # -- GATE 15: graceful Pod termination (SIGTERM) ------------------------------
@@ -709,7 +749,8 @@ def test_gate15_graceful_pod_termination(api_port: int) -> None:
             break
         time.sleep(3)
     assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
-        f"run did not finish after graceful worker termination (status={status})"
+        f"run did not finish after graceful worker termination (status={status})\n"
+        f"{_worker_logs()}"
     )
 
 
@@ -734,7 +775,7 @@ def test_gate16_forced_pod_kill_recovers(api_port: int) -> None:
     )
     status = _wait_run_terminal(api_port, rid, timeout=180)
     assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
-        f"run did not recover after forced kill (status={status})"
+        f"run did not recover after forced kill (status={status})\n{_worker_logs()}"
     )
 
 
@@ -751,26 +792,25 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
         pytest.fail("GATE 17 requires a multi-node kind cluster (1 cp + 2 workers)")
     key = f"k8s-node-{uuid4().hex[:8]}"
     rid = _asyncio_run_create(api_port, key)
-    # pick a worker node that does NOT host a backend pod, so the API
-    # port-forward stays alive while the node is stopped
-    backend_nodes = {
-        p["spec"]["nodeName"]
-        for p in _json(
-            ["get", "pods", "-n", NAMESPACE, "-l", "app.kubernetes.io/component=backend"]
-        ).get("items", [])
-    }
+    # kind has exactly 2 worker nodes and the 3 API replicas land on BOTH of
+    # them -- a node "without backend pods" does not exist. Pick the worker
+    # node with the FEWEST backend pods instead, then rebuild the
+    # port-forward after the node comes back (its endpoint may have died
+    # with the node, which is what broke GATE 18 previously).
+    per_node_backends: dict[str, int] = {}
+    for p in _json(
+        ["get", "pods", "-n", NAMESPACE, "-l", "app.kubernetes.io/component=backend"]
+    ).get("items", []):
+        n = p.get("spec", {}).get("nodeName")
+        if n:
+            per_node_backends[n] = per_node_backends.get(n, 0) + 1
     worker_nodes = [
         n["metadata"]["name"]
         for n in nodes
-        if n["metadata"]["name"] not in backend_nodes
-        and "control-plane" not in n["metadata"]["name"]
+        if "control-plane" not in n["metadata"]["name"]
     ]
-    if not worker_nodes:
-        # fall back to any worker node (port-forward may blip; _run_status
-        # tolerates transient connection errors)
-        worker_nodes = [
-            n["metadata"]["name"] for n in nodes if "control-plane" not in n["metadata"]["name"]
-        ]
+    assert worker_nodes, "no worker node to stop"
+    worker_nodes.sort(key=lambda n: per_node_backends.get(n, 0))
     node = worker_nodes[0]
     # kind node container name == node name (already '<cluster>-worker')
     proc = subprocess.run(
@@ -792,6 +832,9 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
         if ready.stdout.strip() == "True":
             break
         time.sleep(5)
+    # The port-forward endpoint may have been on the stopped node. Rebuild the
+    # tunnel if the API is not reachable so later gates are not poisoned.
+    _ensure_api(api_port, timeout=90)
     assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
         f"run did not recover after node failure (status={status})"
     )

@@ -230,6 +230,23 @@ jobs:
             -p no:cacheprovider --timeout=900 --tb=short -vv \
             --junitxml=outputs/cap-cert/junit-k8s.xml
 
+      - name: Dump component logs on gate failure
+        if: failure()
+        run: |
+          echo "=== pods ==="
+          kubectl get pods -n cap -o wide || true
+          kubectl get pods -n cap-sandbox -o wide || true
+          for COMP in backend worker frontend egress-proxy; do
+            for POD in $(kubectl -n cap get pods -l "app.kubernetes.io/component=$COMP" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true); do
+              echo "--- $COMP/$POD logs (tail 60) ---"
+              kubectl -n cap logs "$POD" --tail=60 2>&1 || true
+              echo "--- $COMP/$POD previous (tail 40) ---"
+              kubectl -n cap logs "$POD" --previous --tail=40 2>&1 || true
+            done
+          done
+          echo "=== events ==="
+          kubectl get events -n cap --sort-by=.lastTimestamp | tail -40 || true
+
       - name: Generate K8s certification artifact
         run: |
           mkdir -p outputs/cap-cert
