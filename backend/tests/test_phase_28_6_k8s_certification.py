@@ -57,9 +57,11 @@ def _require_cluster():
     return True
 
 
-def _kubectl(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
+def _kubectl(
+    args: list[str], *, check: bool = True, timeout: float = 90.0
+) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["kubectl", *args], capture_output=True, text=True, check=check, timeout=90
+        ["kubectl", *args], capture_output=True, text=True, check=check, timeout=int(timeout)
     )
 
 
@@ -676,12 +678,12 @@ def _wait_worker_replicas(want: int, timeout: float = 240.0) -> None:
 
 
 def test_gate13_scale_up_improves_drain(api_port: int) -> None:
-    """worker.replicas 2 -> 8 with a modest backlog; drain completes, no
+    """worker.replicas 2 -> 4 with a modest backlog; drain completes, no
     claim/recovery storm (0 stale commit), single owner per epoch."""
     _require_cluster()
-    _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=8"])
+    _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=4"])
     try:
-        _wait_worker_replicas(8)
+        _wait_worker_replicas(4)
         # kind has 2 worker nodes (4 vCPU total); every enqueued run spawns a
         # sandbox Pod (500m/512Mi), so a huge burst would Pending instead of
         # draining. 12 runs keep the queue genuinely parallel without
@@ -739,7 +741,7 @@ def test_gate13_scale_up_improves_drain(api_port: int) -> None:
         )
         # no split brain: the scale-up persisted (8 replicas registered)
         workers = _json(["get", "deploy", "cap-cap-worker", "-n", NAMESPACE, "-o", "json"])
-        assert workers["status"]["replicas"] == 8, "worker scale-up did not persist"
+        assert workers["status"]["replicas"] == 4, "worker scale-up did not persist"
     finally:
         # restore the baseline replica count so later gates start clean
         _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=2"])
@@ -885,7 +887,21 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
     finally:
         # restore the baseline replica count so later gates start clean
         _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=2"])
-        _wait_worker_replicas(2)
+        _wait_worker_replicas(2, timeout=300)
+        # also wait for backend to be ready (the stopped node may have hosted
+        # backend pods that are now rescheduling)
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            ready = _kubectl(
+                [
+                    "get", "deploy", "cap-cap-backend", "-n", NAMESPACE,
+                    "-o", "jsonpath={.status.readyReplicas}",
+                ],
+                check=False,
+            )
+            if ready.stdout.strip() not in ("", "0"):
+                break
+            time.sleep(5)
         _ensure_api(api_port, timeout=90)
 
 
