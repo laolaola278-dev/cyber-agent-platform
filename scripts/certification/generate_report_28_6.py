@@ -37,6 +37,19 @@ TEST_GATES: dict[str, list[str]] = {
     "test_gate17_node_failure_recovers": ["K8S-GATE 17"],
     "test_gate18_rolling_update": ["K8S-GATE 18"],
     "test_gate19_version_skew_compatibility": ["K8S-GATE 19"],
+    "test_gate20_postgres_outage_fails_closed": ["K8S-GATE 20"],
+    "test_gate21_object_store_outage_blocks": ["K8S-GATE 21"],
+    "test_gate22_capacity_hpa_pdb": ["K8S-GATE 22"],
+    "test_gate23_sli_slo_metrics": ["K8S-GATE 23"],
+    "test_gate24_backup_restore_roundtrip": ["K8S-GATE 24"],
+    "test_gate25_dr_data_survives_restart": ["K8S-GATE 25"],
+    "test_gate26_observability": ["K8S-GATE 26"],
+    "test_gate27_alerting_configuration": ["K8S-GATE 27"],
+    "test_gate28_baseline_regression": ["K8S-GATE 28"],
+    "test_gate29_recovery_time_objective": ["K8S-GATE 29"],
+    "test_gate30_resource_limits": ["K8S-GATE 30"],
+    "test_gate31_security_baseline": ["K8S-GATE 31"],
+    "test_gate32_overall_health_no_stale": ["K8S-GATE 32"],
 }
 
 # gates certified by evidence OUTSIDE this run (historical / separately
