@@ -142,15 +142,14 @@ class AcquisitionService:
         agent = await self._session.get(Agent, agent_id)
         if agent is None:
             try:
-                self._session.add(
-                    Agent(
-                        id=agent_id,
-                        name="acquisition-system",
-                        version="28.3",
-                        status="ONLINE",
-                        health_status="HEALTHY",
-                    )
+                agent = Agent(
+                    id=agent_id,
+                    name="acquisition-system",
+                    version="28.3",
+                    status="ONLINE",
+                    health_status="HEALTHY",
                 )
+                self._session.add(agent)
                 await self._session.flush()
             except IntegrityError:
                 # concurrent create provisioned the system agent first; the

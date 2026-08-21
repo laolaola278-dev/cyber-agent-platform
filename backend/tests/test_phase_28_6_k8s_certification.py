@@ -901,6 +901,21 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
     finally:
         # restore the baseline replica count so later gates start clean
         _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=2"])
+        # wait for the stopped node to rejoin before asserting pod readiness;
+        # otherwise _wait_worker_replicas races against node recovery and
+        # flakes when the scheduler cannot place replacement pods yet
+        node_deadline = time.monotonic() + 300
+        while time.monotonic() < node_deadline:
+            ready = _kubectl(
+                [
+                    "get", "node", node,
+                    "-o", 'jsonpath={.status.conditions[?(@.type=="Ready")].status}',
+                ],
+                check=False,
+            )
+            if ready.stdout.strip() == "True":
+                break
+            time.sleep(5)
         _wait_worker_replicas(2, timeout=300)
         # also wait for backend to be ready (the stopped node may have hosted
         # backend pods that are now rescheduling)
