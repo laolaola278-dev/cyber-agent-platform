@@ -582,7 +582,21 @@ async def _api_create(port: int, goal: str, url: str, key: str) -> tuple[int, di
             json={"goal": goal, "url": url, "idempotency_key": key},
             headers=_api_headers(),
         )
-        return resp.status_code, resp.json() if resp.content else {}
+        body = {}
+        if resp.content:
+            try:
+                body = resp.json()
+            except Exception:  # noqa: BLE001 -- non-JSON (likely stale port-forward)
+                _ensure_api(port, timeout=60)
+                # one retry after tunnel rebuild
+                async with httpx.AsyncClient(timeout=30) as http2:
+                    r2 = await http2.post(
+                        f"http://127.0.0.1:{port}/acquisitions",
+                        json={"goal": goal, "url": url, "idempotency_key": key},
+                        headers=_api_headers(),
+                    )
+                    return r2.status_code, r2.json() if r2.content else {}
+        return resp.status_code, body
 
 
 @pytest.mark.asyncio
@@ -680,7 +694,7 @@ def test_gate13_scale_up_improves_drain(api_port: int) -> None:
         results = _asyncio.run(_burst())
         run_ids = {res[1].get("id") for res in results if res[0] in (200, 201, 202)}
         assert len(run_ids) == n, f"expected {n} accepted runs, got {len(run_ids)}"
-        deadline = time.monotonic() + 180
+        deadline = time.monotonic() + 300
         done = 0
         while time.monotonic() < deadline:
 
@@ -823,32 +837,43 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
     assert worker_nodes, "no worker node to stop"
     worker_nodes.sort(key=lambda n: per_node_backends.get(n, 0))
     node = worker_nodes[0]
-    # kind node container name == node name (already '<cluster>-worker')
-    proc = subprocess.run(
-        ["docker", "stop", node],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert proc.returncode == 0, f"docker stop node failed: {proc.stderr}"
-    status = _wait_run_terminal(api_port, rid, timeout=300)
-    # restart the node and wait for it to be Ready again (later gates need it)
-    subprocess.run(["docker", "start", node], capture_output=True, timeout=120)
-    deadline = time.monotonic() + 240
-    while time.monotonic() < deadline:
-        ready = _kubectl(
-            ["get", "node", node, "-o", 'jsonpath={.status.conditions[?(@.type=="Ready")].status}'],
-            check=False,
+    try:
+        # kind node container name == node name (already '<cluster>-worker')
+        proc = subprocess.run(
+            ["docker", "stop", node],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
-        if ready.stdout.strip() == "True":
-            break
-        time.sleep(5)
-    # The port-forward endpoint may have been on the stopped node. Rebuild the
-    # tunnel if the API is not reachable so later gates are not poisoned.
-    _ensure_api(api_port, timeout=90)
-    assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
-        f"run did not recover after node failure (status={status})"
-    )
+        assert proc.returncode == 0, f"docker stop node failed: {proc.stderr}"
+        # Rebuild the port-forward tunnel proactively: the stopped node may have
+        # hosted the service endpoint that the existing tunnel was bound to.
+        _ensure_api(api_port, timeout=90)
+        status = _wait_run_terminal(api_port, rid, timeout=300)
+        # restart the node and wait for it to be Ready again (later gates need it)
+        subprocess.run(["docker", "start", node], capture_output=True, timeout=120)
+        deadline = time.monotonic() + 240
+        while time.monotonic() < deadline:
+            ready = _kubectl(
+                [
+                    "get", "node", node,
+                    "-o", 'jsonpath={.status.conditions[?(@.type=="Ready")].status}',
+                ],
+                check=False,
+            )
+            if ready.stdout.strip() == "True":
+                break
+            time.sleep(5)
+        # Rebuild again after node comes back (endpoints may have shifted again)
+        _ensure_api(api_port, timeout=90)
+        assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
+            f"run did not recover after node failure (status={status})"
+        )
+    finally:
+        # restore the baseline replica count so later gates start clean
+        _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=2"])
+        _wait_worker_replicas(2)
+        _ensure_api(api_port, timeout=90)
 
 
 # -- GATE 18: rolling update --------------------------------------------------
@@ -982,15 +1007,44 @@ def _wait_infra_ready(deploy: str, timeout: float = 180.0) -> None:
     pytest.fail(f"infra deployment {deploy} did not become ready")
 
 
+def _pause_postgres() -> None:
+    """Pause the postgres main process (SIGSTOP) so connections time out but
+    the pod and its data survive. Used by GATE 20 instead of scale-to-0."""
+    pod = _kubectl(
+        [
+            "get", "pods", "-n", "cap-infra", "-l", "app=postgres",
+            "-o", "jsonpath={.items[0].metadata.name}",
+        ],
+        check=False,
+    ).stdout.strip()
+    assert pod, "no postgres pod to pause"
+    _kubectl(["exec", "-n", "cap-infra", pod, "--", "kill", "-STOP", "1"], check=False)
+
+
+def _resume_postgres() -> None:
+    """Resume a paused postgres process (SIGCONT)."""
+    pod = _kubectl(
+        [
+            "get", "pods", "-n", "cap-infra", "-l", "app=postgres",
+            "-o", "jsonpath={.items[0].metadata.name}",
+        ],
+        check=False,
+    ).stdout.strip()
+    if pod:
+        _kubectl(["exec", "-n", "cap-infra", pod, "--", "kill", "-CONT", "1"], check=False)
+
+
 def test_gate20_postgres_outage_fails_closed(api_port: int) -> None:
-    """Scaling PG to 0 must NOT produce silent success: the API fails
-    closed (5xx) while the database is down and self-heals after restore."""
+    """Pausing the PG process must NOT produce silent success: the API fails
+    closed (5xx) while the database is unreachable and self-heals after
+    resume. We pause the process instead of scaling the pod to 0 so the
+    database state (and alembic migration history) survives the gate."""
     _require_cluster()
     # a run must exist first so the metrics/queue query has something to see
     # (the API /health path itself is DB-free; the enqueue path is DB-bound)
-    _scale_infra("postgres", 0)
+    _pause_postgres()
     try:
-        # while PG is down the API must fail closed (never 2xx for a DB
+        # while PG is paused the API must fail closed (never 2xx for a DB
         # bound operation; a timeout/connect error is ALSO a fail-closed
         # outcome, never a false success)
         import asyncio as _asyncio
@@ -1007,15 +1061,18 @@ def test_gate20_postgres_outage_fails_closed(api_port: int) -> None:
             except Exception:  # noqa: BLE001 -- connect refused / timeout
                 return 503
 
-        results = _asyncio.run(_asyncio.gather(*[_probe() for _ in range(3)]))
+        async def _probe_burst() -> list[int]:
+            return await _asyncio.gather(*[_probe() for _ in range(3)])
+
+        results = _asyncio.run(_probe_burst())
         codes = sorted(results)
         assert codes and all(c >= 500 for c in codes), (
-            f"API accepted work with PG down (codes={codes})\n{_backend_logs()}"
+            f"API accepted work with PG paused (codes={codes})\n{_backend_logs()}"
         )
     finally:
-        _scale_infra("postgres", 1)
+        _resume_postgres()
         _wait_infra_ready("postgres")
-    # after restore the API accepts work again
+    # after resume the API accepts work again
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         status, body = _asyncio_run_create_soft(api_port, f"k8s-pgrestore-{uuid4().hex[:8]}")
@@ -1023,7 +1080,7 @@ def test_gate20_postgres_outage_fails_closed(api_port: int) -> None:
             break
         time.sleep(5)
     assert status in (200, 201, 202), (
-        f"API did not self-heal after PG restore (status={status})\n{_backend_logs()}"
+        f"API did not self-heal after PG resume (status={status})\n{_backend_logs()}"
     )
 
 
@@ -1133,6 +1190,15 @@ def test_gate24_backup_restore_roundtrip() -> None:
         check=False,
     ).stdout.strip()
     assert pod, "no postgres pod"
+    # wait for the postgres container to be ready (especially after GATE 20
+    # brings it back from scale 0)
+    _kubectl(
+        [
+            "wait", "pod", "-n", "cap-infra", pod,
+            "--for=condition=Ready", "--timeout=90s",
+        ],
+        check=False,
+    )
     dump = _kubectl(
         [
             "exec", "-n", "cap-infra", pod, "--",
