@@ -66,6 +66,19 @@ worker:
   leaseRenewIntervalSeconds: "20"
   # graceful shutdown: stop claiming, finish in-flight runs, then exit
   terminationGracePeriodSeconds: 120
+  # Phase 28.6 GATE 17: fast node-failure failover. The K8s default eviction
+  # window for unreachable/not-ready nodes is 300s; a short toleration lets
+  # the scheduler replace lost workers in ~30s so capacity recovers well
+  # inside the RTO.
+  tolerations:
+    - key: node.kubernetes.io/not-ready
+      operator: Exists
+      effect: NoExecute
+      tolerationSeconds: 30
+    - key: node.kubernetes.io/unreachable
+      operator: Exists
+      effect: NoExecute
+      tolerationSeconds: 30
   # Phase 28.6 sandbox: Kubernetes-sandbox provider (no runtime socket)
   sandbox:
     provider: kubernetes-sandbox

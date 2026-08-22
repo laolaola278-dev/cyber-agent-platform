@@ -929,6 +929,23 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
             if ready.stdout.strip() == "True":
                 break
             time.sleep(5)
+        # GATE 17 round-2 fix: a worker Pod stranded on the stopped node can
+        # sit in Unknown/Terminating for up to the default 300s eviction
+        # window; while it exists the Deployment will NOT create a
+        # replacement (replica count is satisfied by the zombie). Force-
+        # delete non-Running worker Pods so the scheduler can replace them
+        # immediately (the chart now also carries 30s not-ready tolerations).
+        for phase in ("Unknown", "Failed"):
+            _kubectl(
+                [
+                    "delete", "pods", "-n", NAMESPACE,
+                    "-l", "app.kubernetes.io/component=worker",
+                    "--field-selector", f"status.phase={phase}",
+                    "--force", "--grace-period=0",
+                ],
+                check=False,
+                timeout=60,
+            )
         _wait_worker_replicas(2, timeout=300)
         # also wait for backend to be ready (the stopped node may have hosted
         # backend pods that are now rescheduling)
@@ -1080,32 +1097,57 @@ def _wait_infra_ready(deploy: str, timeout: float = 180.0) -> None:
 
 
 def _run_pg_migrations() -> None:
-    """Run alembic upgrade head against the cap database from a backend pod."""
-    deadline = time.monotonic() + 180
-    pod = ""
+    """Run alembic upgrade head against the cap database from a backend pod.
+
+    Round-2 fix: the exec target must be a pod whose backend container is
+    actually running. Right after a PG outage (or a rolling update) the
+    first listed pod may be restarting, and `kubectl exec` fails with
+    "container not found". Retry across pods until the deadline instead of
+    failing on the first transient error."""
+    deadline = time.monotonic() + 240
+    last_err = "no attempt made"
     while time.monotonic() < deadline:
-        pod = _kubectl(
+        pods = _kubectl(
             [
-                "get", "pods", "-n", NAMESPACE, "-l", "app.kubernetes.io/component=backend",
-                "-o", "jsonpath={.items[0].metadata.name}",
+                "get", "pods", "-n", NAMESPACE,
+                "-l", "app.kubernetes.io/component=backend",
+                "-o", "json",
             ],
             check=False,
-        ).stdout.strip()
-        if pod:
-            break
-        time.sleep(3)
-    if not pod:
-        pytest.fail("no backend pod available to run migrations")
-    result = _kubectl(
-        [
-            "exec", "-n", NAMESPACE, pod, "--", "alembic", "-c", "/app/alembic.ini",
-            "upgrade", "head",
-        ],
-        check=False,
-        timeout=180,
-    )
-    if result.returncode != 0:
-        pytest.fail(f"alembic upgrade failed: {result.stderr[:500]}")
+        )
+        candidates: list[str] = []
+        try:
+            items = json.loads(pods.stdout or "{}").get("items", [])
+        except ValueError:
+            items = []
+        for item in items:
+            if item.get("status", {}).get("phase") != "Running":
+                continue
+            if not any(
+                c.get("ready") for c in item.get("status", {}).get("containerStatuses", [])
+            ):
+                continue
+            name = item.get("metadata", {}).get("name", "")
+            if name:
+                candidates.append(name)
+        if not candidates:
+            time.sleep(5)
+            continue
+        result = _kubectl(
+            [
+                "exec", "-n", NAMESPACE, candidates[0], "--",
+                "alembic", "-c", "/app/alembic.ini", "upgrade", "head",
+            ],
+            check=False,
+            timeout=180,
+        )
+        if result.returncode == 0:
+            return
+        last_err = result.stderr[:500]
+        # transient exec failures (container restarting / not found) are
+        # retryable: wait briefly and re-pick a healthy pod
+        time.sleep(10)
+    pytest.fail(f"alembic upgrade failed after retries: {last_err}")
 
 
 def _pause_postgres() -> None:

@@ -35,6 +35,9 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       imagePullSecrets:
         {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      # Phase 28.6 GATE 17: fast failover off unreachable/not-ready nodes
+      tolerations:
+        {{- toYaml .Values.worker.tolerations | nindent 8 }}
       # Phase 28.6: NO docker.sock / containerd / cri socket, NO hostPath.
       # Sandbox execution goes through the Kubernetes API (namespaced RBAC).
       terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
