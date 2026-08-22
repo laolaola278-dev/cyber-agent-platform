@@ -392,6 +392,14 @@ def _dr_context() -> dict:
     # RECLAIM the snapshot (validator passes with the hook), turning it
     # PARTIAL before the backup reads it. No workers = durably RUNNING.
     _kubectl(["-n", NAMESPACE, "scale", "deploy/cap-cap-worker", "--replicas=0"])
+    # Remove the TEST-ONLY hooks while zero workers exist (run 32573554257):
+    # otherwise every LATER run in this cluster (the t2 RPO-loss run) also
+    # enters real sandbox execution and never terminals inside the wait
+    # window. Production deny-by-default is restored before any new run.
+    _kubectl(["-n", NAMESPACE, "set", "env", "deploy/cap-cap-worker",
+              "ACQ_ALLOW_PRIVATE-"])
+    _kubectl(["-n", NAMESPACE, "set", "env", "deploy/cap-cap-egress-proxy",
+              "CAP_EGRESS_ALLOW-"])
     ctx["dataset"] = {
         "completed": completed_ids,
         "cancelled": cancelled_ids,
@@ -416,7 +424,12 @@ def _dr_context() -> dict:
     ctx["timings"]["t1_backup_done"] = datetime.now(UTC).isoformat()
 
     # -- t2: data created AFTER the backup (the RPO loss window) ------------
-    _kubectl(["-n", NAMESPACE, "rollout", "status", "deploy/cap-cap-worker", "--timeout=300s"])
+    # workers were scaled to zero for the snapshot; bring them back (hooks
+    # are already removed -> production deny-by-default, so this run is
+    # policy-blocked fast and terminals in seconds)
+    _kubectl(["-n", NAMESPACE, "scale", "deploy/cap-cap-worker", "--replicas=2"])
+    _kubectl(["-n", NAMESPACE, "rollout", "status", "deploy/cap-cap-worker",
+              "--timeout=300s"])
     key2 = f"ga-dr-post-{uuid4().hex[:8]}"
     _, body2 = _api_create(api_port, key2)
     post_id = body2["id"]
