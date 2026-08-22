@@ -78,10 +78,20 @@ def _run(
     args: list[str], *, check: bool = True, timeout: float = 300,
     cwd=None, env=None, input=None,
 ) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        args, capture_output=True, text=True, check=check, timeout=int(timeout), cwd=cwd, env=env,
-        input=input,
-    )
+    try:
+        return subprocess.run(
+            args, capture_output=True, text=True, check=check, timeout=int(timeout), cwd=cwd,
+            env=env, input=input,
+        )
+    except subprocess.CalledProcessError as error:
+        # surface the command's own output -- without this a failed helper
+        # script (backup/restore/mc/kubectl) is undiagnosable from CI logs
+        out = (error.stdout or "").strip()[-1500:]
+        err = (error.stderr or "").strip()[-1500:]
+        raise AssertionError(
+            f"command failed rc={error.returncode}: {' '.join(map(str, args))}\n"
+            f"--- stdout tail ---\n{out}\n--- stderr tail ---\n{err}"
+        ) from error
 
 
 def _kubectl(args, *, check=True, timeout=120.0):

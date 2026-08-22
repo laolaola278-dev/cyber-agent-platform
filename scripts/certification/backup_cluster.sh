@@ -39,6 +39,8 @@ for i in $(seq 1 30); do
   if (exec 3<>/dev/tcp/127.0.0.1/"$MINIO_LOCAL_PORT") 2>/dev/null; then exec 3>&-; break; fi
   sleep 1
 done
+(exec 3<>/dev/tcp/127.0.0.1/"$MINIO_LOCAL_PORT") 2>/dev/null \
+  || { echo "FATAL: minio port-forward never became reachable"; exit 1; }
 mc alias set drsource "http://127.0.0.1:${MINIO_LOCAL_PORT}" \
   "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
 mc mirror --overwrite "drsource/cap-evidence" "$BACKUP_DIR/objects/"
