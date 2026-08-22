@@ -21,10 +21,13 @@ PG_POD=$(kubectl -n "$PG_NS" get pods -l app=postgres -o jsonpath='{.items[0].me
 kubectl -n "$PG_NS" wait "pod/$PG_POD" --for=condition=Ready --timeout=300s
 kubectl -n "$PG_NS" exec "$PG_POD" -- \
   pg_dump -U cap -d cap > "$BACKUP_DIR/postgres/cap.sql"
+# sanity checks run on the PLAIN-TEXT dump -- grepping the gzip binary
+# would always fail (run 32573115460)
+grep -q "acquisition_runs" "$BACKUP_DIR/postgres/cap.sql" \
+  || { echo "FATAL: dump missing core tables"; exit 1; }
+[ -s "$BACKUP_DIR/postgres/cap.sql" ] || { echo "FATAL: empty pg_dump"; exit 1; }
 gzip -f "$BACKUP_DIR/postgres/cap.sql"
 PG_DUMP="$BACKUP_DIR/postgres/cap.sql.gz"
-[ -s "$PG_DUMP" ] || { echo "FATAL: empty pg_dump"; exit 1; }
-grep -q "acquisition_runs" "$PG_DUMP" || { echo "FATAL: dump missing core tables"; exit 1; }
 
 echo "=== [2/4] Schema revision ==="
 SCHEMA_REV=$(kubectl -n "$PG_NS" exec "$PG_POD" -- \
