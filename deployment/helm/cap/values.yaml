@@ -8,6 +8,21 @@ imagePullSecrets: []
 # runtime sockets).
 sandboxNamespace: cap-sandbox
 
+# Phase 28.6 GATE 17/32: fast node-failure failover for ALL CAP components.
+# The K8s default eviction window for unreachable/not-ready nodes is 300s;
+# a stranded pod in Unknown counts against desired replicas and BLOCKS its
+# Deployment from creating a replacement. A short toleration lets the
+# scheduler replace lost pods in ~30s so capacity recovers inside the RTO.
+tolerations:
+  - key: node.kubernetes.io/not-ready
+    operator: Exists
+    effect: NoExecute
+    tolerationSeconds: 30
+  - key: node.kubernetes.io/unreachable
+    operator: Exists
+    effect: NoExecute
+    tolerationSeconds: 30
+
 backend:
   replicaCount: 3
   image:

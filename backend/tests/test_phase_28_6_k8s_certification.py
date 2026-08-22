@@ -960,23 +960,26 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
             _run_pg_migrations()
         except Exception:  # noqa: BLE001 -- best-effort safety net
             pass
-        # GATE 17 round-2 fix: a worker Pod stranded on the stopped node can
-        # sit in Unknown/Terminating for up to the default 300s eviction
-        # window; while it exists the Deployment will NOT create a
-        # replacement (replica count is satisfied by the zombie). Force-
-        # delete non-Running worker Pods so the scheduler can replace them
-        # immediately (the chart now also carries 30s not-ready tolerations).
-        for phase in ("Unknown", "Failed"):
-            _kubectl(
-                [
-                    "delete", "pods", "-n", NAMESPACE,
-                    "-l", "app.kubernetes.io/component=worker",
-                    "--field-selector", f"status.phase={phase}",
-                    "--force", "--grace-period=0",
-                ],
-                check=False,
-                timeout=60,
-            )
+        # GATE 17 round-2/5 fix: a pod stranded on the stopped node can sit
+        # in Unknown/Terminating for up to the default 300s eviction window;
+        # while it exists its Deployment will NOT create a replacement
+        # (replica count is satisfied by the zombie). This hit workers in
+        # round 2 and egress-proxy in round 5. Force-delete non-Running pods
+        # for EVERY cap component so the scheduler replaces them immediately
+        # (the chart also carries 30s not-ready tolerations on all
+        # deployments now).
+        for component in ("worker", "backend", "frontend", "egress-proxy"):
+            for phase in ("Unknown", "Failed"):
+                _kubectl(
+                    [
+                        "delete", "pods", "-n", NAMESPACE,
+                        "-l", f"app.kubernetes.io/component={component}",
+                        "--field-selector", f"status.phase={phase}",
+                        "--force", "--grace-period=0",
+                    ],
+                    check=False,
+                    timeout=60,
+                )
         _wait_worker_replicas(2, timeout=300)
         # also wait for backend to be ready (the stopped node may have hosted
         # backend pods that are now rescheduling)
@@ -1605,20 +1608,29 @@ def test_gate32_overall_health_no_stale(api_port: int) -> None:
     """Final: every component is available, the API serves /health, and no
     run is stuck in a non-terminal state with no active owner (stale)."""
     _require_cluster()
+    # Round-5 fix: give each component a short window to (re)become
+    # available instead of an instantaneous check -- right after the node-
+    # failure gate a replacement pod may still be pulling itself up.
     for comp in ("backend", "worker", "frontend", "egress-proxy"):
-        avail = _kubectl(
-            [
-                "get",
-                "deploy",
-                f"cap-cap-{comp}",
-                "-n",
-                NAMESPACE,
-                "-o",
-                "jsonpath={.status.availableReplicas}",
-            ],
-            check=False,
-        )
-        assert avail.stdout.strip() not in ("", "0"), f"{comp} not available"
+        deadline = time.monotonic() + 120
+        avail = ""
+        while time.monotonic() < deadline:
+            avail = _kubectl(
+                [
+                    "get",
+                    "deploy",
+                    f"cap-cap-{comp}",
+                    "-n",
+                    NAMESPACE,
+                    "-o",
+                    "jsonpath={.status.availableReplicas}",
+                ],
+                check=False,
+            ).stdout.strip()
+            if avail not in ("", "0"):
+                break
+            time.sleep(5)
+        assert avail not in ("", "0"), f"{comp} not available"
     assert _api_health(api_port), "API /health failed in final gate"
     # no stale RUNNING runs: every RUNNING row must have an ACTIVE lease; a
     # simpler observable proxy is that the API can list runs and none is in

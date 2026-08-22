@@ -26,6 +26,9 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Phase 28.6: fast failover off unreachable/not-ready nodes
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
       containers:
         - name: egress-proxy
           image: "cap-egress-proxy:latest"
