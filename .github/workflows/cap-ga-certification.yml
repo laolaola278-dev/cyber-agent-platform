@@ -147,36 +147,17 @@ jobs:
             --set worker.image.repository=cap-backend --set worker.image.tag=ci \
             --set backend.replicaCount=3 \
             --set worker.replicaCount=2 \
-            --set-string worker.leaseTtlSeconds=600 \
             --set worker.sandbox.egressProxyUrl=http://cap-cap-egress-proxy.cap.svc:8080 \
             --set worker.sandbox.namespace=cap-sandbox
-          # Lease TTL 600s (prod default 60s): run 32570760110 proved the
-          # claim loop renews only the worker-registry row, never the per-run
-          # lease. Any execution longer than the TTL (sandbox pod spawn alone
-          # can exceed 60s) has its lease expire mid-flight -> another worker
-          # reclaims -> the original commit is fencing-rejected -> rollback ->
-          # reclaim again: a permanent RUNNING livelock. With a 600s TTL every
-          # certification execution commits inside its lease; the RUNNING
-          # snapshot's lease still expires long before Cluster B exists
-          # (backup + destroy + recreate takes >10 min). Known limitation to
-          # document in the GA report: per-run lease renewal is missing.
           kubectl -n cap rollout status deploy/cap-cap-backend --timeout=600s
           kubectl -n cap rollout status deploy/cap-cap-worker --timeout=600s
-          # Phase 28.7 RUNNING-snapshot fixture: the DR test needs a run that
-          # stays durably RUNNING while its workers are force-deleted. The
-          # target 10.255.255.1 is a non-routable blackhole, but production
-          # policy deny private IPs at TWO layers (worker URL validator +
-          # egress proxy), which would terminal the run before RUNNING is
-          # observable. Both layers expose explicit TEST-ONLY hooks
-          # (worker_main.py ACQ_ALLOW_PRIVATE / egress_proxy.py
-          # CAP_EGRESS_ALLOW); enable them ONLY in this certification cluster
-          # so the TCP connect hangs inside the sandbox timeout (120s) -> a
-          # stable RUNNING window. Production default is unchanged:
-          # deny-by-default.
-          kubectl -n cap set env deploy/cap-cap-worker ACQ_ALLOW_PRIVATE=1
-          kubectl -n cap set env deploy/cap-cap-egress-proxy CAP_EGRESS_ALLOW=10.255.255.1:80
-          kubectl -n cap rollout status deploy/cap-cap-worker --timeout=300s
-          kubectl -n cap rollout status deploy/cap-cap-egress-proxy --timeout=300s
+          # Production defaults everywhere (deny-by-default URL policy, 60s
+          # lease TTL). The RUNNING-snapshot fixture toggles the two explicit
+          # TEST-ONLY hooks (ACQ_ALLOW_PRIVATE / CAP_EGRESS_ALLOW) itself,
+          # scoped to just that one snapshot, then scales workers to zero.
+          # Runs 32570760110/32571948457 proved cluster-wide hooks are wrong:
+          # dataset runs would enter real sandbox execution (>240s worst case)
+          # and never terminal inside the fixture's wait window.
 
       - name: Install backend deps (dev extra for pytest)
         run: uv sync --project backend --frozen --extra dev

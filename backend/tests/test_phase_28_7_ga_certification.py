@@ -349,7 +349,21 @@ def _dr_context() -> dict:
     _seed_artifact_rows(pod, anchor_id, seeded_digests)
 
     # RUNNING snapshot: create then kill the workers so the run is durably
-    # RUNNING with a lease that will be EXPIRED by the time Cluster B exists
+    # RUNNING with a lease that will be EXPIRED by the time Cluster B exists.
+    #
+    # Scoped TEST-ONLY hooks (run 32571948457 lesson): enabling them cluster-
+    # wide makes the DATASET runs enter real sandbox execution, whose worst
+    # case (>240s) never terminals inside _wait_terminal. Production defaults
+    # stay deny-by-default for everything except this one snapshot: the
+    # dataset runs above were policy-blocked fast (terminal in seconds), and
+    # on Cluster B the reclaimed snapshot is policy-blocked again -> BLOCKED
+    # terminal + recovery_count >= 1 without any hook.
+    _kubectl(["-n", NAMESPACE, "set", "env", "deploy/cap-cap-worker",
+              "ACQ_ALLOW_PRIVATE=1"])
+    _kubectl(["-n", NAMESPACE, "set", "env", "deploy/cap-cap-egress-proxy",
+              "CAP_EGRESS_ALLOW=10.255.255.1:80"])
+    _kubectl(["-n", NAMESPACE, "rollout", "status", "deploy/cap-cap-worker",
+              "--timeout=300s"])
     key = f"ga-dr-run-{uuid4().hex[:8]}"
     _, body = _api_create(api_port, key, url=RUNNING_TARGET)
     running_id = body["id"]
@@ -364,6 +378,10 @@ def _dr_context() -> dict:
          "--force", "--grace-period=0"],
         check=False,
     )
+    # Scale workers to zero: recreated pods would see the expired lease and
+    # RECLAIM the snapshot (validator passes with the hook), turning it
+    # PARTIAL before the backup reads it. No workers = durably RUNNING.
+    _kubectl(["-n", NAMESPACE, "scale", "deploy/cap-cap-worker", "--replicas=0"])
     ctx["dataset"] = {
         "completed": completed_ids,
         "cancelled": cancelled_ids,
