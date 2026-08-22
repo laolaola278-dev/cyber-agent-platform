@@ -844,6 +844,58 @@ def test_gate16_forced_pod_kill_recovers(api_port: int) -> None:
 # -- GATE 17: node failure ----------------------------------------------------
 
 
+def _cap_infra_pods() -> list[dict]:
+    items = _json(["get", "pods", "-n", "cap-infra", "-o", "json"]).get("items", [])
+    return [
+        p
+        for p in items
+        if "postgres" in p.get("metadata", {}).get("name", "")
+        or "minio" in p.get("metadata", {}).get("name", "")
+    ]
+
+
+def _drain_infra_from(node: str) -> None:
+    """Deterministically move postgres/minio OFF `node` before the drill.
+
+    Round-6 lesson: excluding only the postgres node is not enough. If MinIO
+    rides the stopped node, survivors pause claims (readiness includes the
+    object-store probe) and replacement workers fail-closed into
+    CrashLoopBackOff -- runs sit QUEUED past every budget. Cordon the node,
+    delete the stateful pods so they reschedule on the surviving node, wait
+    for health, re-apply migrations (the bare postgres deployment has no
+    PVC: its data dir starts empty), then uncordon so the node can host
+    replacement workload pods during the outage.
+    """
+    _kubectl(["cordon", node], check=False)
+    try:
+        victims = [p for p in _cap_infra_pods() if p.get("spec", {}).get("nodeName") == node]
+        for p in victims:
+            _kubectl(
+                ["delete", "pod", "-n", "cap-infra", p["metadata"]["name"]],
+                check=False,
+                timeout=120,
+            )
+        if victims:
+            _wait_infra_ready("postgres", timeout=300)
+            _wait_infra_ready("minio", timeout=300)
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline:
+                if not any(
+                    p.get("spec", {}).get("nodeName") == node for p in _cap_infra_pods()
+                ):
+                    break
+                time.sleep(5)
+            else:
+                pytest.fail(f"infra pods did not leave node {node}")
+            # fresh emptyDir -> restore schema (idempotent no-op otherwise)
+            try:
+                _run_pg_migrations()
+            except Exception:  # noqa: BLE001 -- best-effort safety net
+                pass
+    finally:
+        _kubectl(["uncordon", node], check=False)
+
+
 @pytest.mark.timeout(2400)  # node stop/start + infra recovery + lease reclaim + finally cleanup
 def test_gate17_node_failure_recovers(api_port: int) -> None:
     """Kill a worker NODE container: its workers' leases expire, survivors
@@ -873,26 +925,15 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
         if "control-plane" not in n["metadata"]["name"]
     ]
     assert worker_nodes, "no worker node to stop"
-    # Round-3 fix: NEVER stop a node hosting critical stateful infra. The
-    # bare postgres Deployment has no PVC -- if its pod is evicted during
-    # the node outage the replacement comes up with an EMPTY data dir, the
-    # schema is gone cluster-wide, and every later gate 500s. Exclude nodes
-    # running postgres (and prefer excluding minio too).
-    infra_nodes: dict[str, list[str]] = {}
-    for p in _json(["get", "pods", "-n", "cap-infra", "-o", "json"]).get("items", []):
-        name = p.get("metadata", {}).get("name", "")
-        n = p.get("spec", {}).get("nodeName")
-        if n and ("postgres" in name or "minio" in name):
-            infra_nodes.setdefault(n, []).append(name)
-    pg_nodes = {n for n, pods in infra_nodes.items() if any("postgres" in p for p in pods)}
-    safe_nodes = [n for n in worker_nodes if n not in pg_nodes]
-    assert safe_nodes, (
-        f"every worker node hosts postgres; cannot stop a node safely ({infra_nodes})"
-    )
-    # prefer nodes that host neither postgres nor minio, then fewest backends
-    safe_nodes.sort(key=lambda n: (n in infra_nodes, per_node_backends.get(n, 0)))
-    node = safe_nodes[0]
+    # Round-3/6 fix: never stop a node hosting critical stateful infra while
+    # it is still there. Pick the node with the fewest backend pods, then
+    # DETERMINISTICALLY move postgres/minio off it (cordon -> evict ->
+    # wait healthy elsewhere -> uncordon). The drill then runs with the DB
+    # and object store guaranteed up, so survivors keep claiming.
+    worker_nodes.sort(key=lambda n: per_node_backends.get(n, 0))
+    node = worker_nodes[0]
     try:
+        _drain_infra_from(node)
         # kind node container name == node name (already '<cluster>-worker')
         proc = subprocess.run(
             ["docker", "stop", node],
