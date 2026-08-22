@@ -90,9 +90,18 @@ def _cluster_info() -> dict[str, str]:
 
 
 def _parse_junit() -> dict[str, str]:
-    junit = OUT_DIR / "junit-k8s.xml"
+    # The pytest step historically ran with working-directory=backend and a
+    # relative --junitxml, silently writing backend/outputs/... while this
+    # generator read <repo>/outputs/... (all gates NOT_RUN despite green
+    # tests). Look in BOTH places; the workflow now writes to the repo root.
+    candidates = [
+        OUT_DIR / "junit-k8s.xml",
+        REPO_ROOT / "backend" / "outputs" / "cap-cert" / "junit-k8s.xml",
+        REPO_ROOT / "outputs" / "cap-cert" / "junit-k8s.xml",
+    ]
+    junit = next((p for p in candidates if p.exists()), None)
     results: dict[str, str] = {}
-    if not junit.exists():
+    if junit is None:
         return results
     root = ET.parse(junit).getroot()
     for case in root.iter("testcase"):

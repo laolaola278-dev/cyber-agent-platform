@@ -225,10 +225,14 @@ jobs:
       - name: "Run K8s certification gates (strict: SKIP=FAIL)"
         working-directory: backend
         run: |
-          mkdir -p outputs/cap-cert
+          # write the JUnit report to the REPO-ROOT outputs dir: the report
+          # generator (and upload-artifact) read it from there, not from
+          # backend/outputs -- a relative path here silently produced an
+          # empty gate matrix (all NOT_RUN) despite a green pytest run.
+          mkdir -p ../outputs/cap-cert
           uv run pytest tests/test_phase_28_6_k8s_certification.py \
             -p no:cacheprovider --timeout=900 --tb=short -vv \
-            --junitxml=outputs/cap-cert/junit-k8s.xml
+            --junitxml=../outputs/cap-cert/junit-k8s.xml
 
       - name: Dump component logs on gate failure
         if: failure()
