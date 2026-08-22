@@ -17,8 +17,10 @@ echo "=== [1/3] Verify backup integrity against manifest (fail-closed) ==="
 python3 "$(dirname "$0")/verify_backup_manifest.py" "$BACKUP_DIR"
 
 echo "=== [2/3] Restore PostgreSQL ==="
+# role is "cap" (POSTGRES_USER=cap); the default OS user "postgres" does not
+# exist as a DB role (run 32574183840)
 kubectl -n cap-infra exec "$PG_POD" -- sh -c \
-  "psql -U postgres -c 'DROP DATABASE IF EXISTS cap;' \
+  "psql -U cap -d postgres -c 'DROP DATABASE IF EXISTS cap;' \
        -c 'CREATE DATABASE cap OWNER cap;'" >/dev/null
 gzip -dc "$BACKUP_DIR/postgres/cap.sql.gz" \
   | kubectl -n cap-infra exec -i "$PG_POD" -- psql -U cap -d cap -v ON_ERROR_STOP=1 -q 2>&1 | tail -5
