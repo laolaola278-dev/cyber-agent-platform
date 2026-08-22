@@ -13,8 +13,6 @@ from pathlib import Path
 import pytest
 
 from app.acquisition.reconciliation import (
-    STATUS_DIGEST_MISMATCH,
-    STATUS_MISSING_REFERENCED,
     EvidenceReconciler,
 )
 from app.acquisition.store import LocalFilesystemEvidenceStore, sha256_hex
@@ -47,17 +45,15 @@ def _session_factory():
 async def test_all_states_detected() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         store = LocalFilesystemEvidenceStore(Path(tmp))
-        good = b"good payload"
         corrupted = b"corrupted payload"
-        await store.put(good, metadata={})
-        key_ok = (await store.put(b"referenced ok", metadata={})).key
-        _ = key_ok  # readability
-        digest_good = sha256_hex(good)
+        # referenced-and-present: stored via put(), digest == content address
+        digest_ok = (await store.put(b"referenced ok", metadata={})).key
         digest_corrupt = sha256_hex(corrupted)
-        # write bytes that do NOT match their content address: put() would
-        # reject the mismatch implicitly? No -- put derives the digest from
-        # the bytes, so simulate bit-rot by writing directly to the layout.
-        rot_path = Path(tmp) / "sha256" / digest_corrupt[:2] / digest_corrupt
+        # write bytes that do NOT match their content address: put() derives
+        # the digest from the bytes, so simulate bit-rot by writing directly
+        # into the shard layout (<root>/objects/<d0:2>/<d2:>) under a stale
+        # content address.
+        rot_path = Path(tmp) / "objects" / digest_corrupt[:2] / digest_corrupt[2:]
         rot_path.parent.mkdir(parents=True, exist_ok=True)
         rot_path.write_bytes(corrupted + b"bit-rot")
 
@@ -66,14 +62,14 @@ async def test_all_states_detected() -> None:
         reconciler = EvidenceReconciler(
             store,
             _session_factory(),
-            reference_reader=_FakeReader({digest_good, digest_corrupt, missing}),
+            reference_reader=_FakeReader({digest_ok, digest_corrupt, missing}),
         )
         report = await reconciler.run()
 
         assert not report.integrity_ok
         assert missing in report.missing_referenced
         assert digest_corrupt in report.digest_mismatch
-        assert digest_good in report.referenced_and_present
+        assert digest_ok in report.referenced_and_present
         assert report.missing_referenced  # STATUS_MISSING_REFERENCED category non-empty
         assert report.digest_mismatch    # STATUS_DIGEST_MISMATCH category non-empty
         # nothing unreferenced was stored -> no orphans

@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.acquisition.gc import EvidenceReferenceReader, ReferenceReader
-from app.acquisition.store import EvidenceObjectStoreProvider, S3EvidenceStore, sha256_hex
+from app.acquisition.store import EvidenceObjectStoreProvider, sha256_hex
 
 logger = logging.getLogger("cap.acquisition.reconciliation")
 
@@ -91,6 +91,24 @@ class EvidenceReconciler:
         self._reader = reference_reader or EvidenceReferenceReader()
         self._max_verify = max(1, int(max_verify))
 
+    @staticmethod
+    def _digest_from_key(key: str) -> str:
+        """Content-address digest from a store key, layout-agnostic.
+
+        S3 layout: ``sha256/<prefix>/<digest>`` (filename IS the digest).
+        Local layout (fixed in 28.7): bare 64-char digests. Anything else
+        with a path split falls back to concatenating the last two segments
+        (``<prefix>/<digest-minus-prefix>``) so truncated names can never be
+        mistaken for digests.
+        """
+        parts = key.split("/")
+        tail = parts[-1]
+        if len(tail) == 64:
+            return tail
+        if len(parts) >= 2:
+            return parts[-2] + parts[-1]
+        return tail
+
     async def run(self) -> ReconciliationReport:
         report = ReconciliationReport()
 
@@ -102,10 +120,7 @@ class EvidenceReconciler:
         report.scanned_objects = len(keys)
         present: dict[str, str] = {}
         for key in keys:
-            if isinstance(self._store, S3EvidenceStore):
-                digest = S3EvidenceStore.digest_from_key(key)
-            else:
-                digest = key.rsplit("/", 1)[-1]
+            digest = self._digest_from_key(key)
             present[digest] = key
 
         async with self._session_factory() as session:

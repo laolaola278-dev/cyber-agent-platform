@@ -151,6 +151,21 @@ jobs:
             --set worker.sandbox.namespace=cap-sandbox
           kubectl -n cap rollout status deploy/cap-cap-backend --timeout=600s
           kubectl -n cap rollout status deploy/cap-cap-worker --timeout=600s
+          # Phase 28.7 RUNNING-snapshot fixture: the DR test needs a run that
+          # stays durably RUNNING while its workers are force-deleted. The
+          # target 10.255.255.1 is a non-routable blackhole, but production
+          # policy deny private IPs at TWO layers (worker URL validator +
+          # egress proxy), which would terminal the run before RUNNING is
+          # observable. Both layers expose explicit TEST-ONLY hooks
+          # (worker_main.py ACQ_ALLOW_PRIVATE / egress_proxy.py
+          # CAP_EGRESS_ALLOW); enable them ONLY in this certification cluster
+          # so the TCP connect hangs inside the sandbox timeout (120s) -> a
+          # stable RUNNING window. Production default is unchanged:
+          # deny-by-default.
+          kubectl -n cap set env deploy/cap-cap-worker ACQ_ALLOW_PRIVATE=1
+          kubectl -n cap set env deploy/cap-cap-egress-proxy CAP_EGRESS_ALLOW=10.255.255.1:80
+          kubectl -n cap rollout status deploy/cap-cap-worker --timeout=300s
+          kubectl -n cap rollout status deploy/cap-cap-egress-proxy --timeout=300s
 
       - name: Install backend deps (dev extra for pytest)
         run: uv sync --project backend --frozen --extra dev

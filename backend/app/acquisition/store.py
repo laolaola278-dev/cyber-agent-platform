@@ -122,13 +122,24 @@ class LocalFilesystemEvidenceStore:
         return json.loads(meta_path.read_text(encoding="utf-8"))
 
     async def list_keys(self) -> list[str]:
-        """All content-address keys currently stored (for GC scans)."""
+        """All content-address keys currently stored (for GC scans).
+
+        Phase 28.7 fix: blobs live at ``<root>/objects/<d0:2>/<d2:>`` where
+        ``d`` is the full 64-char digest -- ``item.name`` alone is the digest
+        WITHOUT its first two characters, and returning truncated keys broke
+        reconciliation (referenced objects looked orphaned). Rebuild the full
+        digest from the shard directory name + file name.
+        """
         keys: list[str] = []
         if not self._objects.exists():
             return keys
         for shard in self._objects.iterdir():
             if shard.is_dir():
-                keys.extend(item.name for item in shard.iterdir() if item.is_file())
+                keys.extend(
+                    f"{shard.name}{item.name}"
+                    for item in shard.iterdir()
+                    if item.is_file()
+                )
         return keys
 
     async def delete(self, key: str) -> bool:
