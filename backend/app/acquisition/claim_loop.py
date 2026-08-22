@@ -77,6 +77,15 @@ class AcquisitionWorkerLoop:
         registry: WorkerRegistry | None = None,
         metrics: Any | None = None,
         readiness: Any | None = None,
+        # Round-4 CI fix: the poll loop runs at `poll_interval` (50ms in
+        # production). Running the FULL heartbeat CAS and the FULL readiness
+        # suite (fresh DB engine + object-store probe + K8s API probe) at
+        # that frequency starved the cluster: probes timed out under load,
+        # readiness flipped false, and workers silently stopped claiming
+        # (runs stuck QUEUED). Both are idempotent background concerns --
+        # throttle them to sane intervals instead.
+        heartbeat_interval_seconds: float = 15.0,
+        readiness_interval_seconds: float = 5.0,
     ) -> None:
         self._session = session
         self._coordinator = coordinator
@@ -87,6 +96,11 @@ class AcquisitionWorkerLoop:
         self._registry = registry
         self._metrics = metrics
         self._readiness = readiness
+        self._heartbeat_interval = max(1.0, heartbeat_interval_seconds)
+        self._readiness_interval = max(0.5, readiness_interval_seconds)
+        self._last_heartbeat = 0.0
+        self._readiness_checked_at = 0.0
+        self._readiness_ok = True
         self._shutdown = asyncio.Event()
         self._draining = False
         self._in_flight: set[UUID] = set()
@@ -112,8 +126,12 @@ class AcquisitionWorkerLoop:
 
     async def run_forever(self) -> LoopStats:
         """Poll the durable queue until shutdown is requested (bounded loop)."""
+        loop_time = asyncio.get_running_loop().time
         while not self._shutdown.is_set():
-            await self.heartbeat()
+            now = loop_time()
+            if now - self._last_heartbeat >= self._heartbeat_interval:
+                await self.heartbeat()
+                self._last_heartbeat = now
             await self.tick()
             if self._draining and not self._in_flight:
                 break
@@ -132,13 +150,27 @@ class AcquisitionWorkerLoop:
         """
         # Phase 28.4 (GATE 15): a worker whose critical dependency is down must
         # stop claiming new work (readiness=false). Existing in-flight runs
-        # are untouched.
+        # are untouched. The check is THROTTLED (see readiness_interval_seconds):
+        # a cached verdict is reused between checks so the 50ms claim loop does
+        # not hammer the DB / object store / K8s API with probes, and a single
+        # transient probe timeout cannot stall claiming for long.
         if self._readiness is not None:
-            try:
-                ready = await self._readiness()
-            except Exception:  # noqa: BLE001
-                ready = False
-            if not ready:
+            loop_time = asyncio.get_running_loop().time
+            now = loop_time()
+            if now - self._readiness_checked_at >= self._readiness_interval:
+                try:
+                    ready = await self._readiness()
+                except Exception:  # noqa: BLE001
+                    ready = False
+                if self._readiness_checked_at > 0 and ready != self._readiness_ok:
+                    logger.info(
+                        "worker %s readiness flipped to %s",
+                        self._worker_id,
+                        "healthy" if ready else "UNHEALTHY (pausing claims)",
+                    )
+                self._readiness_ok = ready
+                self._readiness_checked_at = now
+            if not self._readiness_ok:
                 if self._metrics is not None:
                     self._metrics.inc("worker_claim_skipped_unhealthy")
                 await asyncio.sleep(self._poll_interval)
