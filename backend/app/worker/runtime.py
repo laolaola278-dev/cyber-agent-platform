@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -13,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.events import EventType, PlatformEvent
 from app.events.transactional import publish_audit
-from app.exceptions import WorkerExecutionError, WorkerLeaseConflict
+from app.exceptions import WorkerConflict, WorkerExecutionError, WorkerLeaseConflict
 from app.models.worker import SandboxExecution
 from app.repositories.worker import SandboxExecutionRepository
 from app.sandbox.runtime import SandboxResult, SandboxRuntime
@@ -30,6 +31,19 @@ from app.worker.registry import WorkerRegistry
 from app.worker.scheduler import WorkerScheduler
 
 PluginOperation = Callable[[], Awaitable[dict[str, Any]]]
+
+logger = logging.getLogger("cap.worker.runtime")
+
+# Phase 28.6 (GATE 14 fix): concurrent worker Pods share ONE registry row
+# (same name -> same row -> same state_version). Every registry heartbeat in
+# the execution path is therefore an optimistic-concurrency CAS that can lose
+# a routine race against another Pod's loop heartbeat. A lost race must NEVER
+# kill an execution: it would leak the execution lease, inflate the shared
+# row's active_executions (claim gating then deadlocks at zero slots and runs
+# stick QUEUED forever), and -- in the exit path -- DISCARD an already
+# successful result. Both call sites below retry on WorkerConflict with a
+# fresh read; the exit path is additionally best-effort (never raises).
+_HEARTBEAT_ATTEMPTS = 4
 
 
 class WorkerRuntime:
@@ -71,14 +85,11 @@ class WorkerRuntime:
             ttl_seconds=self._lease_ttl_seconds,
         )
         started = datetime.now(UTC)
-        await self._registry.heartbeat(
-            WorkerHeartbeat(
-                worker_id=worker.id,
-                status=WorkerStatus.BUSY,
-                active_executions=worker.active_executions + 1,
-            ),
-            actor=owner,
-        )
+        # GATE 14 fix: conflict-resilient BUSY heartbeat. A CAS loss here must
+        # not abort the execution (it used to raise WorkerConflict BEFORE the
+        # try block, leaking the freshly acquired lease and inflating the
+        # shared row's active_executions until claiming deadlocked).
+        await self._heartbeat_busy_resilient(worker.id, owner)
         attempts = 0
         last_execution_id: UUID | None = None
         # Phase 28.3 execution-time lease heartbeat: renew the execution lease
@@ -185,23 +196,92 @@ class WorkerRuntime:
                 )
             except WorkerLeaseConflict:
                 pass
-            current = await self._registry.require(worker.id)
-            await self._registry.heartbeat(
-                WorkerHeartbeat(
-                    worker_id=worker.id,
-                    status=(
-                        WorkerStatus.DRAINING
-                        if current.status is WorkerStatus.DRAINING
-                        else WorkerStatus.ONLINE
-                    ),
-                    active_executions=max(0, current.active_executions - 1),
-                ),
-                actor=owner,
-            )
+            # GATE 14 fix: the execution is DONE at this point -- the result
+            # (or the cancellation) has been committed. This decrement
+            # heartbeat is pure bookkeeping on the SHARED worker row and must
+            # never raise: an exception escaping the finally block used to
+            # discard an already-successful payload AND skip the
+            # active_executions decrement, permanently inflating the shared
+            # row until the claim loop gated itself to zero slots (runs stuck
+            # QUEUED). Best-effort with conflict retry; failures only log.
+            try:
+                await self._heartbeat_exit_resilient(worker.id, owner)
+            except Exception as error:  # noqa: BLE001 -- bookkeeping never fails the run
+                logger.warning(
+                    "exit heartbeat for worker %s failed after retries "
+                    "(bookkeeping only, execution result unaffected): %s",
+                    worker.id,
+                    error,
+                )
 
     @property
     def registry(self) -> WorkerRegistry:
         return self._registry
+
+    async def _heartbeat_busy_resilient(self, worker_id: UUID, owner: str) -> None:
+        """BUSY heartbeat with fresh-read retry on shared-row CAS conflicts.
+
+        The active_executions increment is computed from a FRESH read inside
+        every attempt (never from the scheduler's possibly stale snapshot), so
+        concurrent executions of sibling Pods converge instead of clobbering
+        each other's counts.
+        """
+        last_error: Exception | None = None
+        for _attempt in range(_HEARTBEAT_ATTEMPTS):
+            try:
+                current = await self._registry.require(worker_id)
+                await self._registry.heartbeat(
+                    WorkerHeartbeat(
+                        worker_id=worker_id,
+                        status=WorkerStatus.BUSY,
+                        active_executions=current.active_executions + 1,
+                    ),
+                    actor=owner,
+                )
+                return
+            except WorkerConflict as error:
+                last_error = error
+                with suppress(Exception):
+                    await self._session.rollback()
+        logger.warning(
+            "BUSY heartbeat for worker %s skipped after %d conflicts "
+            "(execution continues; the claim loop's periodic heartbeat "
+            "re-converges active_executions): %s",
+            worker_id,
+            _HEARTBEAT_ATTEMPTS,
+            last_error,
+        )
+
+    async def _heartbeat_exit_resilient(self, worker_id: UUID, owner: str) -> None:
+        """Exit heartbeat (ONLINE/DRAINING, decrement) with conflict retry.
+
+        Raises only after exhausting retries -- the caller treats this as
+        best-effort bookkeeping and never fails the finished execution.
+        """
+        last_error: Exception | None = None
+        for _attempt in range(_HEARTBEAT_ATTEMPTS):
+            try:
+                current = await self._registry.require(worker_id)
+                await self._registry.heartbeat(
+                    WorkerHeartbeat(
+                        worker_id=worker_id,
+                        status=(
+                            WorkerStatus.DRAINING
+                            if current.status is WorkerStatus.DRAINING
+                            else WorkerStatus.ONLINE
+                        ),
+                        active_executions=max(0, current.active_executions - 1),
+                    ),
+                    actor=owner,
+                )
+                return
+            except WorkerConflict as error:
+                last_error = error
+                with suppress(Exception):
+                    await self._session.rollback()
+        raise WorkerConflict(
+            f"exit heartbeat for worker {worker_id} kept losing the CAS race"
+        ) from last_error
 
     async def _heartbeat_lease(self, holder: list[WorkerLease], owner: str) -> None:
         """Renew the execution lease while the sandbox operation runs.
