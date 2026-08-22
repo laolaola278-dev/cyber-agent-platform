@@ -844,7 +844,7 @@ def test_gate16_forced_pod_kill_recovers(api_port: int) -> None:
 # -- GATE 17: node failure ----------------------------------------------------
 
 
-@pytest.mark.timeout(1500)  # node stop/start + lease expiry + reclaim exceed the 900s default
+@pytest.mark.timeout(2400)  # node stop/start + infra recovery + lease reclaim + finally cleanup
 def test_gate17_node_failure_recovers(api_port: int) -> None:
     """Kill a worker NODE container: its workers' leases expire, survivors
     reclaim, runs terminal; recovery RTO recorded."""
@@ -873,8 +873,25 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
         if "control-plane" not in n["metadata"]["name"]
     ]
     assert worker_nodes, "no worker node to stop"
-    worker_nodes.sort(key=lambda n: per_node_backends.get(n, 0))
-    node = worker_nodes[0]
+    # Round-3 fix: NEVER stop a node hosting critical stateful infra. The
+    # bare postgres Deployment has no PVC -- if its pod is evicted during
+    # the node outage the replacement comes up with an EMPTY data dir, the
+    # schema is gone cluster-wide, and every later gate 500s. Exclude nodes
+    # running postgres (and prefer excluding minio too).
+    infra_nodes: dict[str, list[str]] = {}
+    for p in _json(["get", "pods", "-n", "cap-infra", "-o", "json"]).get("items", []):
+        name = p.get("metadata", {}).get("name", "")
+        n = p.get("spec", {}).get("nodeName")
+        if n and ("postgres" in name or "minio" in name):
+            infra_nodes.setdefault(n, []).append(name)
+    pg_nodes = {n for n, pods in infra_nodes.items() if any("postgres" in p for p in pods)}
+    safe_nodes = [n for n in worker_nodes if n not in pg_nodes]
+    assert safe_nodes, (
+        f"every worker node hosts postgres; cannot stop a node safely ({infra_nodes})"
+    )
+    # prefer nodes that host neither postgres nor minio, then fewest backends
+    safe_nodes.sort(key=lambda n: (n in infra_nodes, per_node_backends.get(n, 0)))
+    node = safe_nodes[0]
     try:
         # kind node container name == node name (already '<cluster>-worker')
         proc = subprocess.run(
@@ -902,6 +919,10 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
             if ready.stdout.strip() == "True":
                 break
             time.sleep(5)
+        # Round-3 hardening: if infra was disrupted anyway, wait for the DB
+        # before polling -- GET /acquisitions 500s (not "RUNNING") while the
+        # database is unreachable, which would read as a false non-recovery.
+        _wait_infra_ready("postgres", timeout=300)
         # Rebuild the port-forward tunnel: the stopped node may have hosted
         # the service endpoint the tunnel was bound to.
         _ensure_api(api_port, timeout=90)
@@ -929,6 +950,16 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
             if ready.stdout.strip() == "True":
                 break
             time.sleep(5)
+        # Round-3 hardening: make sure stateful infra is back before later
+        # gates start. If postgres was disrupted anyway (rescheduled while
+        # the node was down), its replacement may boot with an empty data
+        # dir -- re-running migrations is idempotent and heals that case.
+        _wait_infra_ready("postgres", timeout=300)
+        _wait_infra_ready("minio", timeout=180)
+        try:
+            _run_pg_migrations()
+        except Exception:  # noqa: BLE001 -- best-effort safety net
+            pass
         # GATE 17 round-2 fix: a worker Pod stranded on the stopped node can
         # sit in Unknown/Terminating for up to the default 300s eviction
         # window; while it exists the Deployment will NOT create a
