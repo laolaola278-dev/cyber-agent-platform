@@ -691,6 +691,17 @@ def test_gate13_scale_up_improves_drain(api_port: int) -> None:
     """worker.replicas 2 -> 3 with a modest backlog; drain completes, no
     claim/recovery storm (0 stale commit), single owner per epoch."""
     _require_cluster()
+    # reclaim leftover sandbox Pods from earlier gates first: on a 2-node
+    # kind cluster they consume the capacity the THIRD worker Pod needs
+    # (its readiness wait would otherwise time out)
+    _kubectl(
+        [
+            "delete", "pods", "-n", SANDBOX_NS,
+            "-l", "cap.managed=true", "--force", "--grace-period=0",
+        ],
+        check=False,
+        timeout=60,
+    )
     _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=3"])
     try:
         _wait_worker_replicas(3)
@@ -769,8 +780,9 @@ def test_gate14_scale_down_graceful(api_port: int) -> None:
     rid = _asyncio_run_create(api_port, key)
     _kubectl(["scale", "deploy/cap-cap-worker", "-n", NAMESPACE, "--replicas=2"])
     _wait_worker_replicas(2)
-    # existing run must still reach terminal (survivor reclaims if needed)
-    status = _wait_run_terminal(api_port, rid)
+    # existing run must still reach terminal (survivor reclaims if needed;
+    # lease TTL 60s + sandbox cold start on kind needs more than the default)
+    status = _wait_run_terminal(api_port, rid, timeout=300)
     assert status in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"), (
         f"run did not finish across scale-down (status={status})\n{_worker_logs()}"
     )
@@ -832,6 +844,7 @@ def test_gate16_forced_pod_kill_recovers(api_port: int) -> None:
 # -- GATE 17: node failure ----------------------------------------------------
 
 
+@pytest.mark.timeout(1500)  # node stop/start + lease expiry + reclaim exceed the 900s default
 def test_gate17_node_failure_recovers(api_port: int) -> None:
     """Kill a worker NODE container: its workers' leases expire, survivors
     reclaim, runs terminal; recovery RTO recorded."""
@@ -1281,13 +1294,15 @@ def test_gate24_backup_restore_roundtrip() -> None:
     ).stdout.strip()
     assert pod, "no postgres pod"
     # wait for the postgres container to be ready (especially after GATE 20
-    # brings it back from scale 0)
+    # brings it back from scale 0 -- a cold PG pod on kind can take minutes
+    # to pass readiness, so budget generously)
     _kubectl(
         [
             "wait", "pod", "-n", "cap-infra", pod,
-            "--for=condition=Ready", "--timeout=90s",
+            "--for=condition=Ready", "--timeout=300s",
         ],
         check=False,
+        timeout=320,
     )
     dump = _kubectl(
         [

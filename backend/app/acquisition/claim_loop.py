@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.acquisition.claim import AcquisitionClaimCoordinator
 from app.acquisition.exceptions import AcquisitionClaimConflict, AcquisitionNotFound
 from app.acquisition.models_db import AcquisitionRun
+from app.exceptions import WorkerConflict
 from app.worker.contracts import LeaseStatus, WorkerHeartbeat, WorkerStatus
 from app.worker.registry import WorkerRegistry
 
@@ -366,13 +367,41 @@ class AcquisitionWorkerLoop:
             await self._session.rollback()
 
     async def heartbeat(self) -> None:
-        """Keep the worker online while the loop lives (bounded by registry)."""
+        """Keep the worker online while the loop lives (bounded by registry).
+
+        Phase 28.6: multiple worker Pods register under the SAME name (one
+        shared row), so the optimistic-concurrency heartbeat CAS collides
+        routinely. A lost heartbeat race is NEVER fatal: re-read the fresh
+        state and retry a few times; if it still conflicts, skip this beat
+        (the next loop iteration retries) instead of crashing the process
+        into CrashLoopBackOff.
+        """
         if self._registry is None:
             return
-        await self._registry.heartbeat(
-            WorkerHeartbeat(
-                worker_id=self._worker_id,
-                status=WorkerStatus.DRAINING if self._draining else WorkerStatus.ONLINE,
-                active_executions=len(self._in_flight),
-            )
+        for attempt in range(3):
+            try:
+                await self._registry.heartbeat(
+                    WorkerHeartbeat(
+                        worker_id=self._worker_id,
+                        status=WorkerStatus.DRAINING if self._draining else WorkerStatus.ONLINE,
+                        active_executions=len(self._in_flight),
+                    )
+                )
+                return
+            except WorkerConflict:
+                await self._session.rollback()
+                try:
+                    # refresh the cached state_version from the DB, then retry
+                    await self._registry.require(self._worker_id)
+                except Exception:  # noqa: BLE001 -- row vanished mid-race
+                    await self._session.rollback()
+                logger.debug(
+                    "heartbeat conflict (attempt %d/3) for worker %s",
+                    attempt + 1,
+                    self._worker_id,
+                )
+        logger.warning(
+            "heartbeat skipped after repeated conflicts for worker %s "
+            "(next loop iteration retries)",
+            self._worker_id,
         )
