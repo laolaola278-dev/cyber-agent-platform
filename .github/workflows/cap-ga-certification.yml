@@ -147,8 +147,19 @@ jobs:
             --set worker.image.repository=cap-backend --set worker.image.tag=ci \
             --set backend.replicaCount=3 \
             --set worker.replicaCount=2 \
+            --set worker.leaseTtlSeconds=600 \
             --set worker.sandbox.egressProxyUrl=http://cap-cap-egress-proxy.cap.svc:8080 \
             --set worker.sandbox.namespace=cap-sandbox
+          # Lease TTL 600s (prod default 60s): run 32570760110 proved the
+          # claim loop renews only the worker-registry row, never the per-run
+          # lease. Any execution longer than the TTL (sandbox pod spawn alone
+          # can exceed 60s) has its lease expire mid-flight -> another worker
+          # reclaims -> the original commit is fencing-rejected -> rollback ->
+          # reclaim again: a permanent RUNNING livelock. With a 600s TTL every
+          # certification execution commits inside its lease; the RUNNING
+          # snapshot's lease still expires long before Cluster B exists
+          # (backup + destroy + recreate takes >10 min). Known limitation to
+          # document in the GA report: per-run lease renewal is missing.
           kubectl -n cap rollout status deploy/cap-cap-backend --timeout=600s
           kubectl -n cap rollout status deploy/cap-cap-worker --timeout=600s
           # Phase 28.7 RUNNING-snapshot fixture: the DR test needs a run that
