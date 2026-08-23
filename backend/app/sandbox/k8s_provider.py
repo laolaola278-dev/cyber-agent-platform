@@ -121,7 +121,13 @@ class KubernetesSandboxProvider:
 
     async def _get_pod(self, name: str) -> dict[str, Any]:
         def _sync() -> dict[str, Any]:
-            return self._k8s().read_namespaced_pod(name=name, namespace=self._namespace)
+            # read_namespaced_pod returns a V1Pod OBJECT; every caller treats
+            # the result as a plain dict (pod.get("status")...). Convert like
+            # _list_pods does -- GA PRE-GATE E caught the raw object leaking
+            # through ("'V1Pod' object has no attribute 'get'"), which the
+            # broad retry in _wait_ready then masked as "pod not ready".
+            pod = self._k8s().read_namespaced_pod(name=name, namespace=self._namespace)
+            return pod.to_dict()
 
         return await asyncio.to_thread(_sync)
 

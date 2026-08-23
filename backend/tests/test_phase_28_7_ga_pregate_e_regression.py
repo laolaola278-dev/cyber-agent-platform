@@ -128,3 +128,38 @@ def test_default_sandbox_policy_rejects_production_providers() -> None:
     for provider_name in ("kubernetes-sandbox", "oci-sandbox"):
         with pytest.raises(SandboxPolicyViolation):
             engine.validate(SandboxProfile(name="p"), provider_name)
+
+
+# -- wiring bug #4: KubernetesSandboxProvider._get_pod returned the raw
+#    V1Pod OBJECT while every caller treats it as a dict; the broad retry
+#    in _wait_ready masked the AttributeError as "pod not ready" until the
+#    pod-ready timeout expired (invisible while no gate created sandboxes).
+
+
+def test_k8s_provider_get_pod_returns_dict_not_v1pod_object() -> None:
+    import asyncio
+
+    from app.sandbox.k8s_provider import KubernetesSandboxProvider
+
+    provider = KubernetesSandboxProvider()
+
+    class _FakePod:
+        def to_dict(self):
+            return {
+                "metadata": {"name": "cap-sandbox-abc", "labels": {}},
+                "status": {"phase": "Running", "pod_ip": "10.244.0.5"},
+            }
+
+    class _FakeCoreV1:
+        def read_namespaced_pod(self, *, name: str, namespace: str):
+            return _FakePod()
+
+    provider._client = _FakeCoreV1()
+    pod = asyncio.run(provider._get_pod("cap-sandbox-abc"))
+
+    assert isinstance(pod, dict), (
+        "_get_pod must return a plain dict; a raw V1Pod object breaks every "
+        "pod.get(...) caller (PRE-GATE E production crash #4)"
+    )
+    assert pod["status"]["pod_ip"] == "10.244.0.5"
+    assert pod["metadata"]["name"] == "cap-sandbox-abc"
