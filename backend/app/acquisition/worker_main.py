@@ -54,7 +54,7 @@ from app.acquisition.worker_path import AcquisitionWorkerPath
 from app.database import AsyncSessionFactory, engine
 from app.evidence.service import EvidenceService
 from app.exceptions import WorkerConflict
-from app.sandbox.policy import SandboxPolicyEngine
+from app.sandbox.policy import SandboxPolicy, SandboxPolicyEngine
 from app.sandbox.profile import SandboxProfile
 from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
 from app.worker.contracts import WorkerHeartbeat, WorkerRecord, WorkerStatus
@@ -68,6 +68,22 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [acquisition-worker] %(message)s",
 )
+def _network_sandbox_policy_engine(provider_name: str) -> SandboxPolicyEngine:
+    """GA PRE-GATE E: allowlist EXACTLY the selected sandbox provider.
+
+    The default SandboxPolicy only allows memory/subprocess providers, so a
+    worker configured with the oci/kubernetes provider died on every typed
+    fetch ("Sandbox provider is not allowlisted"). All pre-PREGATE-E K8s
+    gates used policy-blocked URLs and never created a sandbox, so the bug
+    was invisible until a genuine public fetch ran. Subprocess keeps
+    memory-sandbox as its orchestration carrier.
+    """
+    allowed = {provider_name}
+    if provider_name == "subprocess-sandbox":
+        allowed.add("memory-sandbox")
+    return SandboxPolicyEngine(SandboxPolicy(allowed_providers=frozenset(allowed)))
+
+
 logger = logging.getLogger("app.acquisition.worker_main")
 
 
@@ -225,6 +241,7 @@ async def _amain() -> int:
         if settings.sandbox_provider.casefold() == "oci-sandbox":
             from app.sandbox.oci_provider import OCISandboxProvider
 
+            policy_engine = _network_sandbox_policy_engine("oci-sandbox")
             network_runtime = SandboxRuntime(
                 OCISandboxProvider(
                     image=settings.sandbox_image,
@@ -235,7 +252,7 @@ async def _amain() -> int:
                     default_pids_limit=settings.sandbox_pids_limit,
                     metrics=metrics,
                 ),
-                SandboxPolicyEngine(),
+                policy_engine,
                 metrics=metrics,
             )
             logger.info(
@@ -247,6 +264,7 @@ async def _amain() -> int:
         elif settings.sandbox_provider.casefold() == "kubernetes-sandbox":
             from app.sandbox.k8s_provider import KubernetesSandboxProvider
 
+            policy_engine = _network_sandbox_policy_engine("kubernetes-sandbox")
             network_runtime = SandboxRuntime(
                 KubernetesSandboxProvider(
                     namespace=settings.sandbox_namespace,
@@ -258,7 +276,7 @@ async def _amain() -> int:
                     default_cpu_millicores=settings.sandbox_cpu_millicores,
                     metrics=metrics,
                 ),
-                SandboxPolicyEngine(),
+                policy_engine,
                 metrics=metrics,
             )
             logger.info(
@@ -270,12 +288,13 @@ async def _amain() -> int:
         elif settings.sandbox_provider.casefold() == "subprocess-sandbox":
             from app.sandbox.subprocess_provider import SubprocessSandboxProvider
 
+            policy_engine = _network_sandbox_policy_engine("subprocess-sandbox")
             network_runtime = SandboxRuntime(
                 SubprocessSandboxProvider(
                     memory_mb=settings.sandbox_memory_mb,
                     max_processes=settings.sandbox_max_processes,
                 ),
-                SandboxPolicyEngine(),
+                policy_engine,
                 metrics=metrics,
             )
         else:

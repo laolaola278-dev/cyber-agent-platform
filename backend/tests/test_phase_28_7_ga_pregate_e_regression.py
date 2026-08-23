@@ -89,3 +89,42 @@ def test_sandboxed_fetch_policy_snapshot_matches_acquisition_policy() -> None:
     # runtime double returns error status -> fail-closed blocked result
     assert result.status == 0
     assert result.blocked_reason == BlockReason.FAILED
+
+
+# -- wiring bug #3: the SELECTED production sandbox provider must be
+#    allowlisted (default SandboxPolicy only allows memory/subprocess, so
+#    the deployed kubernetes/oci worker rejected every sandbox creation).
+
+
+def test_worker_network_policy_engine_allowlists_selected_provider() -> None:
+    from app.acquisition.worker_main import _network_sandbox_policy_engine
+    from app.sandbox.policy import SandboxPolicyEngine, SandboxPolicyViolation
+    from app.sandbox.profile import SandboxProfile
+
+    profile = SandboxProfile(name="acquisition-worker")
+
+    for provider_name in ("kubernetes-sandbox", "oci-sandbox", "subprocess-sandbox"):
+        engine = _network_sandbox_policy_engine(provider_name)
+        assert isinstance(engine, SandboxPolicyEngine)
+        # the selected provider itself passes validation
+        engine.validate(profile, provider_name)
+
+    # the kubernetes engine must NOT allow a foreign provider
+    k8s_engine = _network_sandbox_policy_engine("kubernetes-sandbox")
+    with pytest.raises(SandboxPolicyViolation):
+        k8s_engine.validate(profile, "memory-sandbox")
+    # subprocess keeps memory as orchestration carrier
+    sub_engine = _network_sandbox_policy_engine("subprocess-sandbox")
+    sub_engine.validate(profile, "memory-sandbox")
+
+
+def test_default_sandbox_policy_rejects_production_providers() -> None:
+    """Documents the trap: a bare SandboxPolicyEngine() -- the pre-fix
+    wiring -- rejects every production provider. If this ever flips to
+    permissive-by-default, revisit least-privilege assumptions."""
+    from app.sandbox.policy import SandboxPolicyEngine, SandboxPolicyViolation
+
+    engine = SandboxPolicyEngine()
+    for provider_name in ("kubernetes-sandbox", "oci-sandbox"):
+        with pytest.raises(SandboxPolicyViolation):
+            engine.validate(SandboxProfile(name="p"), provider_name)
