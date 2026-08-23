@@ -21,6 +21,7 @@ PRE-GATE D  a stale old owner CANNOT commit its result after a reclaim (the
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -179,9 +180,13 @@ async def test_pregate_a_run_outlives_2x_ttl_without_reclaim(pregate_db, tmp_pat
         await coordinator.claim(run.id, worker_id, token=token)
 
         async def sampler() -> list[tuple[datetime, datetime]]:
+            # Sample the ACTIVE lease across the WHOLE execution window. The
+            # renewal cadence is max(1, TTL/3) ~= 1s here, so the sampling
+            # interval MUST be well below it AND must not stop after a few
+            # samples (early samples can share one renewal period).
             seen: list[tuple[datetime, datetime]] = []
-            for _ in range(16):
-                await asyncio.sleep(0.3)
+            while not exec_task.done():
+                await asyncio.sleep(0.2)
                 async with SessionFactory() as s2:
                     fresh = await s2.get(AcquisitionRun, run.id)
                     if fresh is None or fresh.lease_id is None:
@@ -189,26 +194,38 @@ async def test_pregate_a_run_outlives_2x_ttl_without_reclaim(pregate_db, tmp_pat
                     lease = await WorkerLeaseManager(s2).require(fresh.lease_id)
                     if lease.status.value == "ACTIVE":
                         seen.append((lease.renewed_at, lease.expires_at))
-                if len(seen) >= 3:
-                    break
             return seen
 
         exec_task = asyncio.create_task(wp.run_claimed(run.id, worker_id, token))
-        sampled, payload = await asyncio.gather(sampler(), exec_task)
+        try:
+            sampled, payload = await asyncio.gather(sampler(), exec_task)
 
-        assert payload.status == "COMPLETE"
-        # heartbeat visibly advanced the lease while the op was still running
-        assert len(sampled) >= 2, (
-            f"expected >=2 ACTIVE lease samples during a >2xTTL operation, got {len(sampled)}"
-        )
-        expiries = [e for _, e in sampled]
-        assert expiries[-1] > expiries[0], "expires_at did not advance: renewal NOT happening"
+            assert payload.status == "COMPLETE"
+            # heartbeat visibly advanced the lease while the op was still
+            # running: a 4.5s op with ~1s renewal cadence yields >=3 distinct
+            # expires_at values over the execution window.
+            distinct_expiries = {e for _, e in sampled}
+            assert len(sampled) >= 4, (
+                f"expected >=4 ACTIVE lease samples during a >2xTTL operation, "
+                f"got {len(sampled)}"
+            )
+            assert len(distinct_expiries) >= 3, (
+                f"expires_at advanced only {len(distinct_expiries)} time(s) "
+                f"across {len(sampled)} samples: renewal NOT happening"
+            )
+            expiries = sorted(distinct_expiries)
+            assert expiries[-1] > expiries[0], "expires_at did not advance"
 
-        final = await session.get(AcquisitionRun, run.id)
-        assert final.status == "COMPLETE"
-        assert final.recovery_count == 0, "healthy renewed run was falsely reclaimed"
-        assert final.worker_id == worker_id, "ownership changed during healthy execution"
-        await wp._runtime_session.close()  # noqa: BLE001 -- release runtime session
+            final = await session.get(AcquisitionRun, run.id)
+            assert final.status == "COMPLETE"
+            assert final.recovery_count == 0, "healthy renewed run was falsely reclaimed"
+            assert final.worker_id == worker_id, "ownership changed during healthy execution"
+        finally:
+            if not exec_task.done():
+                exec_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await exec_task
+            await wp._runtime_session.close()  # noqa: BLE001 -- release runtime session
 
 
 # == PRE-GATE B: second worker never reclaims a healthy renewed run ==========
@@ -362,13 +379,21 @@ async def test_pregate_d_stale_owner_cannot_commit_after_reclaim(pregate_db, tmp
                 assert asyncio.get_running_loop().time() < deadline, "B never reclaimed"
                 await loop_b.tick()
 
-            # B now OWNS the run; A's original fencing identity is stale
-            with pytest.raises(AcquisitionStaleCommit):
-                await coord_a.verify_owner(run_id, worker_a, token_a)
+            # B now OWNS the run; A's original fencing identity is stale.
+            # IMPORTANT: verify via an INDEPENDENT session -- coord_a shares
+            # the service session with the still-running stale_task and
+            # AsyncSession forbids concurrent use.
+            async with SessionFactory() as s_check:
+                coord_check = AcquisitionClaimCoordinator(
+                    s_check, WorkerLeaseManager(s_check), lease_ttl_seconds=60
+                )
+                with pytest.raises(AcquisitionStaleCommit):
+                    await coord_check.verify_owner(run_id, worker_a, token_a)
 
             # A finishes its doomed operation: the fencing gate must reject
             # its terminal commit -- the run NEVER becomes COMPLETE via the
-            # stale owner.
+            # stale owner. (run_claimed catches the stale commit internally
+            # and reports the CURRENT state instead of applying its result.)
             payload_a = await stale_task
             assert payload_a.status != "COMPLETE", (
                 "stale owner's COMPLETE payload was accepted"

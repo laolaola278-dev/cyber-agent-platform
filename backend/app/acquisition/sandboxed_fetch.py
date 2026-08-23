@@ -116,7 +116,11 @@ class SandboxedFetchExecutor:
                 allowed_schemes=tuple(self._policy.allowed_schemes),
                 user_agent=self._policy.user_agent,
                 timeout_seconds=self._policy.timeout_seconds,
-                max_response_bytes=self._policy.max_response_bytes,
+                # AcquisitionPolicy.max_bytes is the per-response cap
+                # ("bytes per response"). GA PRE-GATE E caught this real
+                # fetch path AttributeError: K8s gates only ever used
+                # policy-blocked URLs, so the typed sandbox fetch never ran.
+                max_response_bytes=self._policy.max_bytes,
                 allow_private=getattr(self._validator, "_allow_private", False),
             ),
         )
