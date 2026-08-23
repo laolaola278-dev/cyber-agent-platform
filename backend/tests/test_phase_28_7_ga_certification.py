@@ -508,6 +508,12 @@ def _dr_context() -> dict:
     _run(["bash", str(SCRIPTS / "restore_cluster.sh"), str(BACKUP_DIR), _pg_pod(),
           MINIO_LOCAL_PORT], timeout=900, env=env2)
     ctx["timings"]["t4_restore_done"] = datetime.now(UTC).isoformat()
+    # DROP WITH (FORCE) killed the CAP pods' pooled connections mid-flight;
+    # restart so every pool reconnects cleanly to the restored database
+    _kubectl(["-n", NAMESPACE, "rollout", "restart", "deploy/cap-cap-backend"])
+    _kubectl(["-n", NAMESPACE, "rollout", "restart", "deploy/cap-cap-worker"])
+    for dep in ("cap-cap-backend", "cap-cap-worker"):
+        _kubectl(["-n", NAMESPACE, "rollout", "status", f"deploy/{dep}", "--timeout=600s"])
 
     # -- readiness: API + evidence queryable + workers executing ------------
     api_port = _pf_api()
