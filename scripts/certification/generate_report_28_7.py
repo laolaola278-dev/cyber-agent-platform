@@ -86,6 +86,22 @@ def _dr_evidence() -> dict:
         return {}
 
 
+def _rpo_measured(dr: dict) -> bool:
+    rpo = dr.get("rpo") or {}
+    try:
+        return float(rpo.get("observed_rpo_seconds", 0)) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _rto_measured(dr: dict) -> bool:
+    rto = dr.get("rto") or {}
+    try:
+        return float(rto.get("rto_seconds", 0)) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     results = _parse_junit()
@@ -158,6 +174,24 @@ def main() -> int:
 
     print(json.dumps(payload["gate_summary"], indent=2))
     bad = [g for g, v in gates.items() if v in ("FAIL", "NOT_RUN", "SKIPPED")]
+    # Artifact-consistency gate: a PASS on the measured RPO/RTO gates MUST
+    # carry the measured values into the machine-readable artifact. A null
+    # here means the DR evidence file was not found (path/env drift) -- the
+    # human report would show measured values the JSON cannot back up.
+    if gates.get("GA-GATE 15") == "PASS" and not _rpo_measured(dr):
+        print(
+            "GA-GATE 15 PASS but rpo.observed_rpo_seconds missing in JSON "
+            "-- machine artifact inconsistent with measured evidence",
+            file=sys.stderr,
+        )
+        return 1
+    if gates.get("GA-GATE 16") == "PASS" and not _rto_measured(dr):
+        print(
+            "GA-GATE 16 PASS but rto.rto_seconds missing in JSON "
+            "-- machine artifact inconsistent with measured evidence",
+            file=sys.stderr,
+        )
+        return 1
     if strict and bad:
         print(f"GA certification FAILED gates: {bad}", file=sys.stderr)
         return 1

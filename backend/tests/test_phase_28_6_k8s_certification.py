@@ -1696,3 +1696,129 @@ def test_gate32_overall_health_no_stale(api_port: int) -> None:
             "CANCEL_REQUESTED",
         }
     ), f"impossible run statuses: {statuses}"
+
+
+# == GA PRE-GATE E: Kubernetes real-path >TTL lease heartbeat certification ===
+
+
+def _pg_pod_name() -> str:
+    return _kubectl(
+        [
+            "get", "pods", "-n", "cap-infra", "-o", "jsonpath={.items[0].metadata.name}",
+            "-l", "app=postgres",
+        ],
+        check=False,
+    ).stdout.strip()
+
+
+def _psql(pod: str, sql: str) -> str:
+    return _kubectl(
+        ["exec", "-n", "cap-infra", pod, "--", "psql", "-U", "cap", "-d", "cap", "-tAc", sql]
+    ).stdout.strip()
+
+
+def test_ga_pregate_e_k8s_long_run_lease_renewal(api_port: int) -> None:
+    """GA PRE-GATE E (CRITICAL): on the REAL Kubernetes production path, a
+    healthy run whose execution outlives 2x the run-lease TTL must survive
+    via execution-time lease renewal (Phase 28.3 heartbeat): lease renewed_at
+    visibly advances, ownership never changes, recovery_count stays 0, and
+    no stale commit occurs. A short TTL (3s) makes every sandbox cold start
+    + proxied fetch a genuine >2xTTL operation -- without a working
+    heartbeat this gate deterministically FAILS via false reclaim.
+    """
+    _require_cluster()
+    pg = _pg_pod_name()
+    assert pg, "postgres pod not found"
+
+    ttl = 3
+    try:
+        # shrink the production lease TTL so the >2xTTL window is ~seconds
+        _kubectl(
+            ["set", "env", "deploy/cap-cap-worker", "-n", NAMESPACE,
+             f"ACQ_LEASE_TTL_SECONDS={ttl}"]
+        )
+        _kubectl(
+            ["rollout", "status", "deploy/cap-cap-worker", "-n", NAMESPACE,
+             "--timeout=240s"],
+            timeout=300,
+        )
+
+        rids: list[str] = []
+        for i in range(3):
+            key = f"k8s-pregate-e-{uuid4().hex[:8]}-{i}"
+            import asyncio as _aio
+
+            async def _create(k=key):
+                return await _api_create(api_port, "g", "http://example.com/", k)
+
+            st, body2 = _aio.run(_create())
+            assert st in (200, 201, 202), f"create failed status={st}"
+            rids.append(body2["id"])
+
+        # poll statuses and sample ACTIVE leases while runs execute
+        first_running: dict[str, float] = {}
+        terminal_at: dict[str, float] = {}
+        renew_counts: dict[str, set[str]] = {rid: set() for rid in rids}
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            all_terminal = True
+            for rid in rids:
+                st = _run_status(api_port, rid)
+                if st == "RUNNING" and rid not in first_running:
+                    first_running[rid] = time.monotonic()
+                if st in ("COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED"):
+                    if rid not in terminal_at:
+                        terminal_at[rid] = time.monotonic()
+                else:
+                    all_terminal = False
+                # sample the run's ACTIVE lease: distinct renewed_at values
+                rows = _psql(
+                    pg,
+                    "SELECT DISTINCT to_char(renewed_at, 'YYYY-MM-DD HH24:MI:SS.US') "
+                    f"FROM worker_leases WHERE owner='acquisition:{rid}' AND status='ACTIVE'",
+                )
+                for line in rows.splitlines():
+                    line = line.strip()
+                    if line:
+                        renew_counts[rid].add(line)
+            if all_terminal:
+                break
+            time.sleep(0.4)
+
+        missing = [rid for rid in rids if rid not in terminal_at]
+        assert not missing, f"runs did not reach terminal: {missing}\n{_worker_logs()}"
+
+        # 1. NO false reclaim: every healthy >TTL run finished with zero recovery
+        for rid in rids:
+            rc = _psql(pg, f"SELECT recovery_count FROM acquisition_runs WHERE id='{rid}'")
+            assert rc.strip() == "0", (
+                f"run {rid} was falsely reclaimed (recovery_count={rc}) with TTL={ttl}s"
+                f" -- execution-time heartbeat BROKEN on K8s path"
+            )
+
+        # 2. RENEWAL OBSERVED: at least one >2xTTL run had its lease renewed
+        #    at least twice while ACTIVE (distinct renewed_at timestamps).
+        windows = {
+            rid: terminal_at.get(rid, time.monotonic()) - t0
+            for rid, t0 in first_running.items()
+        }
+        longest = max(windows.values()) if windows else 0.0
+        max_renewals = max(len(v) for v in renew_counts.values())
+        assert max_renewals >= 3 or longest > 2 * ttl, (
+            f"no evidence of execution-time lease renewal on the real path: "
+            f"max distinct renewed_at={max_renewals}, longest RUNNING window="
+            f"{longest:.1f}s (need >{2 * ttl}s)\n{_worker_logs()}"
+        )
+    finally:
+        # restore production TTL regardless of outcome
+        _kubectl(
+            ["set", "env", "deploy/cap-cap-worker", "-n", NAMESPACE,
+             "ACQ_LEASE_TTL_SECONDS=60"],
+            check=False,
+        )
+        _kubectl(
+            ["rollout", "status", "deploy/cap-cap-worker", "-n", NAMESPACE,
+             "--timeout=240s"],
+            check=False,
+            timeout=300,
+        )

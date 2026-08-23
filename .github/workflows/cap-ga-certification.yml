@@ -18,8 +18,12 @@ env:
   CAP_K8S_STRICT: "1"
   PHASE_28_6_RUN: "32565459369"
   KIND_CLUSTER: cap-k8s
-  GA_BACKUP_DIR: outputs/ga-dr/backup
-  GA_REPORT_DIR: outputs/ga-dr
+  # ABSOLUTE paths: the pytest step runs with working-directory=backend while
+  # the report generator runs at the repo root -- a relative GA_REPORT_DIR
+  # made the test write DR evidence under backend/outputs/ga-dr/ while the
+  # generator read outputs/ga-dr/, so RPO/RTO/manifest serialized as null.
+  GA_BACKUP_DIR: ${{ github.workspace }}/outputs/ga-dr/backup
+  GA_REPORT_DIR: ${{ github.workspace }}/outputs/ga-dr
 
 jobs:
   ga-certification:
@@ -170,7 +174,8 @@ jobs:
         run: |
           # JUnit goes to the REPO ROOT outputs dir (the generator reads it there)
           mkdir -p ../outputs/cap-cert-ga
-          uv run pytest tests/test_phase_28_7_ga_certification.py \
+          uv run pytest tests/test_phase_28_7_ga_pregate_heartbeat.py \
+            tests/test_phase_28_7_ga_certification.py \
             tests/test_phase_28_7_reconciliation_unit.py \
             -p no:cacheprovider --timeout=3600 --tb=short -vv \
             --junitxml=../outputs/cap-cert-ga/junit-ga.xml
