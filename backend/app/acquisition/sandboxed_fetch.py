@@ -34,6 +34,15 @@ class SandboxedFetchExecutor:
         validator: Any,
         run_id: str | None = None,
     ) -> None:
+        # Fail FAST at construction: SandboxRequest.run_id is min_length=1,
+        # so an executor built without a run_id is guaranteed to crash on
+        # its first real fetch (GA PRE-GATE E caught exactly that wiring bug
+        # in the deployed worker -- crashing mid-flight caused false reclaims).
+        if not run_id:
+            raise ValueError(
+                "SandboxedFetchExecutor requires run_id: the typed sandbox "
+                "protocol rejects empty run ids"
+            )
         self._runtime = runtime
         self._profile = profile
         self._policy = policy

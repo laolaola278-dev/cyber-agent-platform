@@ -92,6 +92,10 @@ class AcquisitionService:
                 profile=profile,
                 policy=self._policy,
                 validator=self._validator,
+                # SandboxRequest.run_id is min_length=1 -- the deployed K8s
+                # worker crashed every real fetch with a validation error
+                # because the executor was built without it (GA PRE-GATE E).
+                run_id=run_id,
             )
         http = HTTPAdapter(
             policy=self._policy,
