@@ -652,9 +652,13 @@ def test_ga_gate7_pg_restored(dr) -> None:
     for rid, status in ctx["dataset"]["completed"]:
         restored = _psql(pod, f"SELECT status FROM acquisition_runs WHERE id='{rid}'")
         assert restored == status, f"run {rid}: {restored} != {status}"
-    for rid, _ in ctx["dataset"]["cancelled"]:
+    # restore FIDELITY: whatever terminal status Cluster A recorded is what
+    # Cluster B must show. (A cancel can lose a race against the fast
+    # policy-block and finalize BLOCKED -- run 32607214542 -- so the status
+    # is not assumed here, only its faithful restoration.)
+    for rid, status in ctx["dataset"]["cancelled"]:
         restored = _psql(pod, f"SELECT status FROM acquisition_runs WHERE id='{rid}'")
-        assert restored == "CANCELLED", f"cancelled run {rid} became {restored}"
+        assert restored == status, f"cancelled run {rid}: {restored} != recorded {status}"
 
 
 def test_ga_gate8_object_store_restored(dr) -> None:
