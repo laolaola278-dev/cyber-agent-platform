@@ -63,3 +63,6 @@ tmp-*/
 # Phase 28.5-L local certification diagnostics (not committed)
 _cert_diag/
 _cert_tmp/
+_ci_logs/
+outputs/
+backend/outputs/
