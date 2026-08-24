@@ -332,6 +332,9 @@ jobs:
           sudo mv /tmp/trivy /usr/local/bin/
           syft version && trivy --version
 
+      - name: Install backend dependencies
+        run: uv sync --project backend --frozen --extra dev
+
       - name: Build release images
         run: |
           docker build -t cap-backend:ci -f backend/Dockerfile backend/

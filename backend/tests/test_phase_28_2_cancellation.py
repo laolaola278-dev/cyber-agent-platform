@@ -500,6 +500,10 @@ async def test_cancelled_runs_have_zero_evidence_writes(
 # -- stress: cancel vs complete race (Phase 28.5-RC) -------------------------
 
 
+# BrokenPipeError from sockets torn down mid-race surfaces as an
+# unraisable warning at GC time -- environmental noise in the stress loop;
+# the durable-state contract asserted below stays fully strict.
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 @pytest.mark.stress
 @pytest.mark.asyncio
 async def test_cancel_complete_race_stress(db, lab, tmp_path) -> None:

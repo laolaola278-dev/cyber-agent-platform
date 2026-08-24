@@ -152,10 +152,14 @@ def _wait_port(local_port: str, timeout: float = 45.0) -> None:
 
 
 def _api_create(port: int, key: str, url: str = "http://127.0.0.1:9/") -> tuple[int, dict]:
+    # goal embeds the unique key: create() dedupes by request fingerprint
+    # (goal+url+...), NOT by idempotency_key alone -- a fixed goal would
+    # collide every caller onto ONE pre-existing run (GA-GATE 37-39 false
+    # COMPLETE, capacity matrix collapsing to a single run).
     with httpx.Client(timeout=30) as http:
         resp = http.post(
             f"http://127.0.0.1:{port}/acquisitions",
-            json={"goal": "ga-dr", "url": url, "idempotency_key": key},
+            json={"goal": f"ga-dr-{key}", "url": url, "idempotency_key": key},
             headers=_api_headers(),
         )
         body = resp.json() if resp.content else {}

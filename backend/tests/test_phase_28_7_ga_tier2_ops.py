@@ -64,6 +64,10 @@ def _dr_context() -> dict:
 
 
 def test_ga_gate30_slo_candidates_from_real_data() -> None:
+    if not _dr_context() and not STRICT:
+        pytest.skip(
+            "no ga-dr-context.json evidence (produced by the K8s certification run)"
+        )
     dr = _dr_context()
     rpo = float((dr.get("rpo") or {}).get("observed_rpo_seconds") or 0)
     rto = float((dr.get("rto") or {}).get("rto_seconds") or 0)
@@ -145,6 +149,10 @@ def test_ga_gate31_alert_rules_fire_and_resolve() -> None:
 
 
 def test_ga_gate32_runbook_exercises() -> None:
+    if not REPORT_DIR.exists() and not STRICT:
+        pytest.skip(
+            "no DR evidence directory (produced by the K8s certification run)"
+        )
     exercises: dict = {}
 
     # 1. fail-closed backup verification tooling actually runs against THIS

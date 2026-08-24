@@ -25,9 +25,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = Path(os.environ.get("CAP_GA_OUT", str(REPO_ROOT / "outputs/cap-cert-ga")))
@@ -41,6 +44,28 @@ IMAGES = [
     "cap-egress-proxy:latest",
 ]
 SBOM_IMAGE = "cap-backend:ci"
+
+STRICT = os.environ.get("CAP_GA_STRICT") == "1"
+
+
+def _require_toolchain() -> None:
+    """Skip (never silently fail) when docker/syft/trivy are unavailable.
+
+    These gates run in the dedicated ``supply-chain`` CI job. In the plain
+    ``ci.yml`` backend job the toolchain is absent -- SKIP there, FAIL under
+    final strict GA mode.
+    """
+    missing = [t for t in ("docker", "syft", "trivy") if shutil.which(t) is None]
+    if not missing:
+        probe = subprocess.run(
+            ["docker", "info"], capture_output=True, timeout=60
+        )
+        if probe.returncode == 0:
+            return
+        missing.append("docker-daemon")
+    if STRICT:
+        pytest.fail(f"supply-chain toolchain unavailable: {missing}")
+    pytest.skip(f"supply-chain toolchain unavailable: {missing}")
 
 
 def _run(args: list[str], *, timeout: float = 600.0) -> subprocess.CompletedProcess:
@@ -77,6 +102,7 @@ def _sha256(path: Path) -> str:
 
 
 def test_ga_gate20_release_images_pinned_sha256() -> None:
+    _require_toolchain()
     records = []
     for image in IMAGES:
         proc = _run(
@@ -116,6 +142,7 @@ def test_ga_gate20_release_images_pinned_sha256() -> None:
 
 
 def test_ga_gate21_sbom_spdx_and_cyclonedx() -> None:
+    _require_toolchain()
     spdx = OUT_DIR / "sbom-spdx.json"
     cdx = OUT_DIR / "sbom-cyclonedx.json"
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -142,6 +169,7 @@ def test_ga_gate21_sbom_spdx_and_cyclonedx() -> None:
 
 
 def test_ga_gate22_trivy_blocking_policy() -> None:
+    _require_toolchain()
     policy = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
     blocking_severities = set(policy["blocking"]["severities"])
     assert policy["blocking"]["only_with_fix"] is True, (
@@ -203,6 +231,7 @@ def test_ga_gate22_trivy_blocking_policy() -> None:
 
 
 def test_ga_gate23_provenance_attestation() -> None:
+    _require_toolchain()
     images = json.loads((OUT_DIR / "images.json").read_text(encoding="utf-8"))
     subjects = [
         {"name": rec["image"], "digest": rec["digest"]}
