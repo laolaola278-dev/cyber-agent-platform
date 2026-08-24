@@ -131,8 +131,14 @@ async def test_terminate_kills_process_and_children(runtime, tmp_path) -> None:
     task = asyncio.create_task(
         runtime.execute(_profile(timeout=60), spawner, execution_id=execution_id)
     )
-    await asyncio.sleep(2.0)  # sandbox running with its child
-    assert pid_file.exists(), "sandbox child was not spawned"
+    # Poll with a deadline instead of a fixed sleep: sandbox process spawn
+    # can exceed 2s when preceding tests leave the machine loaded. The
+    # product assertion below (child killed on terminate) is unchanged.
+    deadline = asyncio.get_running_loop().time() + 15.0
+    while not pid_file.exists():
+        if asyncio.get_running_loop().time() > deadline:
+            pytest.fail("sandbox child was not spawned within 15s")
+        await asyncio.sleep(0.1)
     child_pid = int(pid_file.read_text())
     assert _process_alive(child_pid), "child process missing before terminate"
 

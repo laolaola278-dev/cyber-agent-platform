@@ -127,7 +127,9 @@ class KubernetesSandboxProvider:
             # through ("'V1Pod' object has no attribute 'get'"), which the
             # broad retry in _wait_ready then masked as "pod not ready".
             pod = self._k8s().read_namespaced_pod(name=name, namespace=self._namespace)
-            return pod.to_dict()
+            # V1Pod -> dict; tolerate inputs that are ALREADY plain dicts
+            # (test doubles / pre-sanitized payloads) so conversion is idempotent.
+            return pod.to_dict() if hasattr(pod, "to_dict") else pod
 
         return await asyncio.to_thread(_sync)
 
@@ -243,18 +245,54 @@ class KubernetesSandboxProvider:
         while time.monotonic() < deadline:
             try:
                 pod = await self._get_pod(name)
-                pod_ip = (pod.get("status") or {}).get("pod_ip")
-                phase = ((pod.get("status") or {}).get("phase") or "")
+                status = pod.get("status") or {}
+                pod_ip = status.get("pod_ip")
+                phase = status.get("phase") or ""
                 if pod_ip and phase == "Running":
                     async with httpx.AsyncClient(timeout=5.0) as http:
                         resp = await http.get(f"http://{pod_ip}:{self._shim_port}/healthz")
                     if resp.status_code == 200:
                         return pod
-                last_error = f"pod phase={phase} ip={pod_ip or 'none'}"
+                last_error = self._describe_pod_stall(phase, pod_ip, status)
             except Exception as error:  # noqa: BLE001 -- transient
                 last_error = str(error)[:200]
             await asyncio.sleep(0.4)
         raise KubernetesSandboxError(f"sandbox pod {name} not ready: {last_error}")
+
+    @staticmethod
+    def _describe_pod_stall(phase: str, pod_ip: str | None, status: dict[str, Any]) -> str:
+        """Build a deterministic stall description from container statuses so a
+        CI timeout pinpoints the real blocker (waiting reason/message or the
+        exit code of a terminated container) instead of just phase+ip."""
+        detail = f"pod phase={phase} ip={pod_ip or 'none'}"
+        reasons: list[str] = []
+        for cs in status.get("container_statuses") or []:
+            name = cs.get("name") or "container"
+            state = cs.get("state") or {}
+            waiting = state.get("waiting")
+            if waiting and waiting.get("reason"):
+                msg = (waiting.get("message") or "")[:200]
+                reasons.append(f"{name}: waiting reason={waiting['reason']} msg={msg}")
+            terminated = state.get("terminated")
+            if terminated:
+                reasons.append(
+                    f"{name}: terminated exitCode={terminated.get('exit_code')} "
+                    f"reason={terminated.get('reason')} "
+                    f"msg={(terminated.get('message') or '')[:200]}"
+                )
+            elif not waiting and (cs.get("ready") is False) and (status.get("phase") == "Running"):
+                # running but probe-failing: surface restart count + last state
+                last = ((cs.get("last_state") or {}).get("terminated")) or {}
+                if last:
+                    reasons.append(
+                        f"{name}: running-not-ready restarts={cs.get('restart_count')} "
+                        f"lastExit={last.get('exit_code')} lastReason={last.get('reason')}"
+                    )
+                else:
+                    reasons.append(f"{name}: running-not-ready restarts={cs.get('restart_count')}")
+        if reasons:
+            detail += " | " + "; ".join(reasons)
+        return detail
 
     async def execute_request(
         self,

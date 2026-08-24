@@ -209,3 +209,79 @@ async def test_terminate_deletes_pod(local_shim: int) -> None:
     assert await provider.terminate(execution_id) is True
     assert fake.deleted == [provider._pod_name(execution_id)]
     assert str(execution_id) not in provider._active
+
+
+# -- Phase 28.6: _wait_ready stall observability ------------------------------
+# CI showed "Pod Running + IP but never ready" with no diagnostic detail.
+# _describe_pod_stall must convert container statuses into a deterministic
+# blocker description so a timeout pinpoints the real cause.
+
+
+def test_describe_pod_stall_waiting_reason() -> None:
+    status = {
+        "phase": "Pending",
+        "container_statuses": [
+            {
+                "name": "sandbox",
+                "ready": False,
+                "restart_count": 0,
+                "state": {
+                    "waiting": {
+                        "reason": "CreateContainerConfigError",
+                        "message": "cannot find key bad-key in ConfigMap",
+                    }
+                },
+            }
+        ],
+    }
+    detail = KubernetesSandboxProvider._describe_pod_stall("Pending", None, status)
+    assert "CreateContainerConfigError" in detail
+    assert "cannot find key bad-key" in detail
+    assert "ip=none" in detail
+
+
+def test_describe_pod_stall_terminated_exit_code() -> None:
+    status = {
+        "phase": "Failed",
+        "container_statuses": [
+            {
+                "name": "sandbox",
+                "ready": False,
+                "restart_count": 3,
+                "state": {
+                    "terminated": {
+                        "exit_code": 1,
+                        "reason": "Error",
+                        "message": "Traceback: PermissionError: '/tmp/shim.sock'",
+                    }
+                },
+            }
+        ],
+    }
+    detail = KubernetesSandboxProvider._describe_pod_stall("Failed", "10.0.0.5", status)
+    assert "exitCode=1" in detail
+    assert "PermissionError" in detail
+    assert "restarts=3" not in detail  # terminated branch, not restart branch
+
+
+def test_describe_pod_stall_running_not_ready_surfaces_restarts() -> None:
+    status = {
+        "phase": "Running",
+        "container_statuses": [
+            {
+                "name": "sandbox",
+                "ready": False,
+                "restart_count": 2,
+                "state": {},
+                "last_state": {"terminated": {"exit_code": 137, "reason": "OOMKilled"}},
+            }
+        ],
+    }
+    detail = KubernetesSandboxProvider._describe_pod_stall("Running", "10.0.0.7", status)
+    assert "running-not-ready restarts=2" in detail
+    assert "OOMKilled" in detail
+
+
+def test_describe_pod_stall_plain_phase_when_no_container_status() -> None:
+    detail = KubernetesSandboxProvider._describe_pod_stall("Pending", None, {})
+    assert detail == "pod phase=Pending ip=none"
