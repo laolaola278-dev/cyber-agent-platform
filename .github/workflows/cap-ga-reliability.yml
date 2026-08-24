@@ -1,0 +1,199 @@
+name: GA Reliability (soak)
+
+# GA-GATE 24..26 + 34/35: 2h real soak with chaos, leak analysis, orphan
+# accounting, and under-load upgrade/rollback.
+#
+# This workflow owns its OWN kind cluster and runs NIGHTLY or on explicit
+# dispatch -- regular pushes never pay the ~3h wall time. The FULL GA proof
+# is a workflow_dispatch of BOTH this workflow and GA Certification; the
+# generator consumes junit-reliability.xml via the download-artifact step in
+# cap-ga-certification.yml when a run for the same commit exists.
+
+on:
+  schedule:
+    - cron: "0 18 * * *"   # nightly 18:00 UTC
+  workflow_dispatch:
+    inputs:
+      soak_seconds:
+        description: "Soak window override (seconds) -- certified runs keep 7200"
+        required: false
+        default: "7200"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ga-reliability-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CAP_K8S_STRICT: "1"
+  KIND_CLUSTER: cap-soak
+  GA_BACKUP_DIR: ${{ github.workspace }}/outputs/ga-dr/backup
+  GA_REPORT_DIR: ${{ github.workspace }}/outputs/ga-dr
+  CAP_SOAK_SECONDS: ${{ github.event.inputs.soak_seconds || '7200' }}
+
+jobs:
+  reliability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: azure/setup-helm@v4
+        with: { version: v3.17.3 }
+
+      - name: Install kind + mc (MinIO client)
+        run: |
+          curl -sSLo kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+          chmod +x kind && sudo mv kind /usr/local/bin/
+          curl -sSLo mc https://dl.min.io/client/mc/release/linux-amd64/mc
+          chmod +x mc && sudo mv mc /usr/local/bin/
+          kind version && mc --version
+
+      - name: Create soak cluster (1 control-plane + 2 workers)
+        run: |
+          cat > /tmp/kind-soak.yaml <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+            - role: worker
+            - role: worker
+          EOF
+          kind create cluster --name "$KIND_CLUSTER" --config /tmp/kind-soak.yaml
+          kubectl get nodes -o wide
+
+      - name: Install Cilium CNI
+        run: |
+          helm repo add cilium https://helm.cilium.io/
+          helm install cilium cilium/cilium --namespace kube-system \
+            --set operator.replicas=1 \
+            --set ipam.mode=kubernetes \
+            --set kubeProxyReplacement=false \
+            --set cgroup.autoMount.enabled=false
+          kubectl -n kube-system rollout status ds/cilium --timeout=300s
+
+      - name: Build + load images
+        run: |
+          docker build -t cap-backend:ci -f backend/Dockerfile backend/
+          docker build -t cap-frontend:ci -f frontend/Dockerfile frontend/
+          bash backend/docker/build_sandbox_images.sh --with-browser
+          kind load docker-image cap-backend:ci cap-frontend:ci \
+            cap-sandbox-http:latest cap-sandbox-browser:latest cap-egress-proxy:latest \
+            --name "$KIND_CLUSTER"
+
+      - name: Deploy PostgreSQL + MinIO + CAP
+        run: |
+          kubectl create namespace cap-infra
+          cat <<'EOF' | kubectl apply -f -
+          apiVersion: v1
+          kind: Service
+          metadata: {name: postgres, namespace: cap-infra}
+          spec:
+            selector: {app: postgres}
+            ports: [{port: 5432, targetPort: 5432}]
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata: {name: postgres, namespace: cap-infra}
+          spec:
+            replicas: 1
+            selector: {matchLabels: {app: postgres}}
+            template:
+              metadata: {labels: {app: postgres}}
+              spec:
+                containers:
+                  - name: postgres
+                    image: postgres:16-alpine
+                    env:
+                      - {name: POSTGRES_USER, value: cap}
+                      - {name: POSTGRES_PASSWORD, value: cap}
+                      - {name: POSTGRES_DB, value: cap}
+                    ports: [{containerPort: 5432}]
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata: {name: minio, namespace: cap-infra}
+          spec:
+            selector: {app: minio}
+            ports: [{port: 9000, targetPort: 9000}]
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata: {name: minio, namespace: cap-infra}
+          spec:
+            replicas: 1
+            selector: {matchLabels: {app: minio}}
+            template:
+              metadata: {labels: {app: minio}}
+              spec:
+                containers:
+                  - name: minio
+                    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+                    command: ["minio", "server", "/data", "--console-address", ":9001"]
+                    env:
+                      - {name: MINIO_ROOT_USER, value: capadmin}
+                      - {name: MINIO_ROOT_PASSWORD, value: capadmin123}
+                    ports: [{containerPort: 9000}]
+          EOF
+          kubectl -n cap-infra rollout status deployment/postgres --timeout=300s
+          kubectl -n cap-infra rollout status deployment/minio --timeout=300s
+          kubectl create namespace cap
+          kubectl -n cap create secret generic cap-runtime \
+            --from-literal=DATABASE_URL=postgresql+asyncpg://cap:cap@postgres.cap-infra.svc:5432/cap \
+            --from-literal=SECRET_KEY=cap-k8s-secret-key-at-least-32-characters \
+            --from-literal=JWT_SECRET=cap-k8s-jwt-secret-at-least-32-characters \
+            --from-literal=RBAC_TRUSTED_PROXY_SECRET=cap-k8s-proxy-secret-at-least-32 \
+            --from-literal=OBJECT_STORE_BACKEND=s3 \
+            --from-literal=OBJECT_STORE_ENDPOINT=minio.cap-infra.svc:9000 \
+            --from-literal=OBJECT_STORE_ACCESS_KEY=capadmin \
+            --from-literal=OBJECT_STORE_SECRET_KEY=capadmin123 \
+            --from-literal=OBJECT_STORE_BUCKET=cap-evidence
+          helm install cap deployment/helm/cap --namespace cap \
+            --timeout 600s \
+            --set backend.image.repository=cap-backend --set backend.image.tag=ci \
+            --set frontend.image.repository=cap-frontend --set frontend.image.tag=ci \
+            --set worker.image.repository=cap-backend --set worker.image.tag=ci \
+            --set backend.replicaCount=2 \
+            --set worker.replicaCount=2 \
+            --set worker.sandbox.egressProxyUrl=http://cap-cap-egress-proxy.cap.svc:8080 \
+            --set worker.sandbox.namespace=cap-sandbox
+          kubectl -n cap rollout status deploy/cap-cap-backend --timeout=600s
+          kubectl -n cap rollout status deploy/cap-cap-worker --timeout=600s
+
+      - name: Install backend deps
+        run: uv sync --project backend --frozen --extra dev
+
+      - name: "Run reliability gates (soak / leak / orphan / under-load)"
+        working-directory: backend
+        env:
+          CAP_PG_TEST: "1"
+          DATABASE_URL: postgresql+asyncpg://cap:cap@127.0.0.1:15432/cap_hbtest
+        run: |
+          mkdir -p ../outputs/cap-cert-ga
+          # isolated DB for any PG-backed helper (mirrors the ga job setup)
+          kubectl -n cap-infra port-forward svc/postgres 15432:5432 >/dev/null 2>&1 &
+          for i in $(seq 1 30); do nc -z 127.0.0.1 15432 && break; sleep 2; done
+          kubectl -n cap-infra exec deploy/postgres -- \
+            psql -U cap -d postgres -c "CREATE DATABASE cap_hbtest" || true
+          uv run pytest tests/test_phase_28_7_ga_tier2_soak.py \
+            -p no:cacheprovider --timeout=12600 --tb=short -vv \
+            --junitxml=../outputs/cap-cert-ga/junit-reliability.xml
+
+      - name: Generate reliability artifact
+        if: always()
+        run: |
+          mkdir -p outputs/cap-cert-ga outputs/ga-dr
+          python scripts/certification/generate_report_28_7.py || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reliability-evidence
+          path: |
+            outputs/cap-cert-ga/
+            outputs/ga-dr/

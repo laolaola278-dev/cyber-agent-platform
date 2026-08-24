@@ -67,6 +67,24 @@ TEST_GATES: dict[str, list[str]] = {
     ],
     "test_ga_gate38_dns_outage_fails_closed_and_recovers": ["GA-GATE 38"],
     "test_ga_gate39_egress_proxy_outage_no_direct_bypass": ["GA-GATE 39"],
+    # Tier 2 (reliability workflow -- nightly/dispatch, own cluster):
+    # soak / leak / orphan / under-load upgrade+rollback
+    "test_ga_gate24_two_hour_soak_full_workload": ["GA-GATE 24"],
+    "test_ga_gate25_worker_memory_no_leak": ["GA-GATE 25"],
+    "test_ga_gate26_orphan_accumulation_zero": ["GA-GATE 26"],
+    "test_ga_gate34_upgrade_under_load_bounded": ["GA-GATE 34"],
+    "test_ga_gate35_rollback_under_load_bounded": ["GA-GATE 35"],
+}
+
+# Gates certified ONLY by the reliability workflow. When its JUnit is not
+# part of THIS run they fall back to PLANNED (development mode keeps exit 0;
+# final-strict mode fails on PLANNED -- exactly the FULL GA semantics).
+RELIABILITY_GATES = {
+    "GA-GATE 24",
+    "GA-GATE 25",
+    "GA-GATE 26",
+    "GA-GATE 34",
+    "GA-GATE 35",
 }
 
 BASELINE_GATES: dict[str, str] = {}  # no gate passes by assertion-free default
@@ -234,6 +252,12 @@ def main() -> int:
     # Suite-level evidence gates (no single testcase maps 1:1):
     gates["GA-GATE 33"] = _suite_status("junit-security.xml", "GA-GATE 33")
     gates["GA-GATE 40"] = _suite_status("skip-report", "GA-GATE 40")
+
+    # Reliability-workflow gates: PLANNED unless this run carries the
+    # reliability JUnit (nightly/dispatch runs and full-GA proofs do).
+    if not (OUT_DIR / "junit-reliability.xml").exists():
+        for gate in RELIABILITY_GATES:
+            gates[gate] = "PLANNED"
 
     version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
     dr = _dr_evidence()

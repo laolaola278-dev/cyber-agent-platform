@@ -249,7 +249,7 @@ def test_ga_gate19_secret_rotation_control_plane_recovers() -> None:
             item
             for item in pods.get("items", [])
             if all(
-                c["status"].get("ready")
+                c.get("ready")
                 for c in item.get("status", {}).get("containerStatuses", [{}])
             )
         ]

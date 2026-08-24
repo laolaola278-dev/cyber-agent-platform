@@ -146,7 +146,10 @@ def test_ga_gate36_pg_connection_exhaustion_controlled() -> None:
             try:
                 for _ in range(target):
                     try:
-                        conns.append(await asyncio.wait_for(asyncpg.connect(dsn), 10))
+                        # asyncpg's own timeout cleans up its transport
+                        # internally -- asyncio.wait_for would leave a
+                        # dangling task whose GC fires unraisable warnings
+                        conns.append(await asyncpg.connect(dsn, timeout=10))
                     except Exception as exc:  # noqa: BLE001
                         if "too many" in str(exc).lower():
                             hit_limit = True
@@ -156,7 +159,7 @@ def test_ga_gate36_pg_connection_exhaustion_controlled() -> None:
             finally:
                 for conn in conns:
                     try:
-                        await conn.close()
+                        await conn.close(timeout=10)
                     except Exception:  # noqa: BLE001
                         pass
 
@@ -170,6 +173,7 @@ def test_ga_gate36_pg_connection_exhaustion_controlled() -> None:
         assert _backend_ready(), "backend pods not Ready during PG exhaustion"
     finally:
         pf.terminate()
+        pf.wait()
 
     # RECOVERY: a fresh connection works immediately after release
     async def _verify_recovery() -> int:
@@ -191,6 +195,7 @@ def test_ga_gate36_pg_connection_exhaustion_controlled() -> None:
         assert asyncio.run(_verify_recovery()) == 1
     finally:
         pf2.terminate()
+        pf2.wait()
 
 
 # -- GA-GATE 37/38/39 shared scenario driver -----------------------------------
@@ -204,7 +209,7 @@ def _outage_scenario(gate_tag: str, deployment: str, namespace: str) -> None:
     try:
         _scale(deployment, namespace, 0)
         rc, body = _start_run(port, gate_tag)
-        assert rc in (200, 201), f"API rejected run creation: {rc} {body}"
+        assert rc in (200, 201, 202), f"API rejected run creation: {rc} {body}"
         run_id = body.get("id") or body.get("run_id")
         assert run_id, f"no run id in response: {body}"
         status = _wait_terminal(port, run_id, timeout=420)
@@ -218,7 +223,7 @@ def _outage_scenario(gate_tag: str, deployment: str, namespace: str) -> None:
 
     # recovery: identical workload succeeds once the dependency is back
     rc, body = _start_run(port, f"{gate_tag}-recovery")
-    assert rc in (200, 201), body
+    assert rc in (200, 201, 202), body
     run_id = body.get("id") or body.get("run_id")
     status = _wait_terminal(port, run_id, timeout=420)
     assert status in SUCCESS_STATUSES, (

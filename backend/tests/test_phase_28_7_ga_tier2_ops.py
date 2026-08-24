@@ -19,9 +19,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REPORT_DIR = Path(
@@ -29,6 +32,7 @@ REPORT_DIR = Path(
 )
 OUT_DIR = Path(os.environ.get("CAP_GA_OUT", str(REPO_ROOT / "outputs/cap-cert-ga")))
 ALERTS_DIR = REPO_ROOT / "deployment" / "prometheus"
+STRICT = os.environ.get("CAP_K8S_STRICT") == "1"
 
 
 def _run(args: list[str], *, check: bool = True, timeout: float = 300.0):
@@ -120,6 +124,13 @@ def test_ga_gate30_slo_candidates_from_real_data() -> None:
 
 
 def test_ga_gate31_alert_rules_fire_and_resolve() -> None:
+    if shutil.which("promtool") is None:
+        if STRICT:
+            pytest.fail("promtool unavailable (CAP_K8S_STRICT=1 -> SKIP==FAIL)")
+        pytest.skip(
+            "promtool not installed -- alert FIRE/RESOLVE proof runs only in "
+            "the certification workflows that install it"
+        )
     rules = ALERTS_DIR / "alerts.yml"
     unit_tests = ALERTS_DIR / "alerts_unit_test.yml"
     assert rules.exists() and unit_tests.exists()
