@@ -202,6 +202,7 @@ jobs:
             tests/test_phase_28_7_reconciliation_unit.py \
             tests/test_phase_28_7_ga_tier2_cluster.py \
             tests/test_phase_28_7_ga_tier2_ops.py \
+            tests/test_phase_28_7_ga_tier2_resilience.py \
             -p no:cacheprovider --timeout=3600 --tb=short -vv \
             --junitxml=../outputs/cap-cert-ga/junit-ga.xml
 
@@ -312,8 +313,10 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
             | sh -s -- -b /usr/local/bin v1.18.1
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sh -s -- -b /usr/local/bin v0.58.2
+          curl -sfL --retry 3 -o /tmp/trivy.tgz \
+            https://github.com/aquasecurity/trivy/releases/download/v0.58.2/trivy_0.58.2_Linux-64bit.tar.gz
+          tar xzf /tmp/trivy.tgz -C /tmp trivy
+          sudo mv /tmp/trivy /usr/local/bin/
           syft version && trivy --version
 
       - name: Build release images

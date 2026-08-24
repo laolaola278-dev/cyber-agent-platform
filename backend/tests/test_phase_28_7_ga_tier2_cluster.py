@@ -55,11 +55,14 @@ def _require_cluster() -> None:
         pytest.skip("kind cluster unavailable")
 
 
-def _run(args: list[str], *, check: bool = True, timeout: float = 600.0):
+def _run(
+    args: list[str], *, check: bool = True, timeout: float = 600.0,
+    input: str | None = None,
+):
     try:
         return subprocess.run(
             args, capture_output=True, text=True, check=check,
-            timeout=int(timeout), cwd=str(REPO_ROOT),
+            timeout=int(timeout), cwd=str(REPO_ROOT), input=input,
         )
     except subprocess.CalledProcessError as error:
         out = (error.stdout or "").strip()[-1500:]

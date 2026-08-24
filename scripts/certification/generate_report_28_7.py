@@ -60,6 +60,13 @@ TEST_GATES: dict[str, list[str]] = {
     "test_ga_gate22_trivy_blocking_policy": ["GA-GATE 22"],
     "test_ga_gate23_provenance_attestation": ["GA-GATE 23"],
     "test_ga_gate29_machine_readable_sli_definitions": ["GA-GATE 29"],
+    # Tier 2 (resilience): real dependency fault injection on Cluster B
+    "test_ga_gate36_pg_connection_exhaustion_controlled": ["GA-GATE 36"],
+    "test_ga_gate37_object_store_outage_fails_closed_and_recovers": [
+        "GA-GATE 37"
+    ],
+    "test_ga_gate38_dns_outage_fails_closed_and_recovers": ["GA-GATE 38"],
+    "test_ga_gate39_egress_proxy_outage_no_direct_bypass": ["GA-GATE 39"],
 }
 
 BASELINE_GATES: dict[str, str] = {}  # no gate passes by assertion-free default
