@@ -203,6 +203,12 @@ class PluginWorkerRuntime:
                 WorkerScheduler(registry),
                 leases,
                 SandboxRuntime(_SYNTHETIC_PROVIDER, SandboxPolicyEngine()),
+                # ARCH INVARIANT (Phase 28.7): any runtime that may execute
+                # long operations must renew its execution lease on a session
+                # NOT shared with the main execute flow. The synthetic branch
+                # runs real WorkerRuntime.execute, so it gets dedicated
+                # heartbeat sessions too.
+                heartbeat_session_factory=_SYNTHETIC_SESSIONS,
             )
             return await runtime.execute(
                 request,

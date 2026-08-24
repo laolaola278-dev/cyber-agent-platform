@@ -20,7 +20,7 @@ from app.assessment import (
 from app.assets import AssetService
 from app.capabilities.service import CapabilityRegistryService
 from app.config import ConfigurationProvider
-from app.database import get_db_session
+from app.database import AsyncSessionFactory, get_db_session
 from app.detection import (
     DetectionPlanner,
     DetectionRegistry,
@@ -219,6 +219,10 @@ async def get_worker_runtime(
         WorkerScheduler(registry),
         leases,
         sandbox,
+        # ARCH INVARIANT (Phase 28.7): the API-side memory worker executes
+        # plugin capabilities that may run long; the heartbeat must not share
+        # the request-scoped session with the main execute flow.
+        heartbeat_session_factory=AsyncSessionFactory,
     )
 
 

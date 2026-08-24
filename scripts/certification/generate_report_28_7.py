@@ -3,9 +3,19 @@
 Gates are derived from the JUnit XML of the GA certification test run plus
 the measured DR evidence (outputs/ga-dr/ga-dr-context.json). A gate backed
 by a test that is not passing is reported FAIL/SKIPPED/NOT_RUN -- never
-silently PASS (strict: SKIP == FAIL, NOT_RUN == FAIL for the GA decision).
-Gates without ANY implementing test yet are PLANNED: visible in the report,
-excluded from the pass/fail decision until an implementation maps to them.
+silently PASS (SKIP == FAIL, NOT_RUN == FAIL).
+
+TWO DECISION MODES (restored STRICT GA semantics):
+
+* development (default): gates without ANY implementing test are PLANNED --
+  visible but excluded from the pass/fail decision. Used while gates
+  17..40 are landing. Exit 0 means IMPLEMENTED-SCOPE PASS.
+* final strict (CAP_GA_STRICT=1): the FULL GA meta-gate. PLANNED ==
+  failure, exactly like SKIP/NOT_RUN/FAIL. Exit 0 requires GA-GATE 1..40
+  ALL PASS -- only then is ``full_ga_certified`` true and the report
+  titled "FULL GA CERTIFIED". The forbidden state "24 planned + workflow
+  green = GA certified" is structurally impossible here: this mode makes
+  that state exit non-zero.
 """
 
 from __future__ import annotations
@@ -59,8 +69,11 @@ def _implemented_gates() -> set[str]:
 
 def _commit() -> str:
     proc = subprocess.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
-        cwd=REPO_ROOT, check=False,
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        check=False,
     )
     return proc.stdout.strip() or "unknown"
 
@@ -112,19 +125,44 @@ def _rto_measured(dr: dict) -> bool:
         return False
 
 
+def _evidence(name: str) -> dict:
+    """Optional Tier-2 evidence file (outputs/cap-cert-ga/<name>.json).
+
+    Missing evidence is reported honestly as NOT_EXECUTED -- it never
+    fabricates a PASS.
+    """
+    path = OUT_DIR / f"{name}.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+
+
+def _section(evidence: dict, key: str) -> dict:
+    """Evidence section, or an honest NOT_EXECUTED placeholder."""
+    value = evidence.get(key)
+    if isinstance(value, dict) and value:
+        return value
+    return {"executed": False, "status": "NOT_EXECUTED"}
+
+
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     results = _parse_junit()
-    strict = os.environ.get("CAP_K8S_STRICT") == "1"
+    # STRICT GA semantics: CAP_GA_STRICT=1 switches the meta-gate to FINAL
+    # mode (PLANNED == failure, 40/40 required). Default stays development
+    # mode while gates land; both modes are reported in the artifact.
+    final_strict = os.environ.get("CAP_GA_STRICT") == "1"
 
     gates = {gate: "NOT_RUN" for gate in ALL_GATES}
     implemented = _implemented_gates()
-    # Gates without any implementing test are PLANNED, not FAIL: strict mode
-    # exists to catch a test that silently skips, not to permanently red-flag
-    # gates that have never been implemented (17..40 land in later
-    # iterations). PLANNED is still visible in the report and each gate
-    # flips into the enforced PASS/FAIL/SKIP set automatically as soon as a
-    # test maps to it.
+    # Gates without any implementing test are PLANNED, not FAIL: development
+    # mode exists to catch a test that silently skips, not to permanently
+    # red-flag gates that have never been implemented. In FINAL STRICT mode
+    # PLANNED fails the decision below -- that is the whole point of the
+    # FULL GA meta-gate.
     for gate in ALL_GATES:
         if gate not in implemented:
             gates[gate] = "PLANNED"
@@ -137,15 +175,29 @@ def main() -> int:
                 gates[gate] = "PASS"
             elif outcome == "failed":
                 gates[gate] = "FAIL"
-            elif outcome == "skipped" and strict:
-                gates[gate] = "FAIL"  # SKIP == FAIL
             elif outcome == "skipped":
-                gates[gate] = "SKIPPED"
+                # SKIP == FAIL in BOTH modes: a certification test must
+                # never be allowed to skip silently.
+                gates[gate] = "FAIL"
 
     version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
     dr = _dr_evidence()
+    tier2 = {
+        "soak": _section(_evidence("soak"), "soak"),
+        "capacity": _section(_evidence("capacity"), "capacity"),
+        "sli": _section(_evidence("sli"), "sli"),
+        "slo": _section(_evidence("slo"), "slo"),
+        "security": _section(_evidence("security"), "security"),
+        "images": _section(_evidence("images"), "images"),
+    }
+    passed = sum(1 for v in gates.values() if v == "PASS")
+    failed = sum(1 for v in gates.values() if v == "FAIL")
+    not_run = sum(1 for v in gates.values() if v == "NOT_RUN")
+    planned = sum(1 for v in gates.values() if v == "PLANNED")
+    full_ga_certified = final_strict and passed == len(ALL_GATES) and failed == 0
     payload = {
         "phase": "28.7",
+        "mode": "final-strict" if final_strict else "development",
         "commit": _commit(),
         "version": version,
         "generated_at": datetime.now(UTC).isoformat(),
@@ -154,6 +206,27 @@ def main() -> int:
             "run": os.environ.get("PHASE_28_6_RUN", "32565459369"),
             "gates": "32/32 PASS",
             "commit": "b905393b818c226017f52fb17d732f3e14627d30",
+        },
+        "heartbeat_invariant": {
+            # commit 2ba8bec promoted to architecture invariant: dedicated
+            # heartbeat AsyncSession at every app construction site
+            "static_scan": results.get(
+                "test_arch_every_app_worker_runtime_site_uses_dedicated_"
+                "heartbeat_session",
+                "NOT_RUN",
+            ),
+            "behavioral_sqlite": results.get(
+                "test_heartbeat_renewal_is_isolated_from_open_main_transaction",
+                "NOT_RUN",
+            ),
+            "behavioral_postgres_authoritative": (
+                "PASS"
+                if results.get(
+                    "test_heartbeat_renewal_isolation_postgres_authoritative"
+                )
+                == "passed"
+                else "NOT_RUN"
+            ),
         },
         "dr": {
             "cluster_a_destroyed": dr.get("cluster_a", {}).get("destroyed"),
@@ -164,27 +237,40 @@ def main() -> int:
         },
         "rpo": dr.get("rpo"),
         "rto": dr.get("rto"),
-        "soak": {"executed": "pending (later certification iteration)"},
+        **tier2,
+        "full_ga_certified": full_ga_certified,
+        "release_status": (
+            "FULL GA CERTIFIED -- awaiting explicit release authorization"
+            if full_ga_certified
+            else "IMPLEMENTED-SCOPE PASS / FULL GA NOT CERTIFIED"
+        ),
         "gates": gates,
         "gate_summary": {
             "total": len(ALL_GATES),
             "implemented": len(implemented),
-            "passed": sum(1 for v in gates.values() if v == "PASS"),
-            "failed": sum(1 for v in gates.values() if v == "FAIL"),
-            "not_run": sum(1 for v in gates.values() if v == "NOT_RUN"),
-            "skipped": sum(1 for v in gates.values() if v == "SKIPPED"),
-            "planned": sum(1 for v in gates.values() if v == "PLANNED"),
+            "passed": passed,
+            "failed": failed,
+            "not_run": not_run,
+            "skipped": 0,
+            "planned": planned,
         },
         "test_results": results,
     }
     out_json = OUT_DIR / "cap-28.7-ga-certification.json"
     out_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
+    title = (
+        "FULL GA CERTIFIED"
+        if full_ga_certified
+        else "IMPLEMENTED-SCOPE PASS / FULL GA NOT CERTIFIED"
+    )
     lines = [
         "# CAP Phase 28.7 -- GA Reliability Certification Gates",
         "",
         f"- phase: 28.7 | version: `{version}` | commit: `{payload['commit'][:12]}`",
-        f"- gates: {payload['gate_summary']['passed']}/{payload['gate_summary']['total']} PASS",
+        f"- mode: `{payload['mode']}` | decision: **{title}**",
+        f"- gates: {passed}/{len(ALL_GATES)} PASS"
+        f" (implemented {len(implemented)}, planned {planned})",
         "",
         "| Gate | Status |",
         "|---|---|",
@@ -195,14 +281,15 @@ def main() -> int:
     )
 
     print(json.dumps(payload["gate_summary"], indent=2))
-    # strict decision covers IMPLEMENTED gates only: FAIL / SKIP-as-FAIL /
-    # a mapped test that never ran (NOT_RUN). PLANNED gates are reported
-    # but cannot fail the run until an implementation exists.
-    bad = [
-        g
-        for g, v in gates.items()
-        if v in ("FAIL", "NOT_RUN", "SKIPPED") and g in implemented
+    # Development decision: covers IMPLEMENTED gates only -- FAIL /
+    # SKIP-as-FAIL / a mapped test that never ran (NOT_RUN). PLANNED gates
+    # are reported but cannot fail the run until an implementation exists.
+    bad_dev = [
+        g for g, v in gates.items() if v in ("FAIL", "NOT_RUN") and g in implemented
     ]
+    if bad_dev:
+        print(f"GA certification FAILED gates: {bad_dev}", file=sys.stderr)
+        return 1
     # Artifact-consistency gate: a PASS on the measured RPO/RTO gates MUST
     # carry the measured values into the machine-readable artifact. A null
     # here means the DR evidence file was not found (path/env drift) -- the
@@ -221,9 +308,18 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    if strict and bad:
-        print(f"GA certification FAILED gates: {bad}", file=sys.stderr)
-        return 1
+    if final_strict:
+        # FINAL STRICT meta-gate: ALL 40 gates must PASS. PLANNED ==
+        # failure here -- "24 planned + workflow green" can NEVER equal
+        # GA certified.
+        bad_final = [g for g, v in gates.items() if v not in ("PASS",)]
+        if bad_final:
+            print(
+                f"FULL GA (strict) NOT CERTIFIED -- non-PASS gates: " f"{bad_final}",
+                file=sys.stderr,
+            )
+            return 1
+        print("CAP v1.0.0 GA READY -- awaiting explicit release authorization.")
     return 0
 
 
