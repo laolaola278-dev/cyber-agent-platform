@@ -1,0 +1,105 @@
+{
+  "phase": "28.7",
+  "mode": "development",
+  "commit": "86b8a163431d8d98d76ade177a88dd0c41f83b1f",
+  "version": "1.0.0-rc3",
+  "generated_at": "2026-08-24T10:42:03.697593+00:00",
+  "baseline": {
+    "phase": "28.6",
+    "run": "32565459369",
+    "gates": "32/32 PASS",
+    "commit": "b905393b818c226017f52fb17d732f3e14627d30"
+  },
+  "heartbeat_invariant": {
+    "static_scan": "NOT_RUN",
+    "behavioral_sqlite": "NOT_RUN",
+    "behavioral_postgres_authoritative": "NOT_RUN"
+  },
+  "dr": {
+    "cluster_a_destroyed": null,
+    "cluster_b_fresh": false,
+    "manifest": null,
+    "running_recovery": null,
+    "reconciliation_initial": null
+  },
+  "rpo": null,
+  "rto": null,
+  "soak": {
+    "executed": false,
+    "status": "NOT_EXECUTED"
+  },
+  "capacity": {
+    "executed": false,
+    "status": "NOT_EXECUTED"
+  },
+  "sli": {
+    "executed": false,
+    "status": "NOT_EXECUTED"
+  },
+  "slo": {
+    "executed": false,
+    "status": "NOT_EXECUTED"
+  },
+  "security": {
+    "executed": false,
+    "status": "NOT_EXECUTED"
+  },
+  "images": {
+    "executed": false,
+    "status": "NOT_EXECUTED"
+  },
+  "full_ga_certified": false,
+  "release_status": "IMPLEMENTED-SCOPE PASS / FULL GA NOT CERTIFIED",
+  "gates": {
+    "GA-GATE 1": "NOT_RUN",
+    "GA-GATE 2": "NOT_RUN",
+    "GA-GATE 3": "NOT_RUN",
+    "GA-GATE 4": "NOT_RUN",
+    "GA-GATE 5": "NOT_RUN",
+    "GA-GATE 6": "NOT_RUN",
+    "GA-GATE 7": "NOT_RUN",
+    "GA-GATE 8": "NOT_RUN",
+    "GA-GATE 9": "NOT_RUN",
+    "GA-GATE 10": "NOT_RUN",
+    "GA-GATE 11": "NOT_RUN",
+    "GA-GATE 12": "NOT_RUN",
+    "GA-GATE 13": "NOT_RUN",
+    "GA-GATE 14": "NOT_RUN",
+    "GA-GATE 15": "NOT_RUN",
+    "GA-GATE 16": "NOT_RUN",
+    "GA-GATE 17": "NOT_RUN",
+    "GA-GATE 18": "NOT_RUN",
+    "GA-GATE 19": "NOT_RUN",
+    "GA-GATE 20": "NOT_RUN",
+    "GA-GATE 21": "NOT_RUN",
+    "GA-GATE 22": "NOT_RUN",
+    "GA-GATE 23": "NOT_RUN",
+    "GA-GATE 24": "PLANNED",
+    "GA-GATE 25": "PLANNED",
+    "GA-GATE 26": "PLANNED",
+    "GA-GATE 27": "PLANNED",
+    "GA-GATE 28": "PLANNED",
+    "GA-GATE 29": "NOT_RUN",
+    "GA-GATE 30": "PLANNED",
+    "GA-GATE 31": "PLANNED",
+    "GA-GATE 32": "PLANNED",
+    "GA-GATE 33": "NOT_RUN",
+    "GA-GATE 34": "PLANNED",
+    "GA-GATE 35": "PLANNED",
+    "GA-GATE 36": "PLANNED",
+    "GA-GATE 37": "PLANNED",
+    "GA-GATE 38": "PLANNED",
+    "GA-GATE 39": "PLANNED",
+    "GA-GATE 40": "NOT_RUN"
+  },
+  "gate_summary": {
+    "total": 40,
+    "implemented": 24,
+    "passed": 0,
+    "failed": 0,
+    "not_run": 26,
+    "skipped": 0,
+    "planned": 14
+  },
+  "test_results": {}
+}

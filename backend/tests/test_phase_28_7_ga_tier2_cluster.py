@@ -234,7 +234,7 @@ def test_ga_gate19_secret_rotation_control_plane_recovers() -> None:
     ]
     for key, value in rotated.items():
         args += ["--from-literal", f"{key}={value}"]
-    manifest = _run(args).stdout
+    manifest = _kubectl(args).stdout
     _run(["kubectl", "apply", "-f", "-"], input=manifest)
     try:
         _restart_and_wait("cap-cap-backend")
@@ -261,7 +261,7 @@ def test_ga_gate19_secret_rotation_control_plane_recovers() -> None:
         ]
         for key, value in original.items():
             restore_args += ["--from-literal", f"{key}={value}"]
-        restore_manifest = _run(restore_args).stdout
+        restore_manifest = _kubectl(restore_args).stdout
         _run(["kubectl", "apply", "-f", "-"], input=restore_manifest)
         _restart_and_wait("cap-cap-backend")
 

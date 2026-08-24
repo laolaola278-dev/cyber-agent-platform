@@ -29,8 +29,6 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = Path(os.environ.get("CAP_GA_OUT", str(REPO_ROOT / "outputs/cap-cert-ga")))
 POLICY_PATH = REPO_ROOT / "scripts" / "certification" / "security_policy.json"
