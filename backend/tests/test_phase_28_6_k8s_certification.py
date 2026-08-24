@@ -1730,15 +1730,19 @@ def test_ga_pregate_e_k8s_long_run_lease_renewal(api_port: int) -> None:
     healthy run whose execution outlives 2x the run-lease TTL must survive
     via execution-time lease renewal (Phase 28.3 heartbeat): lease renewed_at
     visibly advances, ownership never changes, recovery_count stays 0, and
-    no stale commit occurs. A short TTL (3s) makes every sandbox cold start
+    no stale commit occurs. A short TTL makes every sandbox cold start
     + proxied fetch a genuine >2xTTL operation -- without a working
     heartbeat this gate deterministically FAILS via false reclaim.
+    TTL=6s (renew cadence ttl/3 = 2s): tight enough that a broken heartbeat
+    fails deterministically, loose enough that one CI-load stall cannot
+    expire a healthy lease before its renewal fires (run12 flake at TTL=3:
+    a >2s stall between 1s renewals falsely reclaimed one of three runs).
     """
     _require_cluster()
     pg = _pg_pod_name()
     assert pg, "postgres pod not found"
 
-    ttl = 3
+    ttl = 6
     try:
         # shrink the production lease TTL so the >2xTTL window is ~seconds
         _kubectl(
