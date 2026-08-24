@@ -225,6 +225,12 @@ class KubernetesSandboxProvider:
                         "securityContext": {
                             "allowPrivilegeEscalation": False,
                             "runAsNonRoot": True,
+                            # explicit numeric uid/gid: runAsNonRoot cannot
+                            # verify a symbolic image user ("capuser") and
+                            # rejects creation with CreateContainerConfigError
+                            # (K8S-GATE17 / GA PRE-GATE E root cause).
+                            "runAsUser": 10001,
+                            "runAsGroup": 10001,
                             "readOnlyRootFilesystem": True,
                             "seccompProfile": {"type": "RuntimeDefault"},
                             "capabilities": {"drop": ["ALL"]},

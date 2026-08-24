@@ -163,6 +163,11 @@ async def test_execute_request_transport_and_lifecycle(local_shim: int) -> None:
     container = spec["containers"][0]
     assert container["command"] == ["python", "-m", "sandbox.shim", "--serve"]
     assert container["securityContext"]["runAsNonRoot"] is True
+    # numeric uid/gid must be explicit: kubelet cannot verify a symbolic
+    # image user against runAsNonRoot and rejects creation
+    # (CreateContainerConfigError -- K8S-GATE17 / GA PRE-GATE E root cause).
+    assert container["securityContext"]["runAsUser"] == 10001
+    assert container["securityContext"]["runAsGroup"] == 10001
     assert container["securityContext"]["readOnlyRootFilesystem"] is True
     assert container["securityContext"]["seccompProfile"]["type"] == "RuntimeDefault"
     assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]

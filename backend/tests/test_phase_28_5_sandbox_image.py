@@ -48,8 +48,10 @@ def test_http_dockerfile_is_minimal_and_safe() -> None:
     assert "from python:" in content
     assert "@sha256" in content or "3.13.12-slim-bookworm" in content, "base not pinned"
     # non-root
-    assert "user" in content and "capuser" in content
-    assert "root" not in content.split("user capuser")[1].split("entrypoint")[0]
+    assert "user" in content and ("capuser" in content or "10001" in content)
+    assert (
+        "root" not in content.split("user 10001")[1].split("entrypoint")[0]
+    ), "must stay non-root after the final USER directive"
     # no privileged / no socket / no host mounts
     assert "--privileged" not in content
     assert "docker.sock" not in content
@@ -65,7 +67,7 @@ def test_browser_dockerfile_is_minimal_and_safe() -> None:
     assert "chromium" in content
     assert "--privileged" not in content
     assert "docker.sock" not in content
-    assert "user capuser" in content
+    assert "user 10001" in content
 
 
 def test_shim_files_are_self_contained() -> None:
@@ -125,7 +127,8 @@ def test_build_http_image_and_inspect() -> None:
     )
     assert inspect.returncode == 0
     data = json.loads(inspect.stdout)[0]
-    assert data["Config"].get("User") == "capuser"
+    # numeric uid: runAsNonRoot pods reject symbolic users at creation time
+    assert data["Config"].get("User") == "10001"
     # run the shim with a private target -> shim L7 blocks it
     request = SandboxRequest(
         operation="http_fetch",

@@ -36,6 +36,9 @@ COPY sandbox/shim.py /sandbox/sandbox/shim.py
 ENV PYTHONPATH=/sandbox
 
 # no source tree, no host paths, no credentials
-USER capuser
+# NUMERIC uid, not the name: with runAsNonRoot kubelet must verify the image
+# user is non-root -- a symbolic name cannot be verified and pod creation is
+# rejected with CreateContainerConfigError (K8S-GATE17 / GA PRE-GATE E).
+USER 10001
 WORKDIR /sandbox
 ENTRYPOINT ["python", "-m", "sandbox.shim"]

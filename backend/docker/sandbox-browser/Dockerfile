@@ -23,6 +23,8 @@ RUN pip install --no-cache-dir --disable-pip-version-check "playwright==1.49.1" 
 # runtime: ephemeral home/profile on the tmpfs mount
 ENV HOME=/tmp
 
-USER capuser
+# numeric uid -- see sandbox-http Dockerfile: runAsNonRoot cannot verify a
+# symbolic user name and rejects container creation (CreateContainerConfigError).
+USER 10001
 WORKDIR /sandbox
 ENTRYPOINT ["python", "-m", "sandbox.shim"]
