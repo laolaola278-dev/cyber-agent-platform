@@ -556,6 +556,11 @@ class AdaptiveDataAcquisitionAgent:
             observed_fields.update(record.keys())
         expected = plan.completeness_conditions.get("expected_fields") or []
         expected_count = plan.completeness_conditions.get("expected_record_count")
+        # GA-GATE 37/39 (fail-closed): a run that acquired NOTHING must
+        # never surface as a success verdict -- empty documents produced by
+        # dead fetches (egress/DNS down) previously still counted as
+        # observed coverage and drove a false FINISH/COMPLETE.
+        nothing_acquired = result.total_bytes == 0
         partial_failure = result.blocked_reason in (
             BlockReason.TIMEOUT,
             BlockReason.RATE_LIMITED,
@@ -569,6 +574,7 @@ class AdaptiveDataAcquisitionAgent:
             duplicates=len(dupes.duplicates),
             gaps=[] if len(result.documents) else ["no documents extracted"],
             errors=[],
+            blocked=nothing_acquired,
             partial_failure=partial_failure,
         )
         return self._completeness.evaluate(data)

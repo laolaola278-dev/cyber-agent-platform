@@ -37,6 +37,7 @@ from tests.test_phase_28_7_ga_certification import (
     _json_k,
     _kubectl,
     _pf_api,
+    _run_status,
     _wait_terminal,
 )
 
@@ -219,9 +220,30 @@ def _wait_scaled_to_zero(deployment: str, namespace: str, timeout: float = 240.0
         time.sleep(3)
     pytest.fail(f"{deployment} in {namespace} still has pods after scale-to-zero")
 
-def _outage_scenario(gate_tag: str, deployment: str, namespace: str) -> None:
-    """Scale a dependency to zero -> run -> assert fail-closed -> restore ->
-    run again -> assert success."""
+def _outage_scenario(
+    gate_tag: str,
+    deployment: str,
+    namespace: str,
+    *,
+    execution_level: bool = False,
+) -> None:
+    """Layered fail-closed contract under a REAL dependency outage.
+
+    Phase A (outage LIVE): no run may reach a success status. Either the
+    worker pauses claiming BY DESIGN (Phase 28.4 GATE 15 readiness gate --
+    runs stay durably QUEUED, work is never lost), or the execution itself
+    fails closed (FAILED / BLOCKED / CANCELLED).
+
+    ``execution_level=True`` (egress proxy): executions DO proceed here (the
+    sandbox runtime is not the dead dependency), so the run MUST reach a
+    terminal failure DURING the outage -- any success would prove a
+    direct-egress bypass, i.e. an isolation breach.
+
+    Phase B (dependency RESTORED): a deferred run must COMPLETE from the
+    durable queue; an already-failed run stays attributably failed.
+
+    Recovery: a fresh identical workload succeeds end-to-end.
+    """
     port = _pf_api()
     original = _deployment_replicas(deployment, namespace)
     try:
@@ -231,16 +253,43 @@ def _outage_scenario(gate_tag: str, deployment: str, namespace: str) -> None:
         assert rc in (200, 201, 202), f"API rejected run creation: {rc} {body}"
         run_id = body.get("id") or body.get("run_id")
         assert run_id, f"no run id in response: {body}"
-        status = _wait_terminal(port, run_id, timeout=420)
-        assert status in FAIL_CLOSED_STATUSES, (
-            f"[{gate_tag}] dependency-dead run ended {status} -- the "
-            "system did NOT fail closed"
-        )
+
+        # Phase A: outage window -- never a silent success
+        deadline = time.monotonic() + 90
+        failed_closed = False
+        while time.monotonic() < deadline:
+            status = _run_status(port, run_id)
+            assert status not in SUCCESS_STATUSES, (
+                f"[{gate_tag}] run reached {status} WHILE {deployment} was "
+                "down -- silent success during a dependency outage"
+            )
+            if status in FAIL_CLOSED_STATUSES:
+                failed_closed = True
+                break
+            time.sleep(5)
+        if execution_level and not failed_closed:
+            pytest.fail(
+                f"[{gate_tag}] no attributable failure while {deployment} was "
+                "down -- executions at this layer must fail CLOSED"
+            )
     finally:
         _scale(deployment, namespace, original)
         _rollout(deployment, namespace)
 
-    # recovery: identical workload succeeds once the dependency is back
+    # Phase B: durability -- deferred work completes once the dep is back;
+    # a run that already failed closed stays attributably failed.
+    status = _wait_terminal(port, run_id, timeout=420)
+    if failed_closed:
+        assert status in FAIL_CLOSED_STATUSES, (
+            f"[{gate_tag}] run flipped {status} after failing closed"
+        )
+    else:
+        assert status in SUCCESS_STATUSES, (
+            f"[{gate_tag}] deferred run ended {status} after dependency "
+            "restore -- the durable queue must complete accepted work"
+        )
+
+    # recovery: fresh workload succeeds end-to-end
     rc, body = _start_run(port, f"{gate_tag}-recovery")
     assert rc in (200, 201, 202), body
     run_id = body.get("id") or body.get("run_id")
@@ -266,4 +315,6 @@ def test_ga_gate39_egress_proxy_outage_no_direct_bypass() -> None:
     # must FAIL. A SUCCEEDED run here would mean the sandbox bypassed the
     # deny-by-default egress policy -- an isolation breach, not a resiliency
     # event. Recovery proves the proxied path itself was restored.
-    _outage_scenario("egress", "cap-cap-egress-proxy", NAMESPACE)
+    _outage_scenario(
+        "egress", "cap-cap-egress-proxy", NAMESPACE, execution_level=True
+    )
