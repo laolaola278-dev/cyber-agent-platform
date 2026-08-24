@@ -50,8 +50,16 @@ TEST_GATES: dict[str, list[str]] = {
     "test_ga_gate14_digest_corruption_detected": ["GA-GATE 14"],
     "test_ga_gate15_measured_rpo": ["GA-GATE 15"],
     "test_ga_gate16_measured_rto": ["GA-GATE 16"],
-    # GA-GATE 17..40 land with their implementations in subsequent
-    # certification iterations; until then they are honestly NOT_RUN.
+    # Tier 2 (cluster): upgrade / rollback / secret rotation on Cluster B
+    "test_ga_gate17_helm_upgrade_migration_survives": ["GA-GATE 17"],
+    "test_ga_gate18_helm_rollback_service_healthy": ["GA-GATE 18"],
+    "test_ga_gate19_secret_rotation_control_plane_recovers": ["GA-GATE 19"],
+    # Tier 2 (supply-chain job): images / SBOM / trivy / provenance / SLI
+    "test_ga_gate20_release_images_pinned_sha256": ["GA-GATE 20"],
+    "test_ga_gate21_sbom_spdx_and_cyclonedx": ["GA-GATE 21"],
+    "test_ga_gate22_trivy_blocking_policy": ["GA-GATE 22"],
+    "test_ga_gate23_provenance_attestation": ["GA-GATE 23"],
+    "test_ga_gate29_machine_readable_sli_definitions": ["GA-GATE 29"],
 }
 
 BASELINE_GATES: dict[str, str] = {}  # no gate passes by assertion-free default
@@ -79,24 +87,31 @@ def _commit() -> str:
 
 
 def _parse_junit() -> dict[str, str]:
-    for candidate in (
-        OUT_DIR / "junit-ga.xml",
-        REPO_ROOT / "backend" / "outputs" / "cap-cert-ga" / "junit-ga.xml",
-        REPO_ROOT / "outputs" / "cap-cert-ga" / "junit-ga.xml",
-    ):
-        if candidate.exists():
-            root = ET.parse(candidate).getroot()
-            results: dict[str, str] = {}
-            for case in root.iter("testcase"):
-                name = case.get("name", "")
-                if case.find("failure") is not None or case.find("error") is not None:
-                    results[name] = "failed"
-                elif case.find("skipped") is not None:
-                    results[name] = "skipped"
-                else:
-                    results[name] = "passed"
-            return results
-    return {}
+    """Merge EVERY junit-*.xml in the output dir.
+
+    Gates come from multiple CI jobs: junit-ga.xml (cluster job: DR +
+    tier2-cluster) AND junit-supply-chain.xml (supply-chain job: images/
+    SBOM/trivy/provenance/SLI). The supply-chain job's evidence reaches
+    this runner via a download-artifact step.
+    """
+    candidates = sorted(OUT_DIR.glob("junit-*.xml"))
+    if not candidates:
+        legacy = REPO_ROOT / "outputs" / "cap-cert-ga" / "junit-ga.xml"
+        if legacy.exists():
+            candidates = [legacy]
+    results: dict[str, str] = {}
+    for candidate in candidates:
+        root = ET.parse(candidate).getroot()
+        for case in root.iter("testcase"):
+            name = case.get("name", "")
+            if case.find("failure") is not None or case.find("error") is not None:
+                # never downgrade a failure from an earlier file
+                results[name] = "failed"
+            elif case.find("skipped") is not None:
+                results.setdefault(name, "skipped")
+            else:
+                results.setdefault(name, "passed")
+    return results
 
 
 def _dr_evidence() -> dict:

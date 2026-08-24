@@ -1,0 +1,19 @@
+{
+  "policy_version": "1.0.0",
+  "scanner": "trivy",
+  "rationale": "Blocking is limited to fixable CRITICAL findings: un-fixable base-image noise would permanently red GA without adding security, while a fixable CRITICAL in a shipped image is a genuine release blocker.",
+  "scan_targets": [
+    "cap-backend:ci",
+    "cap-frontend:ci",
+    "cap-sandbox-http:latest",
+    "cap-sandbox-browser:latest",
+    "cap-egress-proxy:latest"
+  ],
+  "blocking": {
+    "severities": ["CRITICAL"],
+    "only_with_fix": true
+  },
+  "reported_not_blocking": ["HIGH", "MEDIUM", "LOW"],
+  "allowlist": [],
+  "allowlist_rules": "An allowlist entry is a Trivy VulnerabilityID (CVE). Every entry MUST carry a written justification and a review date; empty entries are rejected by the gate."
+}

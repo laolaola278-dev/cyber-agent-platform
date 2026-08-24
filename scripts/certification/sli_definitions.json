@@ -1,0 +1,62 @@
+{
+  "schema_version": "cap.sli.v1",
+  "description": "Machine-readable SLI definitions for CAP. Each SLI declares WHAT is measured, its unit, the measurement formula, and WHERE the raw signal lives. SLO targets (GA-GATE 30) are derived from real measured distributions, never invented here.",
+  "slis": [
+    {
+      "id": "api_availability",
+      "description": "Fraction of API health probes answered with a success status by the backend deployment.",
+      "unit": "ratio",
+      "measurement": "successful_probes / total_probes over the measurement window",
+      "source": { "kind": "http_probe", "target": "/healthz", "via": "kubectl port-forward during certification runs" }
+    },
+    {
+      "id": "api_latency_p95",
+      "description": "95th percentile end-to-end latency of authenticated API requests.",
+      "unit": "seconds",
+      "measurement": "quantile(0.95) of request durations sampled by the load harness",
+      "source": { "kind": "load_harness", "target": "httpx client timing", "via": "capacity/soak runs" }
+    },
+    {
+      "id": "execution_success_rate",
+      "description": "Fraction of plugin executions reaching a terminal SUCCEEDED state (excluding user cancellations).",
+      "unit": "ratio",
+      "measurement": "succeeded_terminal / (terminal_total - cancelled) over the window",
+      "source": { "kind": "database_query", "target": "sandbox_executions.status", "via": "postgres psql count" }
+    },
+    {
+      "id": "lease_false_reclaim_rate",
+      "description": "Rate at which a HEALTHY run's lease is reclaimed by another worker while the original worker still holds it.",
+      "unit": "events_per_run",
+      "measurement": "false_reclaim_events / started_runs; heartbeat PRE-GATE B/E regressions pin this to zero",
+      "source": { "kind": "test_assertion", "target": "tests/test_phase_28_7_ga_pregate_heartbeat.py", "via": "junit-ga.xml" }
+    },
+    {
+      "id": "sandbox_spawn_failure_rate",
+      "description": "Fraction of sandbox pod spawns that fail to become Ready within the spawn deadline.",
+      "unit": "ratio",
+      "measurement": "failed_spawns / total_spawns observed by the K8s provider",
+      "source": { "kind": "provider_metric", "target": "KubernetesSandboxProvider counters", "via": "worker logs / k8s events" }
+    },
+    {
+      "id": "recovery_rpo",
+      "description": "Measured data-loss window of the last full disaster-recovery restore.",
+      "unit": "seconds",
+      "measurement": "observed_rpo_seconds recorded by the DR module into ga-dr-context.json",
+      "source": { "kind": "dr_evidence", "target": "rpo.observed_rpo_seconds", "via": "outputs/ga-dr/ga-dr-context.json" }
+    },
+    {
+      "id": "recovery_rto",
+      "description": "Measured wall-clock time from cluster destruction to fully restored service.",
+      "unit": "seconds",
+      "measurement": "rto_seconds recorded by the DR module into ga-dr-context.json",
+      "source": { "kind": "dr_evidence", "target": "rto.rto_seconds", "via": "outputs/ga-dr/ga-dr-context.json" }
+    },
+    {
+      "id": "orphan_accumulation",
+      "description": "Count of orphaned sandboxes/evidence objects accumulating after the soak workload (must converge to zero).",
+      "unit": "objects",
+      "measurement": "reconciliation scan output after final GC pass",
+      "source": { "kind": "reconciliation_scan", "target": "scripts/certification reconciliation tooling", "via": "soak evidence JSON" }
+    }
+  ]
+}
