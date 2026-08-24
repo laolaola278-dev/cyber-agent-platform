@@ -58,6 +58,7 @@ class WorkerRuntime:
         sandbox: SandboxRuntime,
         *,
         lease_ttl_seconds: int = 120,
+        heartbeat_session_factory: Callable[[], AsyncSession] | None = None,
     ) -> None:
         self._session = session
         self._registry = registry
@@ -66,6 +67,16 @@ class WorkerRuntime:
         self._sandbox = sandbox
         self._executions = SandboxExecutionRepository(session)
         self._lease_ttl_seconds = lease_ttl_seconds
+        # The heartbeat task runs CONCURRENTLY with the main execute flow
+        # (start/commit/rollback all use ``self._session``). Sharing one
+        # AsyncSession between two tasks is unsupported by SQLAlchemy and
+        # blew up under load with IllegalStateChangeError ("rollback() can't
+        # be called here; commit() is already in progress"), sqlite
+        # "closed database", and postgres "provisioning a new connection".
+        # When a factory is provided the heartbeat renews through its OWN
+        # short-lived session -- renewal is fencing-gated on
+        # (owner, fencing_token, version), so any session works.
+        self._heartbeat_session_factory = heartbeat_session_factory
 
     async def execute(
         self,
@@ -179,7 +190,13 @@ class WorkerRuntime:
         finally:
             # stop the execution-lease heartbeat (no renewal after exit)
             heartbeat_task.cancel()
-            with suppress(asyncio.CancelledError):
+            # Cancellation can land while the heartbeat is mid-DB-operation;
+            # drivers surface that as driver-specific errors (aiosqlite
+            # "closed database", asyncpg "provisioning a new connection")
+            # instead of CancelledError. Teardown is BEST-EFFORT by design:
+            # commit_result fences on the lease version, so a lost final
+            # renewal can never produce a stale commit (Phase 28.3).
+            with suppress(asyncio.CancelledError, Exception):
                 await heartbeat_task
             # tolerate a broken transaction (e.g. concurrent cancel released
             # the lease mid-run) so the best-effort release can still proceed
@@ -300,19 +317,37 @@ class WorkerRuntime:
                 await asyncio.sleep(interval)
                 current = holder[0]
                 try:
-                    holder[0] = await self._leases.renew(
-                        current.id,
-                        owner=owner,
-                        fencing_token=current.fencing_token,
-                        expected_version=current.version,
-                        ttl_seconds=self._lease_ttl_seconds,
-                    )
+                    if self._heartbeat_session_factory is not None:
+                        holder[0] = await self._renew_on_dedicated_session(current, owner)
+                    else:
+                        holder[0] = await self._leases.renew(
+                            current.id,
+                            owner=owner,
+                            fencing_token=current.fencing_token,
+                            expected_version=current.version,
+                            ttl_seconds=self._lease_ttl_seconds,
+                        )
                 except WorkerLeaseConflict:
                     # lost the lease -- stop renewing; the commit path will
                     # be rejected by the fencing gate (correct stale outcome)
                     return
         except asyncio.CancelledError:
             raise
+
+    async def _renew_on_dedicated_session(self, current: WorkerLease, owner: str) -> WorkerLease:
+        """One renewal on a private short-lived session (concurrency-safe)."""
+        session = self._heartbeat_session_factory()
+        try:
+            renewed = await WorkerLeaseManager(session).renew(
+                current.id,
+                owner=owner,
+                fencing_token=current.fencing_token,
+                expected_version=current.version,
+                ttl_seconds=self._lease_ttl_seconds,
+            )
+            return renewed
+        finally:
+            await session.close()
 
     async def health(self) -> bool:
         return bool(await self._registry.list()) and await self._sandbox.health()

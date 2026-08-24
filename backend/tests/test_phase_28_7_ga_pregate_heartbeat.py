@@ -105,6 +105,11 @@ async def _make_worker_path(
         WorkerLeaseManager(runtime_session),
         SandboxRuntime(MemorySandboxProvider(), SandboxPolicyEngine()),
         lease_ttl_seconds=lease_ttl,
+        # dedicated heartbeat sessions: the heartbeat task runs concurrently
+        # with the main execute flow and must not share an AsyncSession
+        heartbeat_session_factory=async_sessionmaker(
+            session.bind, expire_on_commit=False
+        ),
     )
     plugin = PluginWorkerRuntime(runtime, SandboxProfile(name="acquisition-lab"))
     coordinator = AcquisitionClaimCoordinator(
@@ -241,8 +246,15 @@ async def test_pregate_b_second_worker_never_reclaims_healthy_run(pregate_db, tm
         await _register_worker(session, worker_a, name="pregate-hb-a")
         run_id = run.id
 
-        service.run_agent_operation = _sleep_payload(4.0)  # type: ignore[method-assign]
-        wp_a = await _make_worker_path(session, service, lease_ttl=2, renew_interval=0.3)
+        # TTL=5 / renew=0.3s / execution=12s (>2xTTL): renewal is genuinely
+        # exercised, but a healthy lease only expires after >5s WITHOUT a
+        # renewal -- 16x the renew cadence. The previous ttl=2 setting let
+        # any single ~2s DB stall (loaded CI runner) falsely reclaim the
+        # run via worker B even though the heartbeat was working
+        # (run13: sqlite "closed database" + postgres "provisioning a new
+        # connection" were both downstream symptoms of that stall).
+        service.run_agent_operation = _sleep_payload(12.0)  # type: ignore[method-assign]
+        wp_a = await _make_worker_path(session, service, lease_ttl=5, renew_interval=0.3)
         token_a = uuid4()
         coord_a = wp_a._ensure_coordinator()
         await coord_a.claim(run_id, worker_a, token=token_a)

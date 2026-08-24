@@ -68,6 +68,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [acquisition-worker] %(message)s",
 )
+
+
 def _network_sandbox_policy_engine(provider_name: str) -> SandboxPolicyEngine:
     """GA PRE-GATE E: allowlist EXACTLY the selected sandbox provider.
 
@@ -358,6 +360,10 @@ async def _amain() -> int:
             WorkerLeaseManager(runtime_session),
             orchestration_runtime,
             lease_ttl_seconds=lease_ttl_seconds,
+            # the execution-time heartbeat runs as a CONCURRENT task; give it
+            # its own sessions so it never shares the AsyncSession with the
+            # main execute flow (start/commit/rollback)
+            heartbeat_session_factory=AsyncSessionFactory,
         )
         plugin = PluginWorkerRuntime(worker_runtime, SandboxProfile(name="acquisition-worker"))
         worker_path = AcquisitionWorkerPath(
