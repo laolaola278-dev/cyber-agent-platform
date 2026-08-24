@@ -8,6 +8,10 @@ FROM python:3.13.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1
 
+# GA-GATE 22: security-upgrade the pinned base (fixable CRITICAL CVEs in
+# libgnutls30 / libssl3 / openssl must not ship in release images).
+RUN apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/*
+
 RUN adduser --system --uid 10001 --disabled-password --no-create-home --shell /usr/sbin/nologin capuser
 
 COPY app/sandbox/egress_proxy.py /srv/egress_proxy.py

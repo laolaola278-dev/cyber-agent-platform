@@ -201,6 +201,24 @@ def test_ga_gate36_pg_connection_exhaustion_controlled() -> None:
 # -- GA-GATE 37/38/39 shared scenario driver -----------------------------------
 
 
+def _wait_scaled_to_zero(deployment: str, namespace: str, timeout: float = 240.0) -> None:
+    """Block until the outage is REAL: zero ready pods for the deployment,
+    plus a settle delay so Service endpoints/EndpointSlices drain.
+    ``kubectl scale`` returns immediately -- without this wait a fast run
+    completes while the old pods are still terminating (false success).
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        dep = _json_k(["get", "deployment", deployment, "-n", namespace])
+        status = dep.get("status", {})
+        ready = int(status.get("readyReplicas") or 0)
+        current = int(status.get("replicas") or 0)
+        if ready == 0 and current == 0:
+            time.sleep(8)  # endpoint drain settle
+            return
+        time.sleep(3)
+    pytest.fail(f"{deployment} in {namespace} still has pods after scale-to-zero")
+
 def _outage_scenario(gate_tag: str, deployment: str, namespace: str) -> None:
     """Scale a dependency to zero -> run -> assert fail-closed -> restore ->
     run again -> assert success."""
@@ -208,6 +226,7 @@ def _outage_scenario(gate_tag: str, deployment: str, namespace: str) -> None:
     original = _deployment_replicas(deployment, namespace)
     try:
         _scale(deployment, namespace, 0)
+        _wait_scaled_to_zero(deployment, namespace)
         rc, body = _start_run(port, gate_tag)
         assert rc in (200, 201, 202), f"API rejected run creation: {rc} {body}"
         run_id = body.get("id") or body.get("run_id")

@@ -326,6 +326,11 @@ class AcquisitionWorkerLoop:
                 self._metrics.inc("acquisition_failed_total")
             logger.warning("run %s failed: %s", run_id, error)
             await self._session.rollback()
+            # GA-GATE 37 (fail-closed): an in-process execution crash must
+            # land the run on a durable attributable terminal state -- never
+            # silent non-terminal limbo. Worker DEATH still recovers through
+            # lease expiry; a concurrent CANCEL_REQUESTED still wins.
+            await self._record_failed(run_id, f"{type(error).__name__}: {error}")
         finally:
             self._in_flight.discard(run_id)
             # Phase 28.4 audit (GATE 11): a run that did NOT reach a terminal
@@ -390,6 +395,25 @@ class AcquisitionWorkerLoop:
             # lease; failed executions stay recoverable (see recover path)
             if reached_terminal:
                 await self._release_after(run_id, token)
+
+    async def _record_failed(self, run_id: UUID, detail: str) -> None:
+        """Best-effort durable FAILED transition after an execution crash."""
+        try:
+            run = await self._session.get(AcquisitionRun, run_id)
+            if run is None or run.status in TERMINAL:
+                await self._session.rollback()
+                return
+            if run.status == "CANCEL_REQUESTED" or run.cancel_requested_at is not None:
+                # cancellation wins the terminal transition
+                await self._session.rollback()
+                return
+            run.status = "FAILED"
+            run.blocked_reason = "EXECUTION_ERROR"
+            run.blocked_detail = detail[:512]
+            run.finished_at = datetime.now(UTC)
+            await self._session.commit()
+        except Exception:  # noqa: BLE001 -- best-effort terminal recording
+            await self._session.rollback()
 
     async def _release_after(self, run_id: UUID, token: UUID) -> None:
         """Best-effort owner-only lease release after execution."""

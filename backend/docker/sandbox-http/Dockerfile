@@ -21,7 +21,9 @@ RUN adduser --system --uid 10001 --disabled-password --no-create-home --shell /u
 # network probes for certification (raw-socket/curl checks are run via exec;
 # the tools themselves do not grant egress -- network policy is applied at
 # the container/network layer)
-RUN apt-get update && apt-get install -y --no-install-recommends curl iproute2 ca-certificates \
+# GA-GATE 22: security-upgrade the pinned base so fixable CRITICAL CVEs
+# (libgnutls30 / libssl3 / openssl) never ship in release images.
+RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-recommends curl iproute2 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # minimal HTTP dependency (pinned to a known-good release)
