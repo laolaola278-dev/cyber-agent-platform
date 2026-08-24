@@ -906,7 +906,12 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
     if len(nodes) < 2:
         pytest.fail("GATE 17 requires a multi-node kind cluster (1 cp + 2 workers)")
     key = f"k8s-node-{uuid4().hex[:8]}"
-    rid = _asyncio_run_create(api_port, key)
+    # NOTE: the run is created AFTER _drain_infra_from, not before. Postgres
+    # is a bare deployment on emptyDir (no PVC): draining infra wipes the DB
+    # and re-runs migrations, so a run created before the drain vanishes and
+    # every later poll 404s -> status=None -> false non-recovery (run11
+    # failure). Infra placement on the victim node was probabilistic, which
+    # is why GATE 17 flapped between green and red runs.
     # kind has exactly 2 worker nodes and the 3 API replicas land on BOTH of
     # them -- a node "without backend pods" does not exist. Pick the worker
     # node with the FEWEST backend pods instead, then rebuild the
@@ -934,6 +939,9 @@ def test_gate17_node_failure_recovers(api_port: int) -> None:
     node = worker_nodes[0]
     try:
         _drain_infra_from(node)
+        # create the drilled run AFTER the infra move + migration restore so
+        # it survives the whole drill in the (rebuilt) database
+        rid = _asyncio_run_create(api_port, key)
         # kind node container name == node name (already '<cluster>-worker')
         proc = subprocess.run(
             ["docker", "stop", node],
