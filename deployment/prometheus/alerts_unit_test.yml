@@ -1,0 +1,109 @@
+# GA-GATE 31 -- alert rule unit tests (promtool test rules).
+#
+# Every CAP alert must be proven to FIRE when its condition holds past its
+# `for` duration and to RESOLVE when the condition clears. Run via:
+#   promtool test rules deployment/prometheus/alerts_unit_test.yml
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ---- CAPBackendDown: up==0 held 2m -> FIRES; up returns -> RESOLVES ----
+  - interval: 1m
+    input_series:
+      - series: 'up{job="cap-backend",instance="cap:8000"}'
+        values: "1 1 0 0 0 0 0 1 1"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: CAPBackendDown
+        exp_alerts: []          # condition true but `for: 2m` not yet satisfied
+      - eval_time: 5m
+        alertname: CAPBackendDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              instance: cap:8000
+              job: cap-backend
+            exp_annotations:
+              summary: CAP backend scrape target is unavailable
+      - eval_time: 8m
+        alertname: CAPBackendDown
+        exp_alerts: []          # up==1 again -> RESOLVED
+
+  # ---- CAPHighServerErrorRate: 5xx ratio > 5% -> FIRES; recovers ----
+  - interval: 1m
+    input_series:
+      # steady 30 req/min split: 25 x 2xx, 5 x 5xx -> exactly 16.7% > 5%
+      - series: 'cap_http_requests_total{status_class="2xx",instance="cap:8000"}'
+        values: "0+25x14"
+      - series: 'cap_http_requests_total{status_class="5xx",instance="cap:8000"}'
+        values: "0+5x14"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: CAPHighServerErrorRate
+        exp_alerts: []          # `for: 10m` not yet satisfied
+      - eval_time: 13m
+        alertname: CAPHighServerErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: CAP HTTP 5xx rate exceeds 5 percent
+
+  - interval: 1m
+    input_series:
+      # healthy traffic: 5xx stays far below threshold -> NEVER fires
+      - series: 'cap_http_requests_total{status_class="2xx",instance="cap:8000"}'
+        values: "0+100x14"
+      - series: 'cap_http_requests_total{status_class="5xx",instance="cap:8000"}'
+        values: "0+1x14"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: CAPHighServerErrorRate
+        exp_alerts: []
+
+  # ---- CAPHighP95Latency: q95 > 2s -> FIRES; healthy latency -> never ----
+  - interval: 1m
+    input_series:
+      # per-minute increments chosen so histogram_quantile(0.95) ~ 4.75s:
+      # 8 <=0.5s, +4 <=1s, +4 <=2s, +24 <=5s  (cumulative 40/min)
+      - series: 'cap_http_request_duration_seconds_bucket{le="0.5",instance="cap:8000"}'
+        values: "0+8x14"
+      - series: 'cap_http_request_duration_seconds_bucket{le="1",instance="cap:8000"}'
+        values: "0+12x14"
+      - series: 'cap_http_request_duration_seconds_bucket{le="2",instance="cap:8000"}'
+        values: "0+16x14"
+      - series: 'cap_http_request_duration_seconds_bucket{le="5",instance="cap:8000"}'
+        values: "0+40x14"
+      - series: 'cap_http_request_duration_seconds_bucket{le="+Inf",instance="cap:8000"}'
+        values: "0+40x14"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: CAPHighP95Latency
+        exp_alerts: []          # `for: 10m` not yet satisfied
+      - eval_time: 13m
+        alertname: CAPHighP95Latency
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: CAP p95 API latency exceeds 2 seconds
+
+  - interval: 1m
+    input_series:
+      # all requests under 0.5s -> q95 well below 2s -> NEVER fires
+      - series: 'cap_http_request_duration_seconds_bucket{le="0.5",instance="cap:8000"}'
+        values: "0+40x14"
+      - series: 'cap_http_request_duration_seconds_bucket{le="1",instance="cap:8000"}'
+        values: "0+40x14"
+      - series: 'cap_http_request_duration_seconds_bucket{le="2",instance="cap:8000"}'
+        values: "0+40x14"
+      - series: 'cap_http_request_duration_seconds_bucket{le="5",instance="cap:8000"}'
+        values: "0+40x14"
+      - series: 'cap_http_request_duration_seconds_bucket{le="+Inf",instance="cap:8000"}'
+        values: "0+40x14"
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: CAPHighP95Latency
+        exp_alerts: []

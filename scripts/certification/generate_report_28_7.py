@@ -163,6 +163,35 @@ def _section(evidence: dict, key: str) -> dict:
     return {"executed": False, "status": "NOT_EXECUTED"}
 
 
+def _suite_status(filename: str, gate: str) -> str:
+    """Suite-level evidence gate.
+
+    GATE 33: security-recert.json -- written by the GA workflow after
+    confirming the CAP Linux Certification run (the Phase 28.5 adversarial
+    security suite) COMPLETED SUCCESSFULLY for exactly this commit SHA.
+    Missing / non-success / SHA mismatch => FAIL-level statuses below.
+
+    GATE 40: skip-report.json -- post-run scan of the merged JUnit results.
+    {"skipped": n} with n == 0 passes; anything else fails (critical
+    skip == 0).
+    """
+    if gate == "GA-GATE 33":
+        recert = _evidence("security-recert")
+        conclusion = recert.get("conclusion")
+        if not recert:
+            return "NOT_RUN"
+        if recert.get("head_sha") != _commit():
+            # stale re-certification from another commit is NOT evidence
+            return "FAIL"
+        return "PASS" if conclusion == "success" else "FAIL"
+    # GA-GATE 40
+    report = _evidence(filename.removesuffix(".json"))
+    skipped = report.get("skipped")
+    if skipped is None:
+        return "NOT_RUN"
+    return "PASS" if int(skipped) == 0 else "FAIL"
+
+
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     results = _parse_junit()
@@ -195,13 +224,22 @@ def main() -> int:
                 # never be allowed to skip silently.
                 gates[gate] = "FAIL"
 
+    # Suite-level evidence gates (no single testcase maps 1:1):
+    gates["GA-GATE 33"] = _suite_status("junit-security.xml", "GA-GATE 33")
+    gates["GA-GATE 40"] = _suite_status("skip-report", "GA-GATE 40")
+
     version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
     dr = _dr_evidence()
+    slo_candidates = _evidence("slo-candidates")
     tier2 = {
         "soak": _section(_evidence("soak"), "soak"),
         "capacity": _section(_evidence("capacity"), "capacity"),
         "sli": _section(_evidence("sli"), "sli"),
-        "slo": _section(_evidence("slo"), "slo"),
+        "slo": (
+            {**slo_candidates, "executed": True}
+            if slo_candidates
+            else {"executed": False, "status": "NOT_EXECUTED"}
+        ),
         "security": _section(_evidence("security"), "security"),
         "images": _section(_evidence("images"), "images"),
     }

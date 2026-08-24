@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ga-${{ github.workflow }}-${{ github.ref }}
@@ -169,8 +170,30 @@ jobs:
       # the test module itself performs: dataset -> backup -> DESTROY Cluster A
       # -> fresh Cluster B -> restore -> integrity/idempotency/RUNNING-recovery
       # validation -> corruption scenarios -> measured RPO/RTO
+      # The heartbeat invariant's AUTHORITATIVE PostgreSQL variant runs
+      # against an ISOLATED database (cap_hbtest) through a port-forward --
+      # never against the restored dataset itself.
+      - name: Expose PostgreSQL + create isolated heartbeat test DB
+        run: |
+          kubectl -n cap-infra port-forward svc/postgres 15432:5432 >/dev/null 2>&1 &
+          for i in $(seq 1 30); do nc -z 127.0.0.1 15432 && break; sleep 2; done
+          nc -z 127.0.0.1 15432
+          kubectl -n cap-infra exec deploy/postgres -- \
+            psql -U cap -d postgres -c "CREATE DATABASE cap_hbtest" || true
+
+      - name: Install promtool (alert rule unit tests, GA-GATE 31)
+        run: |
+          curl -sSLo prom.tgz \
+            https://github.com/prometheus/prometheus/releases/download/v3.1.0/prometheus-3.1.0.linux-amd64.tar.gz
+          tar xzf prom.tgz --strip-components=1 prometheus-3.1.0.linux-amd64/promtool
+          sudo mv promtool /usr/local/bin/
+          promtool --version
+
       - name: "Run GA certification gates (strict: SKIP=FAIL)"
         working-directory: backend
+        env:
+          CAP_PG_TEST: "1"
+          DATABASE_URL: postgresql+asyncpg://cap:cap@127.0.0.1:15432/cap_hbtest
         run: |
           # JUnit goes to the REPO ROOT outputs dir (the generator reads it there)
           mkdir -p ../outputs/cap-cert-ga
@@ -178,6 +201,7 @@ jobs:
             tests/test_phase_28_7_ga_certification.py \
             tests/test_phase_28_7_reconciliation_unit.py \
             tests/test_phase_28_7_ga_tier2_cluster.py \
+            tests/test_phase_28_7_ga_tier2_ops.py \
             -p no:cacheprovider --timeout=3600 --tb=short -vv \
             --junitxml=../outputs/cap-cert-ga/junit-ga.xml
 
@@ -189,6 +213,73 @@ jobs:
           name: supply-chain-evidence
           path: outputs/cap-cert-ga/
           continue-on-error: true
+
+      # GA-GATE 33: control-plane security re-certification -- the Phase 28.5
+      # adversarial security suite must have COMPLETED SUCCESSFULLY for THIS
+      # exact commit (the Linux Certification workflow runs it on every push).
+      - name: "GA-GATE 33: verify security certification for this commit"
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python - <<'EOF'
+          import json, os, subprocess, time, pathlib
+          sha = os.environ["GITHUB_SHA"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          out_dir = pathlib.Path("outputs/cap-cert-ga")
+          out_dir.mkdir(parents=True, exist_ok=True)
+          evidence = {
+              "gate": "GA-GATE 33",
+              "suite": "CAP Linux Certification (phase 28.5 security)",
+              "head_sha": sha,
+              "conclusion": None,
+          }
+          deadline = time.time() + 5400  # wait up to 90min for completion
+          runs = []
+          while time.time() < deadline:
+              proc = subprocess.run(
+                  ["gh", "api",
+                   f"repos/{repo}/actions/workflows/cap-linux-certification.yml"
+                   f"/runs?head_sha={sha}&per_page=10"],
+                  capture_output=True, text=True)
+              if proc.returncode == 0:
+                  runs = json.loads(proc.stdout).get("workflow_runs") or []
+                  completed = [r for r in runs if r["status"] == "completed"]
+                  if completed:
+                      best = "success" if any(
+                          r["conclusion"] == "success" for r in completed
+                      ) else sorted(
+                          {r["conclusion"] for r in completed})[0]
+                      evidence["conclusion"] = best
+                      evidence["run_ids"] = [r["id"] for r in completed]
+                      break
+              time.sleep(60)
+          (out_dir / "security-recert.json").write_text(json.dumps(evidence, indent=2))
+          print(json.dumps(evidence, indent=2))
+          # NOT failing here: the generator turns a non-success conclusion
+          # into GA-GATE 33 FAIL (dev-mode exit 1 / strict-mode red).
+          EOF
+
+      # GA-GATE 40 evidence: merged JUnit skip count must be zero.
+      - name: "GA-GATE 40 evidence: critical skip report"
+        if: always()
+        run: |
+          mkdir -p outputs/cap-cert-ga
+          python - <<'EOF'
+          import json, pathlib, xml.etree.ElementTree as ET
+          skipped = 0
+          files = sorted(pathlib.Path("outputs/cap-cert-ga").glob("junit-*.xml"))
+          for f in files:
+              for case in ET.parse(f).getroot().iter("testcase"):
+                  if case.find("skipped") is not None:
+                      skipped += 1
+          report = {"skipped": skipped, "junit_files": [f.name for f in files]}
+          pathlib.Path("outputs/cap-cert-ga/skip-report.json").write_text(
+              json.dumps(report, indent=2))
+          print(json.dumps(report))
+          EOF
 
       - name: Generate GA certification artifact
         if: always()

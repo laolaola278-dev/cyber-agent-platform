@@ -6,7 +6,7 @@ Check container/Pod status, startup probe events, logs, configuration validation
 
 ## Readiness failing
 
-Check PostgreSQL DNS, credentials, TLS policy, connection limits, migration Job, and current Alembic head `20260803_0018`. Keep the Pod out of service until `/ready` succeeds.
+Check PostgreSQL DNS, credentials, TLS policy, connection limits, migration Job, and current Alembic head `20260812_0021`. Keep the Pod out of service until `/ready` succeeds.
 
 ## Authentication failures
 
