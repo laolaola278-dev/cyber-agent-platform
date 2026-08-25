@@ -237,34 +237,91 @@ def _run_detail(port: int, run_id: str) -> str:
         return f"unavailable: {exc}"
 
 
-def _bypass_diagnostics(run_id: str) -> str:
-    """Dump live sandbox pods' proxy env at violation time -- shows WHERE the
-    direct-egress bypass came from (missing/misconfigured HTTP_PROXY etc.)."""
-    lines: list[str] = []
+def _bypass_diagnostics(port: int, run_id: str) -> str:
+    """Violation-time forensics for a silent-success-under-outage breach.
+
+    Dumps, best effort:
+      * the full run detail JSON (metrics show whether ANY fetch happened)
+      * run evidence + completeness reports (did anything reach the store?)
+      * every live pod in the sandbox namespace (label-agnostic -- a wrong
+        selector once hid the very pods we needed to see)
+      * the last worker log lines (claim/readiness/exec branch decisions)
+    """
+    import httpx
+
+    from tests.test_phase_28_7_ga_certification import (
+        NAMESPACE as API_NS,
+    )
+    from tests.test_phase_28_7_ga_certification import (
+        _api_headers,
+    )
+
+    parts: list[str] = [f"forensics for run={run_id}"]
     try:
-        pods = _json_k(["get", "pods", "-n", NAMESPACE, "-l", "app=cap-sandbox"])
-        for item in pods.get("items") or []:
-            name = item.get("metadata", {}).get("name")
-            phase = item.get("status", {}).get("phase")
-            if not name:
-                continue
+        base = f"http://127.0.0.1:{port}"
+        headers = _api_headers()
+        r = httpx.get(f"{base}/acquisitions/{run_id}", headers=headers, timeout=15)
+        body = r.text[:1500] if r.status_code == 200 else f"HTTP {r.status_code}"
+        parts.append(f"detail={body}")
+        for name, path in (("evidence", "/evidence"), ("completeness", "/completeness")):
+            try:
+                r = httpx.get(
+                    f"{base}/acquisitions/{run_id}{path}", headers=headers, timeout=15
+                )
+                body = r.text[:800] if r.status_code == 200 else f"HTTP {r.status_code}"
+                parts.append(f"{name}={body}")
+            except Exception as exc:  # noqa: BLE001
+                parts.append(f"{name}=unavailable:{exc}")
+    except Exception as exc:  # noqa: BLE001
+        parts.append(f"api forensics unavailable: {exc}")
+
+    try:
+        pods = _json_k(["get", "pods", "-n", "cap-sandbox"])
+        items = pods.get("items") or []
+        if not items:
+            parts.append("sandbox ns: NO PODS AT ALL")
+        for item in items:
+            meta = item.get("metadata", {})
+            status = item.get("status", {})
+            name = meta.get("name")
+            phase = status.get("phase")
             proc = subprocess.run(
                 [
-                    "kubectl", "exec", "-n", NAMESPACE, name, "--",
+                    "kubectl", "exec", "-n", "cap-sandbox", name, "--",
                     "sh", "-c",
                     "echo HTTP_PROXY=$HTTP_PROXY HTTPS_PROXY=$HTTPS_PROXY "
-                    "NO_PROXY=$NO_PROXY http_proxy=$http_proxy",
+                    "NO_PROXY=$NO_PROXY",
                 ],
                 capture_output=True,
                 timeout=20,
                 check=False,
             )
             env = (proc.stdout or b"").decode(errors="replace").strip()
-            lines.append(f"sandbox pod {name} ({phase}): {env}")
+            parts.append(f"sandbox {name}({phase}): {env}")
     except Exception as exc:  # noqa: BLE001
-        lines.append(f"diagnostics unavailable: {exc}")
-    header = f"bypass diagnostics for run={run_id}"
-    return header + ": " + (" | ".join(lines) if lines else "no sandbox pods found")
+        parts.append(f"sandbox ns listing unavailable: {exc}")
+
+    try:
+        workers = _json_k(
+            ["get", "pods", "-n", API_NS,
+             "-l", "app.kubernetes.io/component=worker"]
+        )
+        for item in workers.get("items") or []:
+            name = item.get("metadata", {}).get("name")
+            if not name:
+                continue
+            proc = subprocess.run(
+                ["kubectl", "logs", "-n", API_NS, name, "--tail=60"],
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+            log = (proc.stdout or b"").decode(errors="replace").strip()[-1200:]
+            parts.append(f"worker {name} logs<<<{log}>>>")
+    except Exception as exc:  # noqa: BLE001
+        parts.append(f"worker logs unavailable: {exc}")
+
+    return " | ".join(parts)
 
 
 def _outage_scenario(
@@ -310,7 +367,7 @@ def _outage_scenario(
                 f"[{gate_tag}] run reached {status} WHILE {deployment} was "
                 "down -- silent success during a dependency outage; "
                 f"detail={_run_detail(port, run_id)}; "
-                f"{_bypass_diagnostics(run_id)}"
+                f"{_bypass_diagnostics(port, run_id)}"
             )
             if status in FAIL_CLOSED_STATUSES:
                 failed_closed = True
