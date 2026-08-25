@@ -279,6 +279,7 @@ class AdaptiveDataAcquisitionAgent:
         if source_type in (SourceType.DYNAMIC_HTML,) and self._browser is not None:
             observation = await self._browser.browse(url)
             if not observation.available:
+                result.transport_failures += 1
                 return "replan" if source_type == SourceType.STATIC_HTML else "partial"
             content = observation.html.encode("utf-8", "replace")
             content_type = "text/html"
@@ -320,6 +321,9 @@ class AdaptiveDataAcquisitionAgent:
                 result.blocked_detail = fetch.blocked_detail
                 return "blocked"
             if fetch.status == 0 or not fetch.content:
+                if fetch.status == 0:
+                    # hard transport death (conn refused / DNS / proxy dead)
+                    result.transport_failures += 1
                 return "partial"
             content = fetch.content
             content_type = fetch.content_type
@@ -560,7 +564,7 @@ class AdaptiveDataAcquisitionAgent:
         # never surface as a success verdict -- empty documents produced by
         # dead fetches (egress/DNS down) previously still counted as
         # observed coverage and drove a false FINISH/COMPLETE.
-        nothing_acquired = result.total_bytes == 0
+        nothing_acquired = result.total_bytes == 0 and result.transport_failures > 0
         partial_failure = result.blocked_reason in (
             BlockReason.TIMEOUT,
             BlockReason.RATE_LIMITED,

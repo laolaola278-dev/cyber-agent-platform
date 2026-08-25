@@ -268,6 +268,10 @@ class AcquisitionResult:
     started_at: datetime | None = None
     finished_at: datetime | None = None
     total_bytes: int = 0
+    # GA-GATE 37/39: transport-level dead attempts (DNS/proxy/conn refused).
+    # Distinguishes "fetch died" from "fetched but empty" -- only the
+    # former may drive a fail-closed BLOCKED verdict.
+    transport_failures: int = 0
     duration_seconds: float = 0.0
     records: list[dict[str, Any]] = field(default_factory=list)
     candidate_bundles: list[Any] = field(default_factory=list)
