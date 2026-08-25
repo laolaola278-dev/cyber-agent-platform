@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import threading
 import time
 from uuid import uuid4
 
@@ -324,6 +325,78 @@ def _bypass_diagnostics(port: int, run_id: str) -> str:
     return " | ".join(parts)
 
 
+class _SandboxPodWatcher:
+    """Capture sandbox pod SPECS (incl. env) while executions are live.
+
+    Sandbox pods are single-shot and deleted on EVERY completion path, so
+    post-violation `kubectl get pods` always sees an empty namespace. This
+    watcher polls the sandbox namespace during the outage window and keeps
+    every observed pod's env + logs -- the only way to answer 'did the
+    execution pod actually carry the egress proxy env?'.
+    """
+
+    def __init__(self, namespace: str = "cap-sandbox") -> None:
+        self._namespace = namespace
+        self._captured: list[str] = []
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> str:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=30)
+        return "\n".join(self._captured) if self._captured else (
+            "no sandbox pods observed during outage window"
+        )
+
+    def _run(self) -> None:
+        seen: set[str] = set()
+        while not self._stop.is_set():
+            try:
+                pods = _json_k(["get", "pods", "-n", self._namespace])
+                for item in pods.get("items") or []:
+                    name = (item.get("metadata") or {}).get("name")
+                    if not name or name in seen:
+                        continue
+                    seen.add(name)
+                    spec = item.get("spec") or {}
+                    containers = spec.get("containers") or [{}]
+                    env = (containers[0].get("env") or []) if containers else []
+                    env_s = ";".join(
+                        f"{e.get('name')}={e.get('value')}" for e in env
+                    )
+                    phase = (item.get("status") or {}).get("phase")
+                    entry = f"[watch] {name} phase={phase} env: {env_s}"
+                    proc = subprocess.run(
+                        ["kubectl", "logs", "-n", self._namespace, name],
+                        capture_output=True,
+                        timeout=15,
+                        check=False,
+                    )
+                    log = (proc.stdout or b"").decode(errors="replace").strip()
+                    if log:
+                        entry += f" | shim-log<<<{log[-800:]}>>>"
+                    self._captured.append(entry)
+            except Exception:  # noqa: BLE001 -- watcher must never disturb the test
+                pass
+            self._stop.wait(1.0)
+
+
+def _egress_proxy_endpoints_empty(namespace: str) -> tuple[bool, str]:
+    """True when the egress proxy Service has NO ready endpoints left."""
+    eps = _json_k(["get", "endpoints", "-n", namespace, "cap-cap-egress-proxy"])
+    subsets = eps.get("subsets") or []
+    ready = []
+    for s in subsets:
+        for addr in s.get("addresses") or []:
+            ready.append(addr.get("ip"))
+    return (not ready), f"ready endpoint IPs: {ready or 'NONE'}"
+
+
 def _outage_scenario(
     gate_tag: str,
     deployment: str,
@@ -350,9 +423,21 @@ def _outage_scenario(
     """
     port = _pf_api()
     original = _deployment_replicas(deployment, namespace)
+    watcher = _SandboxPodWatcher() if execution_level else None
     try:
         _scale(deployment, namespace, 0)
         _wait_scaled_to_zero(deployment, namespace)
+        if execution_level:
+            # hard pre-condition: the proxy Service must have NO ready
+            # endpoints left -- a non-empty endpoint list here means the
+            # outage is not real (rogue pods / selector mismatch) and the
+            # gate would be measuring nothing.
+            empty, detail = _egress_proxy_endpoints_empty(namespace)
+            assert empty, (
+                f"[{gate_tag}] egress proxy Service still has endpoints "
+                f"after scale-to-zero -- outage not real ({detail})"
+            )
+            watcher.start()
         rc, body = _start_run(port, gate_tag)
         assert rc in (200, 201, 202), f"API rejected run creation: {rc} {body}"
         run_id = body.get("id") or body.get("run_id")
@@ -367,7 +452,8 @@ def _outage_scenario(
                 f"[{gate_tag}] run reached {status} WHILE {deployment} was "
                 "down -- silent success during a dependency outage; "
                 f"detail={_run_detail(port, run_id)}; "
-                f"{_bypass_diagnostics(port, run_id)}"
+                f"{_bypass_diagnostics(port, run_id)}; "
+                f"sandbox-pod-capture:\n{watcher.stop() if watcher else 'n/a'}"
             )
             if status in FAIL_CLOSED_STATUSES:
                 failed_closed = True
@@ -376,9 +462,12 @@ def _outage_scenario(
         if execution_level and not failed_closed:
             pytest.fail(
                 f"[{gate_tag}] no attributable failure while {deployment} was "
-                "down -- executions at this layer must fail CLOSED"
+                "down -- executions at this layer must fail CLOSED; "
+                f"sandbox-pod-capture:\n{watcher.stop() if watcher else 'n/a'}"
             )
     finally:
+        if watcher is not None:
+            watcher.stop()
         _scale(deployment, namespace, original)
         _rollout(deployment, namespace)
 
