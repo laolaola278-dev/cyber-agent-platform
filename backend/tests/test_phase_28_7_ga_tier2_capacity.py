@@ -145,7 +145,10 @@ def test_ga_gate27_capacity_envelope_matrix() -> None:
                     f"ga27-w{workers}-l{load}-{i}-{uuid4().hex[:6]}",
                     url="http://example.com/",
                 )
-                assert rc in (200, 201), f"cell {workers}x{load}: {rc} {body}"
+                # async create contract: 202 Accepted (QUEUED) is the
+                # normal outcome -- same tuple as the core certification
+                # module (200/201 legacy-sync, 202 queued)
+                assert rc in (200, 201, 202), f"cell {workers}x{load}: {rc} {body}"
                 run_ids.append(body.get("id") or body.get("run_id"))
 
             # interleave paginated traffic WHILE executions are processed
@@ -232,7 +235,7 @@ def test_ga_gate28_overload_backpressure_clean() -> None:
                     f"ga28-overload-{i}-{uuid4().hex[:6]}",
                     url="http://example.com/",
                 )
-                if rc in (200, 201):
+                if rc in (200, 201, 202):  # 202 QUEUED = clean accept
                     accepted += 1
                     rid = body.get("id") or body.get("run_id")
                     if rid:
