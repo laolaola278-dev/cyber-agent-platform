@@ -201,6 +201,7 @@ jobs:
             tests/test_phase_28_7_ga_certification.py \
             tests/test_phase_28_7_reconciliation_unit.py \
             tests/test_phase_28_7_ga_tier2_cluster.py \
+            tests/test_phase_28_7_ga_tier2_capacity.py \
             tests/test_phase_28_7_ga_tier2_ops.py \
             tests/test_phase_28_7_ga_tier2_resilience.py \
             -p no:cacheprovider --timeout=3600 --tb=short -vv \

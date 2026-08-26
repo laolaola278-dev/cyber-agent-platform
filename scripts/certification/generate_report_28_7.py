@@ -67,6 +67,13 @@ TEST_GATES: dict[str, list[str]] = {
     ],
     "test_ga_gate38_dns_outage_fails_closed_and_recovers": ["GA-GATE 38"],
     "test_ga_gate39_egress_proxy_outage_no_direct_bypass": ["GA-GATE 39"],
+    # Tier 2 (capacity): documented matrix + overload backpressure
+    "test_ga_gate27_capacity_envelope_matrix": ["GA-GATE 27"],
+    "test_ga_gate28_overload_backpressure_clean": ["GA-GATE 28"],
+    # Tier 2 (ops): SLO candidates / alerts / runbooks
+    "test_ga_gate30_slo_candidates_from_real_data": ["GA-GATE 30"],
+    "test_ga_gate31_alert_rules_fire_and_resolve": ["GA-GATE 31"],
+    "test_ga_gate32_runbook_exercises": ["GA-GATE 32"],
     # Tier 2 (reliability workflow -- nightly/dispatch, own cluster):
     # soak / leak / orphan / under-load upgrade+rollback
     "test_ga_gate24_two_hour_soak_full_workload": ["GA-GATE 24"],
