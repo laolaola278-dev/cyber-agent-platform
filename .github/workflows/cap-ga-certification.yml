@@ -213,7 +213,9 @@ jobs:
         with:
           name: supply-chain-evidence
           path: outputs/cap-cert-ga/
-          continue-on-error: true
+        # step-level property (NOT a download-artifact input -- inside 'with:'
+        # it is rejected and a missing artifact then FAILS the job)
+        continue-on-error: true
 
       # Reliability gates (24-26/34/35) certify in cap-ga-reliability
       # (nightly/dispatch). When a run for THIS commit exists -- e.g. the
@@ -226,7 +228,7 @@ jobs:
         with:
           name: reliability-evidence
           path: ${{ github.workspace }}
-          continue-on-error: true
+        continue-on-error: true
 
       # GA-GATE 33: control-plane security re-certification -- the Phase 28.5
       # adversarial security suite must have COMPLETED SUCCESSFULLY for THIS
