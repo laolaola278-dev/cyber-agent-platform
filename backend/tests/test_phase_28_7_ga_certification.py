@@ -147,6 +147,9 @@ def _port_forward(local_mapping: str, target_args: list[str]) -> subprocess.Pope
     # its inherited fd) -- an unclosed FileIO here surfaces later as
     # PytestUnraisableExceptionWarning at GC time and FAILS nearby tests
     err_path = REPORT_DIR / f"pf-{local_port}.log"
+    # the reliability (soak) workflow never creates outputs/ga-dr/ itself --
+    # only the GA job's DR tests do; create it on first use
+    err_path.parent.mkdir(parents=True, exist_ok=True)
     with open(err_path, "ab") as err_fh:
         proc = subprocess.Popen(
             ["kubectl", "port-forward", *target_args, local_mapping],
