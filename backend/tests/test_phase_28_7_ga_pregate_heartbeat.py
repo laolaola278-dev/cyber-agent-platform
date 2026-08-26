@@ -24,6 +24,7 @@ import asyncio
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -59,6 +60,22 @@ async def pregate_db(tmp_path: Path) -> tuple:
         connect_args={"check_same_thread": False, "timeout": 30},
         poolclass=NullPool,
     )
+
+    # heartbeat tasks write CONCURRENTLY with the main execute flow; in
+    # default rollback-journal mode two writers can deadlock holding shared
+    # locks -> INSTANT "database is locked" (busy_timeout never fires).
+    # WAL mode gives writer+readers concurrency and breaks the deadlock
+    # (run16 flake: test_pregate_d_stale_owner_cannot_commit_after_reclaim).
+    from sqlalchemy import event
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _sqlite_wal(dbapi_conn: Any, _record: Any) -> None:
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.close()
+
     SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
