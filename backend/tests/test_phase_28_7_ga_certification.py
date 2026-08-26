@@ -143,13 +143,16 @@ def _port_forward(local_mapping: str, target_args: list[str]) -> subprocess.Pope
             old.wait(timeout=5)
         except Exception:  # noqa: BLE001
             old.kill()
+    # parent-side handle is closed IMMEDIATELY after spawn (the child keeps
+    # its inherited fd) -- an unclosed FileIO here surfaces later as
+    # PytestUnraisableExceptionWarning at GC time and FAILS nearby tests
     err_path = REPORT_DIR / f"pf-{local_port}.log"
-    err_fh = open(err_path, "ab")  # noqa: SIM115 -- lifetime == process lifetime
-    proc = subprocess.Popen(
-        ["kubectl", "port-forward", *target_args, local_mapping],
-        stdout=subprocess.DEVNULL,
-        stderr=err_fh,
-    )
+    with open(err_path, "ab") as err_fh:
+        proc = subprocess.Popen(
+            ["kubectl", "port-forward", *target_args, local_mapping],
+            stdout=subprocess.DEVNULL,
+            stderr=err_fh,
+        )
     _PF_PROCS.append(proc)
     _PF_BY_PORT[local_port] = proc
     return proc
