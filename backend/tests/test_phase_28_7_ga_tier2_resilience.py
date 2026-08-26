@@ -23,6 +23,7 @@ Each outage is reverted in a finally block -- the cluster is left healthy.
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import threading
 import time
@@ -38,6 +39,7 @@ from tests.test_phase_28_7_ga_certification import (
     _json_k,
     _kubectl,
     _pf_api,
+    _run,
     _run_status,
     _wait_terminal,
 )
@@ -387,14 +389,175 @@ class _SandboxPodWatcher:
 
 
 def _egress_proxy_endpoints_empty(namespace: str) -> tuple[bool, str]:
-    """True when the egress proxy Service has NO ready endpoints left."""
+    """True when the egress proxy Service has NO endpoints left at all --
+    BOTH ready and notReady addresses must be gone (a terminating-but-
+    still-listening proxy pod would sit in notReadyAddresses)."""
     eps = _json_k(["get", "endpoints", "-n", namespace, "cap-cap-egress-proxy"])
     subsets = eps.get("subsets") or []
-    ready = []
+    ready: list[str] = []
+    not_ready: list[str] = []
     for s in subsets:
         for addr in s.get("addresses") or []:
             ready.append(addr.get("ip"))
-    return (not ready), f"ready endpoint IPs: {ready or 'NONE'}"
+        for addr in s.get("notReadyAddresses") or []:
+            not_ready.append(addr.get("ip"))
+    ok = not ready and not not_ready
+    return ok, f"ready={ready or 'NONE'} notReady={not_ready or 'NONE'}"
+
+
+def _wait_proxy_pods_gone(namespace: str, timeout_s: float = 120.0) -> None:
+    """Wait until ZERO egress-proxy pods remain (fully terminated).
+
+    Scale-to-zero only marks desired state; the old pod may linger in
+    Terminating for seconds. GATE 39's outage is only real once the
+    previous proxy PROCESS is gone from the cluster.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        pods = _json_k(
+            ["get", "pods", "-n", namespace,
+             "-l", "app.kubernetes.io/component=egress-proxy"]
+        )
+        if not (pods.get("items") or []):
+            return
+        time.sleep(2)
+    pytest.fail(f"egress-proxy pods still present in {namespace} after {timeout_s}s")
+
+
+_CANARY_PY_FETCH = (
+    "import json,urllib.request\n"
+    "body=json.dumps({'version':1,'operation':'http_fetch','run_id':'canary',"
+    "'sandbox_execution_id':'canary','url':'http://example.com/',"
+    "'policy':{'timeout_seconds':15}}).encode()\n"
+    "req=urllib.request.Request('http://127.0.0.1:8080/',data=body,"
+    "headers={'Content-Type':'application/json'})\n"
+    "try:\n"
+    "    resp=json.load(urllib.request.urlopen(req,timeout=60))\n"
+    "except Exception as e:\n"
+    "    print(json.dumps({'transport_error':str(e)[:300]}))\n"
+    "    raise SystemExit\n"
+    "r=resp.get('result') or {}\n"
+    "print(json.dumps({'envelope':resp.get('status'),'error':resp.get('error'),"
+    "'fetch_status':r.get('status'),'b64_len':len(r.get('content_b64') or ''),"
+    "'blocked_reason':r.get('blocked_reason'),"
+    "'blocked_detail':(r.get('blocked_detail') or '')[:200]}))\n"
+)
+
+_CANARY_PY_ENV = (
+    "import os;print(';'.join(sorted("
+    "f'{k}={v}' for k,v in os.environ.items()"
+    " if 'PROXY' in k.upper())))"
+)
+
+
+def _egress_canary_probe(namespace: str = "cap-sandbox") -> str:
+    """Deterministic in-test reproduction attempt for the direct-egress bypass.
+
+    Creates a sandbox pod with EXACTLY the spec the worker-side provider uses
+    (same image + env incl. proxy trio), then -- while the outage is live --
+    issues the SAME typed http_fetch against its own loopback shim and reports:
+      * the RUNTIME process env (settles 'did the pod really see the vars')
+      * the fetch verdict (real content => bypass reproduced at the pod layer;
+        failure => network isolation holds and the breach is elsewhere)
+    The canary never touches the API or DB, so it cannot mask a gate verdict.
+    """
+    name = f"cap-egress-canary-{uuid4().hex[:6]}"
+    proxy = "http://cap-cap-egress-proxy.cap.svc:8080"
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": {"cap.canary": "egress-probe"},
+        },
+        "spec": {
+            "automountServiceAccountToken": False,
+            "restartPolicy": "Never",
+            "containers": [
+                {
+                    "name": "sandbox",
+                    "image": "cap-sandbox-http:latest",
+                    "imagePullPolicy": "IfNotPresent",
+                    "command": ["python", "-m", "sandbox.shim", "--serve"],
+                    "env": [
+                        {"name": "CAP_SHIM_PORT", "value": "8080"},
+                        {"name": "PYTHONUNBUFFERED", "value": "1"},
+                        {"name": "HTTPS_PROXY", "value": proxy},
+                        {"name": "HTTP_PROXY", "value": proxy},
+                        {"name": "NO_PROXY", "value": ""},
+                    ],
+                    "ports": [{"containerPort": 8080, "protocol": "TCP"}],
+                    "resources": {
+                        "limits": {"memory": "512Mi", "cpu": "500m"},
+                        "requests": {"memory": "64Mi", "cpu": "10m"},
+                    },
+                    "securityContext": {
+                        "allowPrivilegeEscalation": False,
+                        "runAsNonRoot": True,
+                        "runAsUser": 10001,
+                        "runAsGroup": 10001,
+                        "readOnlyRootFilesystem": True,
+                        "seccompProfile": {"type": "RuntimeDefault"},
+                        "capabilities": {"drop": ["ALL"]},
+                    },
+                }
+            ],
+        },
+    }
+    try:
+        _run(["kubectl", "apply", "-f", "-"], input=json.dumps(manifest), timeout=60)
+        # wait Running + ready (image already node-local -> seconds)
+        deadline = time.monotonic() + 120
+        phase = "?"
+        while time.monotonic() < deadline:
+            pod = _json_k(["get", "pod", name, "-n", namespace])
+            phase = (pod.get("status") or {}).get("phase", "?")
+            cs = ((pod.get("status") or {}).get("containerStatuses") or [{}])[0]
+            if phase == "Running" and cs.get("ready"):
+                break
+            if phase in ("Failed", "Succeeded"):
+                return f"canary pod {phase} before serving"
+            time.sleep(2)
+        else:
+            return f"canary pod never became ready (last phase={phase})"
+
+        summary = [f"[canary] pod={name} phase={phase}"]
+        proc = subprocess.run(
+            ["kubectl", "exec", "-n", namespace, name, "--",
+             "python", "-c", _CANARY_PY_ENV],
+            capture_output=True, timeout=30, check=False,
+        )
+        summary.append(
+            "runtime-env<<<"
+            f"{(proc.stdout or b'').decode(errors='replace').strip() or '(empty)'}"
+            ">>>"
+        )
+        proc = subprocess.run(
+            ["kubectl", "exec", "-n", namespace, name, "--",
+             "python", "-c", _CANARY_PY_FETCH],
+            capture_output=True, timeout=120, check=False,
+        )
+        out = (proc.stdout or b"").decode(errors="replace").strip()
+        err = (proc.stderr or b"").decode(errors="replace").strip()
+        summary.append(f"fetch-result<<<{out or err[-400:] or '(no output)'}>>>")
+        logs = subprocess.run(
+            ["kubectl", "logs", "-n", namespace, name],
+            capture_output=True, timeout=20, check=False,
+        )
+        log = (logs.stdout or b"").decode(errors="replace").strip()
+        if log:
+            summary.append(f"shim-log<<<{log[-600:]}>>>")
+        return " ".join(summary)
+    except Exception as exc:  # noqa: BLE001 -- diagnostics must never throw
+        return f"[canary] probe itself failed: {exc}"
+    finally:
+        try:
+            _run(["kubectl", "delete", "pod", name, "-n", namespace,
+                  "--force", "--grace-period=0", "--ignore-not-found"],
+                 timeout=60, check=False)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _outage_scenario(
@@ -427,17 +590,31 @@ def _outage_scenario(
     try:
         _scale(deployment, namespace, 0)
         _wait_scaled_to_zero(deployment, namespace)
+        canary = "n/a"
         if execution_level:
-            # hard pre-condition: the proxy Service must have NO ready
-            # endpoints left -- a non-empty endpoint list here means the
-            # outage is not real (rogue pods / selector mismatch) and the
-            # gate would be measuring nothing.
+            # hard pre-condition 1: the old proxy PROCESS is fully gone
+            # (scale-to-zero leaves a Terminating pod alive for a while --
+            # a still-listening proxy would make the outage fictional)
+            _wait_proxy_pods_gone(namespace)
+            # hard pre-condition 2: the Service has NO addresses left at all
+            # (ready AND notReady -- see _egress_proxy_endpoints_empty)
             empty, detail = _egress_proxy_endpoints_empty(namespace)
             assert empty, (
                 f"[{gate_tag}] egress proxy Service still has endpoints "
                 f"after scale-to-zero -- outage not real ({detail})"
             )
+            # deterministic reproduction attempt: an isolated sandbox pod,
+            # identical spec to the worker's provider, fetching DURING the
+            # outage. Real content here == bypass reproduced at the pod
+            # layer; clean failure == network isolation holds and the breach
+            # lives elsewhere (worker-side execution path).
             watcher.start()
+            canary = _egress_canary_probe()
+            empty2, detail2 = _egress_proxy_endpoints_empty(namespace)
+            assert empty2, (
+                f"[{gate_tag}] egress proxy endpoints reappeared during "
+                f"canary probe ({detail2}); canary={canary}"
+            )
         rc, body = _start_run(port, gate_tag)
         assert rc in (200, 201, 202), f"API rejected run creation: {rc} {body}"
         run_id = body.get("id") or body.get("run_id")
@@ -451,7 +628,7 @@ def _outage_scenario(
             assert status not in SUCCESS_STATUSES, (
                 f"[{gate_tag}] run reached {status} WHILE {deployment} was "
                 "down -- silent success during a dependency outage; "
-                f"detail={_run_detail(port, run_id)}; "
+                f"{canary}; detail={_run_detail(port, run_id)}; "
                 f"{_bypass_diagnostics(port, run_id)}; "
                 f"sandbox-pod-capture:\n{watcher.stop() if watcher else 'n/a'}"
             )
@@ -463,8 +640,11 @@ def _outage_scenario(
             pytest.fail(
                 f"[{gate_tag}] no attributable failure while {deployment} was "
                 "down -- executions at this layer must fail CLOSED; "
-                f"sandbox-pod-capture:\n{watcher.stop() if watcher else 'n/a'}"
+                f"{canary}; sandbox-pod-capture:\n"
+                f"{watcher.stop() if watcher else 'n/a'}"
             )
+        if execution_level:
+            print(f"\n[{gate_tag}] canary probe result: {canary}")
     finally:
         if watcher is not None:
             watcher.stop()
