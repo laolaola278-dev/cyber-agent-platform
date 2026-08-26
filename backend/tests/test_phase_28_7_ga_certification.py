@@ -127,13 +127,31 @@ def _api_health(port: int) -> bool:
         return False
 
 
+# one live port-forward PER local port: re-spawning on the same port used to
+# leave the OLD tunnel listening -- the new process died silently (port busy)
+# and _wait_port probed the STALE tunnel pointed at a dead backend pod
+# (GA-GATE 37 "API not healthy via port-forward" after PG-exhaustion restarts)
+_PF_BY_PORT: dict[int, subprocess.Popen] = {}
+
+
 def _port_forward(local_mapping: str, target_args: list[str]) -> subprocess.Popen:
+    local_port = int(local_mapping.split(":")[0])
+    old = _PF_BY_PORT.get(local_port)
+    if old is not None and old.poll() is None:
+        old.terminate()
+        try:
+            old.wait(timeout=5)
+        except Exception:  # noqa: BLE001
+            old.kill()
+    err_path = REPORT_DIR / f"pf-{local_port}.log"
+    err_fh = open(err_path, "ab")  # noqa: SIM115 -- lifetime == process lifetime
     proc = subprocess.Popen(
         ["kubectl", "port-forward", *target_args, local_mapping],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=err_fh,
     )
     _PF_PROCS.append(proc)
+    _PF_BY_PORT[local_port] = proc
     return proc
 
 
@@ -198,12 +216,28 @@ def _api_cancel(port: int, run_id: str) -> int:
 
 def _pf_api() -> int:
     port = 18080
-    _port_forward(f"{port}:8000", ["-n", NAMESPACE, "svc/cap-cap-backend"])
-    _wait_port(f"{port}:8000")
+    proc = _port_forward(f"{port}:8000", ["-n", NAMESPACE, "svc/cap-cap-backend"])
+    _wait_port(f"{port}:8000", timeout=45.0)
+    if proc.poll() is not None:
+        # died immediately (e.g. bind error) -- surface its stderr log
+        err_log = ""
+        err_path = REPORT_DIR / f"pf-{port}.log"
+        if err_path.exists():
+            err_log = err_path.read_text(errors="replace")[-800:]
+        pytest.fail(
+            f"kubectl port-forward for API exited rc={proc.returncode}: {err_log}"
+        )
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
         if _api_health(port):
             return port
+        if proc.poll() is not None:
+            err_path = REPORT_DIR / f"pf-{port}.log"
+            err_log = err_path.read_text(errors="replace")[-800:] if err_path.exists() else ""
+            pytest.fail(
+                f"kubectl port-forward for API died mid-health-wait "
+                f"rc={proc.returncode}: {err_log}"
+            )
         time.sleep(2)
     pytest.fail("API not healthy via port-forward")
 

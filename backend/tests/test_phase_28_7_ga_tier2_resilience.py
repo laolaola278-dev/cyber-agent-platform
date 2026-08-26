@@ -645,6 +645,19 @@ def _outage_scenario(
             )
         if execution_level:
             print(f"\n[{gate_tag}] canary probe result: {canary}")
+            # persist for artifact upload (pytest swallows stdout of PASSED
+            # tests, so a green run would otherwise hide the evidence)
+            try:
+                from tests.test_phase_28_7_ga_certification import REPORT_DIR
+
+                with open(REPORT_DIR / "canary-gate39.log", "a",
+                          encoding="utf-8") as fh:
+                    fh.write(
+                        f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} "
+                        f"{gate_tag}: {canary}\n"
+                    )
+            except Exception:  # noqa: BLE001 -- diagnostics only
+                pass
     finally:
         if watcher is not None:
             watcher.stop()
