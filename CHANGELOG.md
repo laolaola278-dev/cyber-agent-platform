@@ -4,7 +4,57 @@ All notable changes follow Keep a Changelog categories and Semantic Versioning 2
 
 ## [Unreleased]
 
-No new feature development is permitted while `1.0.0-rc1` is under Architect Review.
+## [1.0.0] - 2026-08-28
+
+General Availability. Phase 28.7 GA Reliability Certification: **40/40 gates
+PASS** under `CAP_GA_STRICT=1`. Runtime certification anchored at commit
+`10369e75af7e89cb03a10a911727dc048ea73c1e` and inherited by this release
+(post-cert diff is release-metadata-only, verified by the automated fail-closed
+diff classifier).
+
+### Added
+
+- Whole-cluster disaster-recovery certification: real `kind delete cluster`
+  destruction, fresh-cluster restore with fail-closed manifest verification.
+  Measured RPO = 9.55 s, RTO = 238.64 s.
+- 2-hour soak certification (0 false reclaims, 11 controlled pod kills with
+  only expected crash-recovery reclaims, availability 1.0, stable RSS).
+- 9-cell capacity matrix and overload/backpressure gates.
+- Automated release diff classifier (`scripts/release/classify_diff.py`) and
+  release version-consistency gate
+  (`backend/tests/test_release_version_consistency.py`).
+- GA release notes (`docs/releases/v1.0.0.md`).
+
+### Changed
+
+- Version aligned to `1.0.0` across VERSION, backend pyproject/uv.lock,
+  frontend package.json/package-lock, sdk, Helm chart
+  (version/appVersion/image tags), Dockerfile `ARG VERSION`, and the runtime
+  reported `app_version` / `__version__`.
+- Helm chart `artifacthub.io/prerelease` annotation flipped `true` → `false`.
+- Corrected the pre-existing `backend/app/__init__.py` `__version__` drift
+  (`0.1.0` → `1.0.0`).
+
+### Fixed
+
+- D1 fact conflict resolved: the earlier "per-run lease lacks renewal"
+  limitation was fact-checked and found FALSE. The production K8s path renews
+  the acquisition run-claim lease every `lease_ttl/3` on a dedicated session
+  with fencing. D1 removed from known limitations.
+
+### Security
+
+- Worker never mounts a container-runtime socket; sandbox execution uses the
+  Kubernetes API with namespaced RBAC (Phase 28.6 closure carried into GA).
+- Trivy image scans report 0 blocking HIGH/CRITICAL; SBOM (SPDX + CycloneDX)
+  and provenance generated for release images.
+
+### Known limitations
+
+- 24-hour soak not yet executed (2-hour soak is the certified baseline).
+- SLO candidates are derived, not enforced (require ~30 days production data).
+- Cancel vs. terminal-state race (Low severity; cancel API idempotent for
+  terminal runs).
 
 ## [1.0.0-rc1] - 2026-08-05
 

@@ -1,11 +1,12 @@
-# Known Issues for 1.0.0-rc1
+# Known Issues for 1.0.0 (GA)
+
+> Supersedes the `1.0.0-rc1` known-issues set. Items closed by Phase 28.6
+> (docker.sock elimination) and the Phase 28.7 D1 fact-check are removed.
 
 ## Release blockers
 
-1. Phase 22 high-concurrency API latency budgets failed. At concurrency 1000, POST `/assets` measured P95 17,236.32 ms and P99 17,248.67 ms in an in-process ASGI/SQLite benchmark. The result is not a PostgreSQL capacity result, but it blocks an unconditional performance certification.
-2. Real PostgreSQL lock/connection-pool/migration behavior and Redis/PostgreSQL restart recovery were not tested because Docker Engine was unavailable.
-3. Kubernetes/Helm install, rolling upgrade, rollback, probes, and disruption behavior are statically defined but not cluster-certified.
-4. The repository has no Git commit history, remote, signed tag, or executed GitHub workflow. `v1.0.0-rc1` is prepared as an asset set, not yet a published immutable release.
+None. Phase 28.7 GA Reliability Certification passed 40/40 gates under
+`CAP_GA_STRICT=1` at certified commit `10369e7`.
 
 ## Operational limitations
 
@@ -16,14 +17,26 @@
 - The Web Console defaults to `read-only` for local Compose. It is not a production identity solution.
 - Frontend bundles still produce size warnings; this is not a correctness defect.
 
-## Local certification evidence (updated 2026-08-06)
+## GA known limitations (carried from the Phase 28.7 readiness report)
 
-- Ruff, Python source compilation, repository whitespace checks, Alembic single-head validation, and Compose static configuration validation passed locally. Ruff emitted only a cache-permission warning (`.ruff_cache` access denied) after reporting `All checks passed!`; this does not change the lint result.
-- Frontend production dependency audit against the official npm registry reported 0 vulnerabilities.
-- Basic repository scans found no committed literal production credentials, explicit TLS-verification disablement, dynamic `eval`/`exec`, `os.system`, `pickle.load(s)`, unsafe `yaml.load`, or shell-enabled subprocess calls in the reviewed source/configuration scope.
-- Local `npm ci` could not complete because the WorkBuddy safe-delete hook blocked npm's bulk replacement of 87 `node_modules` paths. This is a workstation policy constraint; lint passed against the existing tree, while the production build is currently blocked because the Windows esbuild optional package `@esbuild/win32-x64` is absent after the interrupted dependency replacement. CI still runs clean `npm ci` on Ubuntu.
-- Helm was not installed locally, so local `helm lint/template/package` evidence is unavailable. CI pins Helm `v3.17.3` and retains these commands as mandatory gates.
+1. **24-hour soak not yet executed.** The certified soak ran for 2 hours
+   (7,200 s): 0 false reclaims on healthy runs, 11 controlled worker pod kills
+   with only expected crash-recovery reclaims, availability 1.0, stable RSS. A
+   24-hour soak is future work for deeper confidence on long-tail memory leaks
+   and run-reclaim behavior.
+2. **SLO candidates are not enforced SLOs.** They are derived from a single
+   2-hour soak + one DR cycle. Promotion to production SLOs requires ~30 days
+   of production data and a product decision.
+3. **Cancel vs. terminal-state race (Low).** A restrictive policy can finalize
+   a run as BLOCKED before a cancel request lands; the cancel API is idempotent
+   for already-terminal runs.
 
-## Dependency and image evidence
+## Closed items (do NOT re-list)
 
-Backend dependencies are lockfile-pinned and locally consistent through test execution. An independent OSV/pip-audit result, CI Trivy filesystem/image scans, generated SBOM/provenance, and target-image digest review remain CI/Architect gates. A local static scan or successful npm audit must not be interpreted as complete supply-chain certification.
+- **docker.sock mounted in worker** — CLOSED in Phase 28.6. The worker never
+  mounts a container-runtime socket; sandbox execution uses the Kubernetes API
+  with namespaced RBAC to short-lived Pods in `cap-sandbox`.
+- **D1 "per-run lease lacks renewal"** — RESOLVED FALSE by the Phase 28.7
+  fact-check. The production K8s path renews the acquisition run-claim lease
+  every `lease_ttl/3` on a dedicated session with fencing. See
+  `outputs/cap-cert-ga/D1-FACT-CONFLICT-RESOLUTION.md`.
