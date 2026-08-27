@@ -222,13 +222,17 @@ jobs:
       # (nightly/dispatch). When a run for THIS commit exists -- e.g. the
       # full-GA proof dispatches both workflows -- its JUnit merges here;
       # otherwise those gates report PLANNED (dev mode) / fail (strict).
-      # The artifact preserves the original outputs/... layout, so it lands
-      # exactly where the generator reads it.
+      # The artifact's contents are LCA-stripped by download-artifact (cap-cert-ga/
+      # + ga-dr/ with NO outer `outputs/` ancestor), so we download into `outputs/`
+      # to land exactly where the generator reads: outputs/cap-cert-ga/junit-
+      # reliability.xml + outputs/ga-dr/soak-context.json. Targeting ${{ github.
+      # workspace }} directly -- the old behavior -- dropped the reliability
+      # evidence at repo-root and the GA report silently lost gates 24/25/26.
       - uses: actions/download-artifact@v4
         if: always()
         with:
           name: reliability-evidence
-          path: ${{ github.workspace }}
+          path: ${{ github.workspace }}/outputs
         continue-on-error: true
 
       # GA-GATE 33: control-plane security re-certification -- the Phase 28.5

@@ -22,6 +22,7 @@ invented.
 
 from __future__ import annotations
 
+import atexit
 import base64
 import json
 import os
@@ -159,6 +160,43 @@ def _port_forward(local_mapping: str, target_args: list[str]) -> subprocess.Pope
     _PF_PROCS.append(proc)
     _PF_BY_PORT[local_port] = proc
     return proc
+
+
+def _terminate_procs(procs: list[subprocess.Popen]) -> int:
+    """Bounded process teardown: terminate -> wait(5) -> kill -> wait.
+
+    Returns the number of live children reclaimed. Used by both port-forward
+    reuse (above) and the session-level cleanup hook below -- the two code path
+    that previously left orphaned `kubectl port-forward` children and triggered
+    `ResourceWarning: subprocess N is still running` at interpreter shutdown.
+    """
+    killed = 0
+    for proc in list(procs):
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:  # noqa: BLE001 -- fall back to SIGKILL
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except Exception:  # noqa: BLE001 -- process already gone
+                    pass
+            killed += 1
+    return killed
+
+
+def _terminate_port_forwards() -> int:
+    """Reclaim every tracked kubectl port-forward child at session end."""
+    killed = _terminate_procs(_PF_PROCS)
+    _PF_BY_PORT.clear()
+    _PF_PROCS.clear()
+    return killed
+
+
+# Guarantee orphaned port-forward children are reaped even on assertion error /
+# pytest teardown crash, so Popen.__del__ never fires mid-shutdown.
+atexit.register(_terminate_port_forwards)
 
 
 def _wait_port(local_port: str, timeout: float = 45.0) -> None:
@@ -922,3 +960,28 @@ def test_ga_gate16_measured_rto(dr) -> None:
     # generous CI bound only (kind cluster creation dominates); the MEASURED
     # value is the deliverable, not an SLO claim
     assert 0 < rto_seconds < 3600, f"RTO {rto_seconds}s outside measurable window"
+
+
+def test_pf_procs_terminate_bounded_no_orphans() -> None:
+    """GA-GATE (hygiene): test-harness process lifecycle is bounded.
+
+    Spawns a stand-in child (no cluster needed), drives it through the real
+    `_terminate_procs` teardown path (terminate -> wait -> kill -> wait), and
+    asserts the child is reaped: `poll() is not None` afterward and no live
+    handle remains. Guards against the `ResourceWarning: subprocess N is still
+    running` leak seen on orphaned `kubectl port-forward` children.
+    """
+    import sys as _sys
+
+    dummy = subprocess.Popen(
+        [_sys.executable, "-c", "import time; time.sleep(60)"]
+    )
+    try:
+        assert dummy.poll() is None, "dummy child should be alive"
+        killed = _terminate_procs([dummy])
+        assert killed == 1, f"expected 1 child reclaimed, got {killed}"
+        assert dummy.poll() is not None, "child must be reaped after teardown"
+    finally:
+        if dummy.poll() is None:
+            dummy.kill()
+            dummy.wait(timeout=5)

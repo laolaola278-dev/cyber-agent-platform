@@ -195,6 +195,76 @@ def _section(evidence: dict, key: str) -> dict:
     return {"executed": False, "status": "NOT_EXECUTED"}
 
 
+# Measured Tier-2 evidence is produced by the reliability (soak) and GA
+# (capacity / backpressure) jobs into outputs/ga-dr/ as soak-context.json /
+# capacity.json / backpressure.json -- NOT as outputs/cap-cert-ga/<section>.json.
+# These helpers *shape* that evidence on read so the descriptive blocks carry the
+# REAL measured numbers, while the `executed` flag is driven by the matching
+# JUnit gate outcome (PASS == executed). Nothing is ever hardcoded.
+#
+# section key -> (certifying gate, candidate raw evidence paths in priority order)
+TIER2_EVIDENCE: dict[str, tuple[str, list[Path]]] = {
+    "soak": ("GA-GATE 24", [DR_DIR / "soak-context.json", OUT_DIR / "soak.json"]),
+    "capacity": ("GA-GATE 27", [DR_DIR / "capacity.json", OUT_DIR / "capacity.json"]),
+    "backpressure": ("GA-GATE 28", [DR_DIR / "backpressure.json", OUT_DIR / "backpressure.json"]),
+}
+
+
+def _load_tier2(section: str) -> tuple[dict | None, Path | None]:
+    """Return (parsed_evidence, source_path) for a Tier-2 section, or (None, None)."""
+    _expected_gate, candidates = TIER2_EVIDENCE[section]
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed, path
+    return None, None
+
+
+def _tier2_evidence(gates: dict[str, str], section: str) -> dict:
+    """Load a measured Tier-2 evidence block and gate-link its state.
+
+    executed is TRUE only when the expected gate PASSED in JUnit AND the raw
+    evidence file is present with a matching `gate` header. Real measured
+    values are passed through verbatim -- nothing is fabricated.
+    """
+    expected_gate, _candidates = TIER2_EVIDENCE[section]
+    raw, source = _load_tier2(section)
+    outcome = gates.get(expected_gate, "NOT_RUN")
+    if raw is None:
+        return {"executed": False, "status": "NOT_EXECUTED"}
+    if str(raw.get("gate")) != expected_gate:
+        return {
+            "executed": False,
+            "status": "MISMATCH",
+            "expected_gate": expected_gate,
+            "found_gate": raw.get("gate"),
+        }
+    base = {k: v for k, v in raw.items()}
+    base["evidence_source"] = str(source.relative_to(REPO_ROOT))
+    if outcome == "PASS":
+        base["executed"] = True
+        base["status"] = "PASS"
+    elif outcome in ("FAIL", "skipped"):
+        base["executed"] = False
+        base["status"] = outcome
+    else:
+        base["executed"] = False
+        base["status"] = "NOT_RUN"
+    return base
+
+
+def _tier2_evidence_present(section: str) -> bool:
+    """True iff the measured Tier-2 evidence file exists with a matching gate header."""
+    expected_gate, _candidates = TIER2_EVIDENCE[section]
+    raw, _source = _load_tier2(section)
+    return bool(raw) and str(raw.get("gate")) == expected_gate
+
+
 def _suite_status(filename: str, gate: str) -> str:
     """Suite-level evidence gate.
 
@@ -270,8 +340,9 @@ def main() -> int:
     dr = _dr_evidence()
     slo_candidates = _evidence("slo-candidates")
     tier2 = {
-        "soak": _section(_evidence("soak"), "soak"),
-        "capacity": _section(_evidence("capacity"), "capacity"),
+        "soak": _tier2_evidence(gates, "soak"),
+        "capacity": _tier2_evidence(gates, "capacity"),
+        "backpressure": _tier2_evidence(gates, "backpressure"),
         "sli": _section(_evidence("sli"), "sli"),
         "slo": (
             {**slo_candidates, "executed": True}
@@ -399,6 +470,20 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    # Artifact-consistency gate (Tier-2 measured evidence): a PASS on GA-GATE
+    # 24/27/28 MUST carry its evidence file (soak / capacity / backpressure).
+    # Missing evidence alongside a PASSing gate means the runner's outputs/ga-dr
+    # staging drifted -- the human report would show numbers the JSON cannot
+    # back up (same invariant as the GA-GATE 15/16 RPO/RTO check above).
+    for sec in ("soak", "capacity", "backpressure"):
+        gate = TIER2_EVIDENCE[sec][0]
+        if gates.get(gate) == "PASS" and not _tier2_evidence_present(sec):
+            print(
+                f"GA-{gate} PASS but Tier-2 {sec} evidence file missing -- "
+                "machine artifact inconsistent with measured evidence",
+                file=sys.stderr,
+            )
+            return 1
     if final_strict:
         # FINAL STRICT meta-gate: ALL 40 gates must PASS. PLANNED ==
         # failure here -- "24 planned + workflow green" can NEVER equal
