@@ -1,8 +1,9 @@
-name: Release Candidate
+name: Release
 
 on:
   push:
     tags:
+      - "v1.0.0"
       - "v1.0.0-rc*"
 
 permissions:
@@ -18,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      prerelease_flag: ${{ steps.version.outputs.prerelease_flag }}
+      notes_file: ${{ steps.version.outputs.notes_file }}
     steps:
       - uses: actions/checkout@v4
       - id: version
@@ -26,6 +29,12 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           test "$version" = "$(tr -d '\r\n' < VERSION)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          # GA tags (no -rc suffix) publish as full releases; rc tags as prereleases.
+          case "$version" in
+            *-rc*) echo "prerelease_flag=--prerelease" >> "$GITHUB_OUTPUT" ;;
+            *)     echo "prerelease_flag=" >> "$GITHUB_OUTPUT" ;;
+          esac
+          echo "notes_file=docs/releases/v${version}.md" >> "$GITHUB_OUTPUT"
 
   release-images:
     needs: validate-tag
@@ -69,10 +78,10 @@ jobs:
           path: |
             dist/*.tgz
             CHANGELOG.md
-            docs/releases/v1.0.0-rc1.md
+            ${{ needs.validate-tag.outputs.notes_file }}
             docs/known-issues.md
 
-  publish-prerelease:
+  publish-release:
     needs: [validate-tag, release-images, release-chart]
     runs-on: ubuntu-latest
     steps:
@@ -81,19 +90,19 @@ jobs:
         with:
           name: cap-${{ needs.validate-tag.outputs.version }}-release-assets
           path: release-assets
-      - name: Publish immutable release candidate
+      - name: Publish immutable release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --verify-tag \
-            --prerelease \
+            ${{ needs.validate-tag.outputs.prerelease_flag }} \
             --title "Cyber Agent Platform $GITHUB_REF_NAME" \
-            --notes-file docs/releases/v1.0.0-rc1.md \
+            --notes-file "${{ needs.validate-tag.outputs.notes_file }}" \
             release-assets/dist/*.tgz \
             release-assets/CHANGELOG.md \
-            release-assets/docs/releases/v1.0.0-rc1.md \
+            "release-assets/${{ needs.validate-tag.outputs.notes_file }}" \
             release-assets/docs/known-issues.md
       - run: |
-          echo "Artifacts are release-candidate outputs only."
+          echo "Artifacts are release outputs only."
           echo "Architect approval and all Production Entry Gates remain mandatory."
