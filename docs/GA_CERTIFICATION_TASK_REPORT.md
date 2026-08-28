@@ -1,5 +1,23 @@
 # CAP Phase 28.7 — GA Certification Task Report
 
+> **Historical record — superseded for release purposes.**
+> This report documents the **rc3 / r19** certification round (anchor `10369e7`).
+> It is preserved as the record of that run and is **not** the certification
+> backing the shipped v1.0.0.
+>
+> After this round, the frontend base-image CVE-2026-14456 fix
+> (`RUN apk upgrade --no-cache libssl3 libcrypto3`) landed. That is a
+> runtime-affecting change under the fail-closed diff classifier, so certification
+> could not be inherited from `10369e7` and was **re-earned** on the rc4 anchor
+> **`b22b7be57f89cd0ef0cf9df8b289ec1f5e74b2b3`** (40/40 PASS, `final-strict`).
+> v1.0.0 was then published from the pure release-metadata bump
+> **`0240fbe9c89b98227a21cd3af48cc1593462f481`** (classifier:
+> `release_metadata_only=true` → INHERITED).
+>
+> For the shipped release, see `docs/releases/v1.0.0.md`, `CHANGELOG.md`,
+> `docs/known-issues.md`, and
+> `outputs/release/CAP-v1.0.0-GA-Publication-Report.md`.
+
 - **Project:** `laolaola278-dev/cyber-agent-platform` (repo alias `cap`)
 - **Phase:** 28.7 Tier 2 reliability / GA gate certification
 - **Target commit (certified):** `10369e75af7e` ("r19")

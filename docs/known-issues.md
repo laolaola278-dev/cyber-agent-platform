@@ -6,7 +6,11 @@
 ## Release blockers
 
 None. Phase 28.7 GA Reliability Certification passed 40/40 gates under
-`CAP_GA_STRICT=1` at certified commit `10369e7`.
+`CAP_GA_STRICT=1` at certified commit `b22b7be57f89cd0ef0cf9df8b289ec1f5e74b2b3`
+(v1.0.0-rc4 — the security re-certification anchor carrying the CVE-2026-14456
+openssl fix). This release's runtime certification is inherited from that anchor;
+the GA commit `0240fbe` is a pure release-metadata bump classified
+`release_metadata_only=true` by the fail-closed diff classifier.
 
 ## Operational limitations
 
