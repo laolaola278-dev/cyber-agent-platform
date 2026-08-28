@@ -9,6 +9,11 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build
 
 FROM nginx:1.30.4-alpine AS runtime
+# CVE-2026-14456 (openssl DoS via unbounded QUIC memory growth): this base
+# image ships openssl 3.5.7-r0; the alpine 3.24 repo carries the fixed
+# 3.5.8-r0 (landed 2026-08-25, after every published nginx:*-alpine build).
+# Upgrade the two runtime openssl libraries in place at build time.
+RUN apk upgrade --no-cache libssl3 libcrypto3
 ARG VERSION=1.0.0
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="Cyber Agent Platform Console" \
