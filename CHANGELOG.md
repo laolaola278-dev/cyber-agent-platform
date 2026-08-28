@@ -44,17 +44,19 @@ Security re-certification anchor for the v1.0.0 GA release.
 
 General Availability. Phase 28.7 GA Reliability Certification: **40/40 gates
 PASS** under `CAP_GA_STRICT=1`. Runtime certification anchored at commit
-`10369e75af7e89cb03a10a911727dc048ea73c1e` and inherited by this release
-(post-cert diff is release-metadata-only, verified by the automated fail-closed
-diff classifier).
+`b22b7be57f89cd0ef0cf9df8b289ec1f5e74b2b3` (v1.0.0-rc4, the security
+re-certification anchor carrying the CVE-2026-14456 openssl fix) and inherited
+by this release (post-cert diff is release-metadata-only, verified by the
+automated fail-closed diff classifier).
 
 ### Added
 
 - Whole-cluster disaster-recovery certification: real `kind delete cluster`
   destruction, fresh-cluster restore with fail-closed manifest verification.
-  Measured RPO = 9.55 s, RTO = 238.64 s.
-- 2-hour soak certification (0 false reclaims, 11 controlled pod kills with
-  only expected crash-recovery reclaims, availability 1.0, stable RSS).
+  Measured RPO = 9.76 s, RTO = 236.75 s.
+- 2-hour soak certification (480/480 healthy ticks, 0 HTTP errors, 11
+  controlled worker pod kills with only expected crash-recovery reclaims,
+  availability 1.0, stable RSS).
 - 9-cell capacity matrix and overload/backpressure gates.
 - Automated release diff classifier (`scripts/release/classify_diff.py`) and
   release version-consistency gate
@@ -80,6 +82,10 @@ diff classifier).
 
 ### Security
 
+- **CVE-2026-14456** (openssl, HIGH — unbounded QUIC memory growth DoS)
+  fixed: the frontend runtime image upgrades `libssl3`/`libcrypto3`
+  `3.5.7-r0` → `3.5.8-r0` in place at build time (carried in from the
+  v1.0.0-rc4 re-certification anchor).
 - Worker never mounts a container-runtime socket; sandbox execution uses the
   Kubernetes API with namespaced RBAC (Phase 28.6 closure carried into GA).
 - Trivy image scans report 0 blocking HIGH/CRITICAL; SBOM (SPDX + CycloneDX)

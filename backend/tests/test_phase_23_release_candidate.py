@@ -12,7 +12,7 @@ from app.config import Settings
 from app.main import create_app
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RC_VERSION = "1.0.0-rc4"
+RC_VERSION = "1.0.0"
 
 
 def test_release_candidate_version_is_consistent() -> None:
@@ -56,7 +56,7 @@ def test_release_assets_and_required_documentation_exist() -> None:
         "SECURITY.md",
         "CODE_OF_CONDUCT.md",
         "CHANGELOG.md",
-        "docs/releases/v1.0.0-rc4.md",
+        "docs/releases/v1.0.0.md",
         "docs/known-issues.md",
         "docs/roadmap.md",
         "docs/api-guide.md",
