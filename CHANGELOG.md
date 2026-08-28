@@ -4,6 +4,42 @@ All notable changes follow Keep a Changelog categories and Semantic Versioning 2
 
 ## [Unreleased]
 
+## [1.0.0-rc4] - 2026-08-28
+
+Security re-certification anchor for the v1.0.0 GA release.
+
+### Security
+
+- **CVE-2026-14456** (openssl, HIGH — unbounded QUIC memory growth DoS):
+  `frontend/Dockerfile` runtime stage now runs
+  `apk upgrade --no-cache libssl3 libcrypto3`, upgrading openssl
+  `3.5.7-r0` → fixed `3.5.8-r0` in place at build time. The fixed library
+  landed in alpine 3.24 on 2026-08-25, after every published
+  `nginx:*-alpine` build, so no base-image tag bump could clear it.
+
+### Fixed
+
+- Removed unused `import pytest` (ruff F401) in
+  `backend/tests/test_release_version_consistency.py`, which blocked the
+  release workflow quality-gates job.
+
+### Changed
+
+- Version aligned to `1.0.0-rc4` across all 16 version carriers (VERSION,
+  backend pyproject/uv.lock, frontend package.json/package-lock, sdk, Helm
+  chart version/appVersion/image tags, Dockerfile `ARG VERSION`, runtime
+  `app_version` / `__version__`, test_phase_23 `RC_VERSION`).
+- Helm chart `artifacthub.io/prerelease` annotation set back to `"true"`
+  (this is a pre-release).
+
+### Notes
+
+- The Dockerfile `RUN` fix is runtime-affecting under the fail-closed diff
+  classifier, so runtime certification is re-earned on THIS commit (40-gate
+  GA certification) rather than inherited from the rc3 anchor `10369e7`.
+  The eventual 1.0.0 GA commit will be a pure release-metadata bump from
+  this anchor (certification INHERITED).
+
 ## [1.0.0] - 2026-08-28
 
 General Availability. Phase 28.7 GA Reliability Certification: **40/40 gates
