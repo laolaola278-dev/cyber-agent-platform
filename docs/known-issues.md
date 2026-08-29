@@ -19,21 +19,22 @@ re-certification anchor carrying the CVE-2026-14456 openssl fix). The GA commit
 `0240fbe` is a pure release-metadata bump classified `release_metadata_only=true`
 by the fail-closed diff classifier, so that runtime certification is inherited.
 
-**1.0.1-rc1 certification status (2026-08-29).** This patch changes
+**1.0.1-rc1 certification status (final, 2026-08-29).** This patch changes
 sandbox/egress startup validation, which is a runtime-affecting security
-change, so the rc was put through the remote certification suites. At commit
-`c6793a8` all four push-triggered workflows are green: General CI
-(33246170456), Linux Certification (33246170455), K8s Certification
-(33246170461) and GA Certification (33246170487) — the last a strict-mode
-run on a real kind cluster with **35 gates passed, 0 failed, 0 skipped**,
-including the security re-certification subset and GA-GATE 1 under the
-rc-generic version policy. The remaining 5 gates (GA-GATE 24/25/26/34/35 —
-reliability soak, capacity, overload) certify in the nightly
-`cap-ga-reliability.yml`; until a soak run against this commit is merged,
-those report PLANNED and the 40/40 artifact cannot be regenerated. A 1.0.1
-GA tag requires that soak, then a pure release-metadata bump that the
-fail-closed diff classifier can inherit. v1.0.0 remains the only released
-version.
+change, so the rc was put through the full remote certification path. At
+commit `c6793a8`: all four push-triggered workflows green (General CI
+33246170456; Linux Certification 33246170455 incl. GA-GATE 33 security
+re-certification; K8s Certification 33246170461; GA Certification
+33246170487 — strict kind-cluster run, 35 gates PASS, 0 failed, 0 skipped,
+GA-GATE 39 green under the egress-as-readiness-dependency contract), plus
+the dispatched reliability soak 33249070537 (5/5 soak gates PASS: 2h soak,
+availability 1.0, 11 worker kills with zero lost work, no memory leak, no
+orphans, upgrade and rollback under load clean). The final strict artifact
+(`CAP_GA_STRICT=1`) records **40/40 gates PASS, `full_ga_certified: true`**
+at anchor `c6793a8`. A 1.0.1 GA release requires a pure release-metadata
+bump from this anchor (certification inherited via the fail-closed diff
+classifier) plus explicit release authorisation. v1.0.0 remains the only
+released version.
 
 ## Operational limitations
 
