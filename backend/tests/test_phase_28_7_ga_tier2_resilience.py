@@ -574,10 +574,13 @@ def _outage_scenario(
     runs stay durably QUEUED, work is never lost), or the execution itself
     fails closed (FAILED / BLOCKED / CANCELLED).
 
-    ``execution_level=True`` (egress proxy): executions DO proceed here (the
-    sandbox runtime is not the dead dependency), so the run MUST reach a
-    terminal failure DURING the outage -- any success would prove a
-    direct-egress bypass, i.e. an isolation breach.
+    ``execution_level=True`` (egress proxy, GA-GATE 39): since v1.0.1 the
+    controlled egress proxy is ALSO a readiness dependency (PATCH-GATE 5:
+    unreachable proxy -> readiness=false -> the worker pauses claiming), so
+    BOTH fail-closed outcomes are legal here -- a durably QUEUED run (claim
+    paused) OR a terminal failure (execution already in flight when the
+    outage landed). Any success would prove a direct-egress bypass, i.e. an
+    isolation breach, and fails the gate either way.
 
     Phase B (dependency RESTORED): a deferred run must COMPLETE from the
     durable queue; an already-failed run stays attributably failed.
@@ -636,13 +639,14 @@ def _outage_scenario(
                 failed_closed = True
                 break
             time.sleep(5)
-        if execution_level and not failed_closed:
-            pytest.fail(
-                f"[{gate_tag}] no attributable failure while {deployment} was "
-                "down -- executions at this layer must fail CLOSED; "
-                f"{canary}; sandbox-pod-capture:\n"
-                f"{watcher.stop() if watcher else 'n/a'}"
-            )
+        # v1.0.1 PATCH-GATE 5: the egress proxy is now a readiness dependency,
+        # so with it down the worker pauses claiming and the run stays
+        # durably QUEUED for the whole window. That is the DESIGNED fail-
+        # closed outcome, not a missing one: no execution can succeed without
+        # the controlled proxy (the canary above proves pod-level isolation),
+        # and Phase B below proves the queued work completes after restore.
+        # A terminal failure (run claimed before the outage landed) is equally
+        # acceptable. Only a success is a breach.
         if execution_level:
             print(f"\n[{gate_tag}] canary probe result: {canary}")
             # persist for artifact upload (pytest swallows stdout of PASSED
