@@ -19,11 +19,21 @@ re-certification anchor carrying the CVE-2026-14456 openssl fix). The GA commit
 `0240fbe` is a pure release-metadata bump classified `release_metadata_only=true`
 by the fail-closed diff classifier, so that runtime certification is inherited.
 
-**1.0.1-rc1 is not yet certified.** This patch changes sandbox/egress startup
-validation, which is a runtime-affecting security change, so it must clear the
-General CI, Linux Certification and K8s Certification suites plus the security
-re-certification subset before any 1.0.1 GA tag. v1.0.0 remains the only
-released version.
+**1.0.1-rc1 certification status (2026-08-29).** This patch changes
+sandbox/egress startup validation, which is a runtime-affecting security
+change, so the rc was put through the remote certification suites. At commit
+`c6793a8` all four push-triggered workflows are green: General CI
+(33246170456), Linux Certification (33246170455), K8s Certification
+(33246170461) and GA Certification (33246170487) — the last a strict-mode
+run on a real kind cluster with **35 gates passed, 0 failed, 0 skipped**,
+including the security re-certification subset and GA-GATE 1 under the
+rc-generic version policy. The remaining 5 gates (GA-GATE 24/25/26/34/35 —
+reliability soak, capacity, overload) certify in the nightly
+`cap-ga-reliability.yml`; until a soak run against this commit is merged,
+those report PLANNED and the 40/40 artifact cannot be regenerated. A 1.0.1
+GA tag requires that soak, then a pure release-metadata bump that the
+fail-closed diff classifier can inherit. v1.0.0 remains the only released
+version.
 
 ## Operational limitations
 
