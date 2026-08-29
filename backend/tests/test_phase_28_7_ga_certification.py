@@ -674,11 +674,15 @@ def _store_b():
 @pytest.mark.timeout(3300)
 def test_ga_gate1_baseline_recorded(dr) -> None:
     """GA-GATE 1: the Phase 28.6 baseline this phase builds on is recorded
-    (32/32 PASS, run {PHASE_28_6_RUN}) and the repo still carries the rc3
-    version policy (GA version bump happens ONLY after all gates pass)."""
+    (32/32 PASS, run {PHASE_28_6_RUN}) and the repo still carries an rc
+    version policy (a GA version bump happens ONLY after all gates pass, so
+    this suite must never run against a released version)."""
     assert dr["phase_28_6_run"] == "32565459369"
     version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
-    assert version.startswith("1.0.0-rc"), f"unexpected VERSION {version}"
+    assert "-rc" in version, (
+        f"unexpected VERSION {version}: the {PHASE_28_6_RUN} GA suite must "
+        "only run on an rc version policy"
+    )
 
 
 def test_ga_gate2_pg_backup_independently_stored(dr) -> None:

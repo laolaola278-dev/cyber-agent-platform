@@ -105,10 +105,26 @@ class ZeekAdapter:
         return envelopes
 
     def parse_tsv(self, output: str) -> list[dict[str, object]]:
-        """Reserve TSV as an explicit future boundary without accepting it in Phase 13."""
+        """Reject TSV with an actionable message (v1.0.1 PATCH-GATE 12).
+
+        TSV is Zeek's DEFAULT ASCII log format, so an unconfigured sensor
+        produces exactly the input this adapter cannot read. Through v1.0.0 the
+        error read "reserved for a future phase", which told the operator
+        nothing about what to change. This adapter parses JSON output/JSONL;
+        TSV stays unsupported by design, not by roadmap accident.
+        """
 
         del output
-        raise DetectionPolicyViolation("Zeek TSV parsing is reserved for a future phase")
+        raise DetectionPolicyViolation(
+            "Zeek TSV input is not supported; configure Zeek to write JSON logs "
+            "(for example LogAscii::use_json=T) or convert TSV to JSONL before "
+            "ingest. This adapter requires JSON output/JSONL.",
+            details={
+                "supported_input_format": "jsonl",
+                "rejected_input_format": "tsv",
+                "remediation": "set LogAscii::use_json=T or preprocess to JSONL",
+            },
+        )
 
     def status(self) -> dict[str, object]:
         sources = [

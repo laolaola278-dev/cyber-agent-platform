@@ -112,6 +112,47 @@ jobs:
           helm lint deployment/helm/cap
           helm template cap deployment/helm/cap --namespace cap > rendered-cap.yaml
           helm package deployment/helm/cap --destination dist
+      # v1.0.1 PATCH-GATE 6/13: the chart is the shipped production template,
+      # so its *rendered* security defaults are asserted here. A future edit
+      # that reintroduces an empty egress address or a weak sandbox provider
+      # fails CI instead of silently shipping.
+      - name: Assert production chart defaults
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          rendered = Path("rendered-cap.yaml").read_text(encoding="utf-8")
+          failures = []
+
+          sandbox = re.search(r'- name: SANDBOX_PROVIDER\s*\n\s*value: "?([^"\n]+)"?', rendered)
+          if not sandbox:
+              failures.append("SANDBOX_PROVIDER env not rendered for the worker")
+          elif sandbox.group(1).strip() != "kubernetes-sandbox":
+              failures.append(f"worker sandbox provider is {sandbox.group(1)!r}, expected kubernetes-sandbox")
+
+          egress = re.search(r'- name: EGRESS_PROXY_URL\s*\n\s*value: "?([^"\n]*)"?', rendered)
+          if not egress:
+              failures.append("EGRESS_PROXY_URL env not rendered for the worker")
+          elif not egress.group(1).strip().endswith("-egress-proxy:8080"):
+              failures.append(
+                  f"worker EGRESS_PROXY_URL is {egress.group(1)!r}; expected the in-chart "
+                  "egress-proxy Service (http://<fullname>-egress-proxy:8080)"
+              )
+
+          if "kind: NetworkPolicy" not in rendered:
+              failures.append("no NetworkPolicy rendered (sandbox egress is not denied by default)")
+
+          if re.search(r'- name: APP_ENVIRONMENT\s*\n\s*value: development', rendered):
+              failures.append("chart renders APP_ENVIRONMENT=development (production template)")
+
+          if failures:
+              for item in failures:
+                  print(f"FAIL: {item}")
+              raise SystemExit(1)
+          print("chart production defaults OK: kubernetes-sandbox + in-chart egress proxy + NetworkPolicy")
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: helm-chart

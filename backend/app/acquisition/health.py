@@ -7,15 +7,18 @@ Readiness: the worker may claim new work. Checks:
   * worker registration (registry row present)
   * object store reachable (when configured)
   * sandbox provider available
+  * egress enforcement reachable (production only; PATCH-GATE 5)
 
 A single FAILED acquisition never flips readiness. Dependency failures do.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 logger = logging.getLogger("cap.acquisition.health")
 
@@ -44,12 +47,18 @@ class WorkerHealth:
         object_store: Any | None = None,
         sandbox_runtime: Any | None = None,
         worker_id: Any | None = None,
+        egress_proxy_url: str = "",
+        require_egress_enforcement: bool = False,
+        egress_probe_timeout_seconds: float = 2.0,
     ) -> None:
         self._session_factory = session_factory
         self._database_url = database_url
         self._object_store = object_store
         self._sandbox_runtime = sandbox_runtime
         self._worker_id = worker_id
+        self._egress_proxy_url = egress_proxy_url
+        self._require_egress_enforcement = require_egress_enforcement
+        self._egress_probe_timeout_seconds = egress_probe_timeout_seconds
 
     def _new_session_factory(self):
         if self._session_factory is not None:
@@ -123,18 +132,68 @@ class WorkerHealth:
         except Exception:  # noqa: BLE001
             return False
 
+    async def _check_egress_enforcement(self) -> bool:
+        """v1.0.1 PATCH-GATE 5 -- enforced egress must be reachable.
+
+        Layer 1 (``URLPolicyValidator``) runs inside the sandbox shim and is
+        unaffected by this check. Layer 2 is the controlled egress proxy, and
+        the invariant carried from Phase 28.5/28.6 is that the sandbox's only
+        route out is that proxy: with Kubernetes the NetworkPolicy denies
+        everything else, with OCI the container sits on an isolated bridge
+        network.
+
+        So when the proxy is unreachable the correct behaviour is
+        readiness=false and failed network jobs -- **never** a silent switch to
+        direct egress. A TCP connect probe is used deliberately: it proves the
+        proxy is listening without emitting traffic to a public target on
+        every readiness poll.
+        """
+
+        if not self._require_egress_enforcement:
+            return True
+        url = (self._egress_proxy_url or "").strip()
+        if not url:
+            # Startup validation already refuses this in production; a worker
+            # that somehow got here is not allowed to claim network work.
+            logger.error("egress enforcement required but EGRESS_PROXY_URL is empty")
+            return False
+        try:
+            parsed = urlparse(url)
+            host = parsed.hostname
+            if not host:
+                logger.error("egress proxy URL %r has no host", url)
+                return False
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port),
+                timeout=self._egress_probe_timeout_seconds,
+            )
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except (OSError, TimeoutError, ValueError) as error:
+            logger.error(
+                "egress proxy %s unreachable (%s): readiness=false, "
+                "no direct-egress fallback",
+                url,
+                error,
+            )
+            return False
+
     async def readiness(self) -> HealthCheckResult:
         db = await self._check_db()
         schema = await self._check_schema()
         reg = await self._check_registration()
         store = await self._check_object_store()
         sandbox = await self._check_sandbox()
+        egress = await self._check_egress_enforcement()
         checks = {
             "db_connectivity": db,
             "schema_compatible": schema,
             "worker_registration": reg,
             "object_store": store,
             "sandbox_provider": sandbox,
+            "egress_enforcement": egress,
         }
         return HealthCheckResult(
             healthy=all(checks.values()),

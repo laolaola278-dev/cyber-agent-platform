@@ -12,7 +12,7 @@ from app.config import Settings
 from app.main import create_app
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RC_VERSION = "1.0.0"
+RC_VERSION = "1.0.1-rc1"
 
 
 def test_release_candidate_version_is_consistent() -> None:

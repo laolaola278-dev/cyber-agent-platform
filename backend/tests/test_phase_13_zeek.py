@@ -141,7 +141,9 @@ def test_adapter_allowlist_bounds_schema_and_evidence_lineage(tmp_path: Path) ->
         _adapter(max_input_bytes=1).collect("phase13-fixture")
     with pytest.raises(DetectionPolicyViolation, match="record limit"):
         _adapter(max_records=1).collect("phase13-fixture")
-    with pytest.raises(DetectionPolicyViolation, match="reserved"):
+    # v1.0.1: the TSV rejection names the supported format and the
+    # remediation instead of merely calling TSV "reserved".
+    with pytest.raises(DetectionPolicyViolation, match="TSV input is not supported"):
         adapter.parse_tsv("#fields\tts\tuid")
 
 

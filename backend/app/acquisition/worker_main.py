@@ -53,7 +53,7 @@ from app.acquisition.service import AcquisitionService
 from app.acquisition.worker_path import AcquisitionWorkerPath
 from app.database import AsyncSessionFactory, engine
 from app.evidence.service import EvidenceService
-from app.exceptions import WorkerConflict
+from app.exceptions import SandboxPolicyViolation, WorkerConflict
 from app.sandbox.policy import SandboxPolicy, SandboxPolicyEngine
 from app.sandbox.profile import SandboxProfile
 from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
@@ -142,6 +142,29 @@ async def _amain() -> int:
     from app.config.settings import get_settings
 
     settings = get_settings()
+
+    # -- v1.0.1: capability-based production sandbox/egress admission --------
+    # Fail BEFORE any sandbox provider is constructed. Through v1.0.0 an unset
+    # SANDBOX_PROVIDER silently started subprocess-sandbox (a separate process
+    # with no network, filesystem or resource boundary) and an empty
+    # EGRESS_PROXY_URL logged one INFO line and egressed directly. Both are
+    # fail-open; there is deliberately no fallback to a weaker provider here.
+    from app.sandbox.production import (
+        development_sandbox_warning,
+        is_production,
+        production_startup_error,
+        production_violations,
+    )
+
+    violations = production_violations(settings)
+    if violations:
+        logger.error("%s", production_startup_error(violations))
+        return 2
+    warning = development_sandbox_warning(settings)
+    if warning:
+        # once at startup, never per tick
+        logger.warning("%s", warning)
+
     # Phase 28.4 observability: shared low-cardinality metric registry
     from app.acquisition.metrics import AcquisitionMetrics
 
@@ -261,7 +284,7 @@ async def _amain() -> int:
                 "sandbox provider=oci-sandbox image=%s network=%s egress=%s",
                 settings.sandbox_image,
                 settings.sandbox_network or "(default)",
-                settings.egress_proxy_url or "(direct, egress proxy required in prod)",
+                settings.egress_proxy_url or "(direct; non-production only)",
             )
         elif settings.sandbox_provider.casefold() == "kubernetes-sandbox":
             from app.sandbox.k8s_provider import KubernetesSandboxProvider
@@ -285,7 +308,7 @@ async def _amain() -> int:
                 "sandbox provider=kubernetes-sandbox image=%s namespace=%s egress=%s",
                 settings.sandbox_image,
                 settings.sandbox_namespace,
-                settings.egress_proxy_url or "(direct, egress proxy required in prod)",
+                settings.egress_proxy_url or "(direct; non-production only)",
             )
         elif settings.sandbox_provider.casefold() == "subprocess-sandbox":
             from app.sandbox.subprocess_provider import SubprocessSandboxProvider
@@ -299,12 +322,25 @@ async def _amain() -> int:
                 policy_engine,
                 metrics=metrics,
             )
-        else:
-            # explicit opt-in to the non-isolated provider (dev/testing)
+        elif settings.sandbox_provider.casefold() == "memory-sandbox":
+            # explicit opt-in to the non-isolated provider (dev/testing).
+            # Production never reaches this branch: startup validation rejects
+            # memory-sandbox and every other unapproved provider before any
+            # sandbox runtime is constructed.
             network_runtime = SandboxRuntime(
                 MemorySandboxProvider(),
                 SandboxPolicyEngine(),
                 metrics=metrics,
+            )
+        else:
+            # v1.0.1 PATCH-GATE 8: through v1.0.0 this branch silently started
+            # MemorySandboxProvider (zero isolation) for ANY unrecognised name,
+            # so a typo such as "kubernettes-sandbox" degraded production to no
+            # isolation without a single error line. Unknown names now fail
+            # closed in every environment.
+            raise SandboxPolicyViolation(
+                f"unknown SANDBOX_PROVIDER {settings.sandbox_provider!r}: refusing to "
+                "start rather than fall back to a weaker provider"
             )
         sandbox_profile = SandboxProfile(
             name="acquisition-worker",
@@ -385,6 +421,13 @@ async def _amain() -> int:
             object_store=store,
             sandbox_runtime=network_runtime,
             worker_id=worker.id,
+            # v1.0.1 PATCH-GATE 5: probe the controlled egress proxy on every
+            # readiness poll. Unreachable proxy -> not ready. Nothing here can
+            # switch the sandbox to direct egress: that path is blocked by the
+            # sandbox NetworkPolicy (Kubernetes) or the isolated bridge network
+            # (OCI), and neither is relaxed when the proxy is down.
+            egress_proxy_url=settings.egress_proxy_url,
+            require_egress_enforcement=is_production(settings),
         )
 
         async def _readiness() -> bool:

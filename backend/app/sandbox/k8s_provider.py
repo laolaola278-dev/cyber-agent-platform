@@ -79,6 +79,13 @@ class KubernetesSandboxProvider:
         filesystem=True,
         secret=False,  # fail-closed: never inject secrets into the Pod spec
         timeout=True,
+        # v1.0.1: the Pod spec below proves these three, and the production
+        # admission policy reads them. They were left at their defaults while
+        # only the name was checked; a capability-based policy that trusts an
+        # under-declared provider would have rejected the one path Helm ships.
+        container=True,  # the sandbox Pod is the container execution domain
+        process=True,  # container PID namespace (no pids-limit configured)
+        resource=True,  # Pod resources.limits/requests for cpu + memory
     )
 
     def __init__(

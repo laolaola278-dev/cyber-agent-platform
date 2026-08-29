@@ -44,7 +44,14 @@ services:
         VERSION: ${APP_VERSION:-1.0.0-rc1}
     environment:
       APP_VERSION: ${APP_VERSION:-1.0.0-rc1}
-      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-production}
+      # v1.0.1 PATCH-GATE 7: this stack builds images locally and runs
+      # MinIO with development credentials, so its honest default is
+      # development. Setting APP_ENVIRONMENT=production opts into the
+      # production sandbox/egress validation; the defaults below
+      # (oci-sandbox + EGRESS_PROXY_URL) satisfy it, but the operator
+      # must also supply non-placeholder SECRET_KEY/JWT_SECRET/
+      # RBAC_TRUSTED_PROXY_SECRET values.
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-development}
       API_DOCS_ENABLED: ${API_DOCS_ENABLED:-false}
       DEBUG: ${DEBUG:-false}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
@@ -121,7 +128,14 @@ services:
         VERSION: ${APP_VERSION:-1.0.0-rc1}
     environment:
       APP_VERSION: ${APP_VERSION:-1.0.0-rc1}
-      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-production}
+      # v1.0.1 PATCH-GATE 7: this stack builds images locally and runs
+      # MinIO with development credentials, so its honest default is
+      # development. Setting APP_ENVIRONMENT=production opts into the
+      # production sandbox/egress validation; the defaults below
+      # (oci-sandbox + EGRESS_PROXY_URL) satisfy it, but the operator
+      # must also supply non-placeholder SECRET_KEY/JWT_SECRET/
+      # RBAC_TRUSTED_PROXY_SECRET values.
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-development}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

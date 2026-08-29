@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cyber-agent-platform-backend"
-version = "1.0.0"
+version = "1.0.1-rc1"
 description = "Cyber Agent Platform control plane backend"
 readme = "README.md"
 requires-python = ">=3.13"

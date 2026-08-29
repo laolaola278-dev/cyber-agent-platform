@@ -87,8 +87,14 @@ spec:
               value: {{ .Values.worker.sandbox.shimPort | quote }}
             - name: SANDBOX_POD_READY_TIMEOUT_SECONDS
               value: {{ .Values.worker.sandbox.podReadyTimeoutSeconds | quote }}
+            # v1.0.1 PATCH-GATE 6: the sandbox's only route out is the
+            # in-chart egress proxy (NetworkPolicy denies everything else in
+            # cap-sandbox), so an empty address is not a safe default -- the
+            # Pod would have DNS but no HTTP egress at all. Default to the
+            # Service this chart actually creates; operators can still point
+            # at their own proxy through values.
             - name: EGRESS_PROXY_URL
-              value: {{ .Values.worker.sandbox.egressProxyUrl | quote }}
+              value: {{ .Values.worker.sandbox.egressProxyUrl | default (printf "http://%s-egress-proxy:8080" (include "cap.fullname" .)) | quote }}
             - name: SANDBOX_TIMEOUT_SECONDS
               value: "120"
             - name: OBJECT_STORE_BACKEND
