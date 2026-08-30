@@ -112,10 +112,12 @@ jobs:
           helm lint deployment/helm/cap
           helm template cap deployment/helm/cap --namespace cap > rendered-cap.yaml
           helm package deployment/helm/cap --destination dist
-      # v1.0.1 PATCH-GATE 6/13: the chart is the shipped production template,
+      # v1.0.1 PATCH-GATE 6: the chart is the shipped production template,
       # so its *rendered* security defaults are asserted here. A future edit
       # that reintroduces an empty egress address or a weak sandbox provider
       # fails CI instead of silently shipping.
+      # (Deployment-template assertions are GATE 6 = Helm and GATE 7 =
+      # Compose; GATE 13 is the response/service targeted test suite.)
       - name: Assert production chart defaults
         run: |
           set -euo pipefail
