@@ -3,8 +3,13 @@ name: Release
 on:
   push:
     tags:
-      - "v1.0.0"
-      - "v1.0.0-rc*"
+      # Every release tag, not a hardcoded version list: the previous filter
+      # ("v1.0.0", "v1.0.0-rc*") silently failed to fire for v1.0.1-rc1 -- a
+      # pushed tag that triggered nothing. The validate-tag job below is the
+      # guard: it aborts unless the tag equals the VERSION file exactly, so a
+      # stray tag cannot publish. -rc tags publish as prereleases, GA tags as
+      # full releases.
+      - "v*"
 
 permissions:
   contents: write
