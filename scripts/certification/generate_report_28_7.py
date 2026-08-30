@@ -495,7 +495,12 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        print("CAP v1.0.0 GA READY -- awaiting explicit release authorization.")
+        # version is read from the canonical VERSION file (line 339); the
+        # banner must never hardcode a release number -- a 1.0.1-rc run that
+        # announced "v1.0.0 GA READY" was how this bug surfaced.
+        print(
+            f"CAP v{version} GA READY -- awaiting explicit release authorization."
+        )
     return 0
 
 
