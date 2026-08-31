@@ -133,6 +133,32 @@ class EgressProxy:
             except Exception:  # noqa: BLE001
                 pass
 
+    @staticmethod
+    async def _drain_request_headers(reader: asyncio.StreamReader) -> None:
+        """Consume the remainder of a request's headers (up to the blank line).
+
+        A CONNECT request is ``CONNECT host:port HTTP/1.1\\r\\n`` followed by
+        optional header lines and a terminating blank line. The request line
+        alone is not the whole request: if the trailing headers are left in
+        the StreamReader buffer, ``_pipe`` forwards them as tunnel payload and
+        corrupts the protocol the client negotiates with the upstream (TLS
+        sees a stray ``Host:`` line -> WRONG_VERSION_NUMBER; plain HTTP
+        upstreams reject it as a malformed request).
+
+        Read line-by-line (not ``readuntil(b"\\r\\n\\r\\n")``): the request
+        line's own CRLF was already consumed by ``readline()``, so a
+        headers-less CONNECT would leave only ``\\r\\n`` in the buffer and a
+        4-byte terminator search would hang until timeout — and then swallow
+        the client's TLS ClientHello as if it were headers.
+        """
+        while True:
+            try:
+                line = await asyncio.wait_for(reader.readline(), timeout=10)
+            except (TimeoutError, ValueError):
+                return
+            if not line or line in (b"\r\n", b"\n"):
+                return
+
     async def _handle_connect(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, target: str
     ) -> None:
@@ -142,6 +168,8 @@ class EgressProxy:
         except ValueError:
             await self._deny(writer, "bad target")
             return
+        # consume the CONNECT request's remaining headers BEFORE any piping
+        await self._drain_request_headers(reader)
         logger.info("CONNECT %s:%s", host, port)
         if await self._deny_if_forbidden(writer, host, port):
             return

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -113,3 +114,79 @@ async def test_proxy_denies_private_target_without_allowlist() -> None:
         assert resp.status_code == 403
     finally:
         await proxy.stop()
+
+
+# -- CONNECT tunnel regression (v1.0.2) ---------------------------------------
+#
+# The CONNECT handler used to consume only the request line; the remaining
+# request headers stayed in the StreamReader buffer and were piped to the
+# upstream as tunnel payload, corrupting the tunneled protocol (real-world
+# symptom: TLS through the proxy failed WRONG_VERSION_NUMBER, HTTP upstreams
+# answered 400 "malformed HTTP request \"Host: ...\""). These tests drive a
+# raw CONNECT client so the stray-header path is exercised exactly as in
+# production.
+
+
+async def _connect_through_proxy(proxy_port: int, target: str, *, with_headers: bool) -> bytes:
+    """Open a raw CONNECT tunnel and issue one HTTP GET inside it.
+
+    Returns the full upstream response bytes (headers + body).
+    """
+    reader, writer = await asyncio.open_connection("127.0.0.1", proxy_port)
+    try:
+        request = f"CONNECT {target} HTTP/1.1\r\n"
+        if with_headers:
+            request += f"Host: {target}\r\nProxy-Connection: keep-alive\r\n"
+        request += "\r\n"
+        writer.write(request.encode())
+        await writer.drain()
+        status_line = await asyncio.wait_for(reader.readline(), timeout=10)
+        assert b"200" in status_line, f"CONNECT rejected: {status_line!r}"
+        # consume the blank line terminating the 200 response
+        await asyncio.wait_for(reader.readline(), timeout=10)
+        # tunnel payload: a plain HTTP request to the upstream
+        writer.write(f"GET /x HTTP/1.1\r\nHost: {target}\r\nConnection: close\r\n\r\n".encode())
+        await writer.drain()
+        return await asyncio.wait_for(reader.read(), timeout=10)
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+
+async def _start_proxy_on_free_port(allowlist: Allowlist) -> tuple[EgressProxy, int]:
+    import socket
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    proxy = EgressProxy(host="127.0.0.1", port=port, allowlist=allowlist)
+    await proxy.start()
+    return proxy, port
+
+
+@pytest.mark.asyncio
+async def test_connect_tunnel_with_headers_delivers_upstream_body(upstream) -> None:
+    """CONNECT carrying header lines must not leak them into the tunnel."""
+    proxy, port = await _start_proxy_on_free_port(Allowlist(upstream))
+    try:
+        response = await _connect_through_proxy(port, upstream, with_headers=True)
+    finally:
+        await proxy.stop()
+    first_line = response.splitlines()[0]
+    assert b" 200 " in first_line, f"upstream rejected the request: {response[:200]!r}"
+    assert response.endswith(b"upstream-ok"), (
+        "CONNECT header leak: upstream saw stray headers instead of the GET"
+    )
+
+
+@pytest.mark.asyncio
+async def test_connect_tunnel_without_headers_still_works(upstream) -> None:
+    """A minimal CONNECT (request line + blank line) must not stall or leak."""
+    proxy, port = await _start_proxy_on_free_port(Allowlist(upstream))
+    try:
+        response = await _connect_through_proxy(port, upstream, with_headers=False)
+    finally:
+        await proxy.stop()
+    assert b" 200 " in response.splitlines()[0]
+    assert response.endswith(b"upstream-ok")
