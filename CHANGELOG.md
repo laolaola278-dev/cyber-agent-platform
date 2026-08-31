@@ -4,6 +4,10 @@ All notable changes follow Keep a Changelog categories and Semantic Versioning 2
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-08-31
+
+GA promotion of 1.0.1-rc1: identical artifacts, promoted version metadata only (pure version bump; no runtime changes since rc1).
+
 ## [1.0.1-rc1] - 2026-08-29
 
 Security defaults and capability disclosure patch. v1.0.0 is immutable: no

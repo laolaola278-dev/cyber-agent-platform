@@ -2,11 +2,11 @@ apiVersion: v2
 name: cap
 description: Cyber Agent Platform v1 control plane and Web Console
 type: application
-version: 1.0.1-rc1
-appVersion: "1.0.1-rc1"
+version: 1.0.1
+appVersion: "1.0.1"
 kubeVersion: ">=1.28.0-0"
 annotations:
-  artifacthub.io/prerelease: "true"
+  artifacthub.io/prerelease: "false"
   cap.release/source-url-required: "Set the canonical repository URL before publication"
 keywords:
   - security
