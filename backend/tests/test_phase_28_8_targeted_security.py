@@ -227,10 +227,16 @@ async def test_connect_tunnel_forwards_allowlisted_target() -> None:
     proxy, port = await _start_proxy(f"127.0.0.1:{echo_port}")
     try:
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
-        # single CRLF: the proxy reads only the request line and does not
-        # parse headers, so a trailing blank line would be piped upstream as
-        # stray bytes and corrupt the first tunneled frame.
-        writer.write(f"CONNECT 127.0.0.1:{echo_port} HTTP/1.1\r\n".encode())
+        # Standard CONNECT: request line, headers, terminating blank line --
+        # what every real client (curl, httpx, browsers) sends. The proxy
+        # consumes those headers before tunneling; if it did not, they would
+        # reach the echo server as tunnel payload and the assertion below
+        # would see "echo:Host: ..." instead of "echo:ping".
+        writer.write(
+            f"CONNECT 127.0.0.1:{echo_port} HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{echo_port}\r\n"
+            f"\r\n".encode()
+        )
         await writer.drain()
         line = await asyncio.wait_for(reader.readline(), timeout=5)
         assert b"200" in line and b"Established" in line

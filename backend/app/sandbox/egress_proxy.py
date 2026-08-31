@@ -150,10 +150,14 @@ class EgressProxy:
         headers-less CONNECT would leave only ``\\r\\n`` in the buffer and a
         4-byte terminator search would hang until timeout — and then swallow
         the client's TLS ClientHello as if it were headers.
+
+        A client that never sends the terminating blank line (malformed) is
+        waited out for one short timeout and then tunneled anyway, so a
+        non-conformant client is slowed, not broken.
         """
         while True:
             try:
-                line = await asyncio.wait_for(reader.readline(), timeout=10)
+                line = await asyncio.wait_for(reader.readline(), timeout=5)
             except (TimeoutError, ValueError):
                 return
             if not line or line in (b"\r\n", b"\n"):
