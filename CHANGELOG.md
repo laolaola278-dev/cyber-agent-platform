@@ -4,6 +4,25 @@ All notable changes follow Keep a Changelog categories and Semantic Versioning 2
 
 ## [Unreleased]
 
+## [1.0.2-rc1] - 2026-09-01
+
+Release candidate for the 1.0.2 line, cut to re-earn runtime certification for
+the egress tunnel fix.
+
+### Fixed
+
+- Egress proxy consumed only the CONNECT request line, leaving the request's
+  remaining headers in the buffer to be piped upstream as tunnel payload.
+  TLS through the proxy failed with `WRONG_VERSION_NUMBER` and HTTP origins
+  answered `400 malformed HTTP request "Host: ..."`, so every real external
+  acquisition returned zero bytes and terminated `BLOCKED`. The headers are
+  now drained before the tunnel is established. Present identically in v1.0.0
+  and v1.0.1.
+- Regression guards: raw-CONNECT tests against a local upstream, plus a
+  `network`-marked test that fetches real public HTTPS origins through the
+  proxy. The latter runs in the `ci.yml` suite that gates releases — the
+  absence of any proxied-fetch test is why this defect survived two releases.
+
 ## [1.0.1] - 2026-08-31
 
 GA promotion of 1.0.1-rc1: identical artifacts, promoted version metadata only (pure version bump; no runtime changes since rc1).

@@ -14,7 +14,7 @@ FROM nginx:1.30.4-alpine AS runtime
 # 3.5.8-r0 (landed 2026-08-25, after every published nginx:*-alpine build).
 # Upgrade the two runtime openssl libraries in place at build time.
 RUN apk upgrade --no-cache libssl3 libcrypto3
-ARG VERSION=1.0.1
+ARG VERSION=1.0.2-rc1
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="Cyber Agent Platform Console" \
       org.opencontainers.image.version="$VERSION" \
