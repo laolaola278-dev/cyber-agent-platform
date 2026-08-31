@@ -190,3 +190,92 @@ async def test_connect_tunnel_without_headers_still_works(upstream) -> None:
         await proxy.stop()
     assert b" 200 " in response.splitlines()[0]
     assert response.endswith(b"upstream-ok")
+
+
+# -- real-network CONNECT tunnel (CI blind-spot guard) -----------------------
+#
+# The CONNECT defect above stayed invisible to CI for two releases: no suite
+# performed a real proxied fetch, so a corrupted tunnel never surfaced -- the
+# tests above only exist because the defect was found by hand on a live
+# cluster. This test fetches a real public URL through the proxy (CONNECT +
+# a real TLS handshake) so that a regression fails CI instead of production.
+
+_REAL_TARGETS = (
+    "https://example.com",
+    "https://www.iana.org/",
+    "https://www.cloudflare.com/",
+    "https://api.github.com/",
+)
+
+# _fetch failure kinds. "denied" is the proxy's own SSRF policy refusing the
+# target -- unrelated to tunnel integrity, so it must not be reported as a
+# tunnel regression. Everything else is a transport/TLS failure, i.e. exactly
+# what a corrupted CONNECT tunnel looks like.
+_DENIED = "denied"
+_UNREACHABLE = "unreachable"
+
+
+async def _fetch(url: str, *, proxy_url: str | None = None) -> tuple[bytes | None, str | None]:
+    """Real HTTP GET through `proxy_url` (or direct when None).
+
+    Returns (body, failure_kind); failure_kind is None on success.
+    """
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(
+            proxy=proxy_url, timeout=20, follow_redirects=True
+        ) as client:
+            resp = await client.get(url)
+    except (httpx.HTTPError, OSError):
+        return None, _UNREACHABLE
+    if resp.status_code in (403, 407):
+        return None, _DENIED
+    if resp.status_code == 200 and resp.content:
+        return resp.content, None
+    return None, _UNREACHABLE
+
+
+@pytest.mark.network
+@pytest.mark.asyncio
+async def test_connect_tunnel_fetches_real_https_body() -> None:
+    """A real HTTPS fetch through the proxy must return the upstream body.
+
+    Before the header-drain fix the stray CONNECT headers reached the origin
+    ahead of the ClientHello and the handshake failed with
+    WRONG_VERSION_NUMBER, yielding zero bytes -- exactly the production
+    symptom (acquisitions terminating BLOCKED with 0 bytes).
+    """
+    # 1) pre-flight: which public targets can this runner reach at all?
+    direct = await asyncio.gather(*(_fetch(t) for t in _REAL_TARGETS))
+    reachable = [t for t, (body, _) in zip(_REAL_TARGETS, direct, strict=True) if body]
+    if not reachable:
+        pytest.skip("no outbound network on this runner")
+
+    # 2) fetch the same targets through the proxy, stopping at the first body
+    proxy, port = await _start_proxy_on_free_port(Allowlist(""))
+    denied: list[str] = []
+    failed: list[str] = []
+    got_body = False
+    try:
+        for target in reachable:
+            body, failure = await _fetch(target, proxy_url=f"http://127.0.0.1:{port}")
+            if body:
+                got_body = True
+                break
+            (denied if failure == _DENIED else failed).append(target)
+    finally:
+        await proxy.stop()
+
+    if got_body:
+        return  # a real body came back through the tunnel
+    if not failed:
+        pytest.skip(
+            "egress policy denied every reachable target "
+            f"{denied}; tunnel integrity not exercised"
+        )
+    pytest.fail(
+        f"proxy could not fetch {failed} (reachable directly, failed through the "
+        "proxy) -- the CONNECT tunnel is corrupted. This is the CI blind spot "
+        "that hid this defect for two releases."
+    )

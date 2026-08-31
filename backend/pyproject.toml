@@ -78,6 +78,7 @@ markers = [
   "certification: tests that are REQUIRED for the Phase 28.5-L Linux release certification",
   "benchmark: throughput / correctness benchmarks (Phase 28.4/28.5)",
   "stress: high-iteration concurrency stress tests (Phase 28.5-RC race hardening)",
+  "network: tests that need real outbound internet (skipped when the runner has no egress)",
 ]
 filterwarnings = [
   "error",
