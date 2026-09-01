@@ -8,9 +8,11 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-*/
 .ruff_cache/
 .coverage
 .coverage.*
+coverage-*.json
 coverage.xml
 htmlcov/
 *.egg-info/
@@ -51,6 +53,9 @@ _pg*.log
 *.out
 *.test
 *.pid
+
+# Debug leftover files
+dbg_*
 
 # Logs
 *.log

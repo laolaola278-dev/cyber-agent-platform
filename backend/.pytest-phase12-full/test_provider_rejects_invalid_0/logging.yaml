@@ -1,5 +1,0 @@
-version: 1
-disable_existing_loggers: false
-formatters: {simple: {format: '%(message)s'}}
-handlers: {console: {class: logging.StreamHandler, formatter: simple}}
-root: {level: INFO, handlers: [console]}

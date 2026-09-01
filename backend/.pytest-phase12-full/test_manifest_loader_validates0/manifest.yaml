@@ -1,4 +1,0 @@
-name: data-acquisition-agent
-version: 1.0.0
-runtime:
-  entrypoint: agent:DataAcquisitionAgent
