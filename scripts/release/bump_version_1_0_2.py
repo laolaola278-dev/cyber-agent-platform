@@ -1,25 +1,22 @@
-"""Bump all CAP version carriers from 1.0.1 -> 1.0.2-rc1.
+"""Promote all CAP version carriers from 1.0.2-rc1 -> 1.0.2 (GA).
 
-Idempotent: re-running is safe (a carrier already at 1.0.2-rc1 is skipped).
+This is the pure version-metadata commit that follows the v1.0.2-rc1
+certification anchor (aa9008d). It carries NO code change, so
+``scripts/release/classify_diff.py`` must report:
 
-Why a new RC rather than a patch on top of v1.0.1: the egress CONNECT
-tunnel fix (ab21b4b + follow-ups) touches runtime code, so
-``scripts/release/classify_diff.py`` reports ``runtime_affecting=true`` for
-1.0.1 -> HEAD and the v1.0.1 certification cannot be inherited. The fix must
-therefore earn its own certification at a fresh rc anchor, after which a
-pure version-metadata commit promotes rc1 -> 1.0.2 (INHERITED).
+    release_metadata_only = true
+    INHERITED            (the rc1 certification carries over)
 
-Version-agnostic consistency test (test_release_version_consistency.py) reads
-the root VERSION file as canonical and asserts every downstream carrier agrees,
-so all carriers must move together. This script makes targeted, surgical edits:
+Idempotent: re-running is safe (a carrier already at 1.0.2 is skipped).
 
-  * package-lock.json: ONLY the root .version and packages[''].version are
-    bumped. The delayed-stream dependency at ~line 2405 (also "1.0.0") must NOT
-    be touched.
-  * uv.lock: root package version uses PEP 440 form (1.0.2rc1, no hyphen).
-  * Chart.yaml: also flips artifacthub prerelease annotation false -> true.
-  * test_phase_23_release_candidate.py: RC_VERSION constant tracks the release,
-    and the release-notes list gains docs/releases/v1.0.2-rc1.md.
+Differences vs the rc1 bump:
+  * Chart.yaml flips the artifacthub prerelease annotation back to "false"
+    (rc1 set it to "true").
+  * test_phase_23 gains docs/releases/v1.0.2.md in the release-notes list.
+  * uv.lock root package goes from the PEP 440 form 1.0.2rc1 -> 1.0.2.
+
+See bump_version_1_0_2_rc1.py for why package-lock.json and uv.lock need
+targeted, anchored edits (delayed-stream / dependency false positives).
 """
 from __future__ import annotations
 
@@ -27,9 +24,10 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]  # repo root (script lives in scripts/release/)
-OLD = "1.0.1"
-NEW = "1.0.2-rc1"          # SemVer / canonical form
-NEW_PEP440 = "1.0.2rc1"     # PEP 440 form (uv.lock)
+OLD = "1.0.2-rc1"
+NEW = "1.0.2"              # SemVer / canonical form
+OLD_PEP440 = "1.0.2rc1"     # PEP 440 form currently in uv.lock
+NEW_PEP440 = "1.0.2"
 
 changed: list[str] = []
 skipped: list[str] = []
@@ -65,29 +63,34 @@ edit("frontend/package.json", f'"version": "{OLD}"', f'"version": "{NEW}"', coun
 # 5. frontend package-lock.json -- root .version and packages[''].version ONLY.
 lock = ROOT / "frontend/package-lock.json"
 lock_text = lock.read_text("utf-8")
-if NEW not in lock_text:
-    root_pat = re.compile(r'^  "version": "1\.0\.1",$', re.MULTILINE)
+# GUARD MUST BE ANCHORED, NOT A SUBSTRING TEST: three dependencies legitimately
+# carry "version": "1.0.2" at 6-space indentation, and the substring
+# '  "version": "1.0.2",' matches those lines too. A substring guard therefore
+# reports "already bumped" and silently skips the real root bump. Anchoring on
+# ^  "version": "$ (exactly two spaces, end of line) hits only the root entry.
+if len(re.findall(rf'^  "version": "{re.escape(NEW)}",$', lock_text, re.MULTILINE)) == 0:
+    root_pat = re.compile(r'^  "version": "1\.0\.2-rc1",$', re.MULTILINE)
     assert len(root_pat.findall(lock_text)) == 1, "root .version not uniquely found"
     lock_text = root_pat.sub(f'  "version": "{NEW}",', lock_text)
     pkg_pat = re.compile(
-        r'("": \{\n      "name": "cyber-agent-platform-frontend",\n      "version": ")1\.0\.1(",)'
+        r'("": \{\n      "name": "cyber-agent-platform-frontend",\n      "version": ")1\.0\.2-rc1(",)'
     )
     assert len(pkg_pat.findall(lock_text)) == 1, "packages[''].version not uniquely found"
     lock_text = pkg_pat.sub(lambda m: f"{m.group(1)}{NEW}{m.group(2)}", lock_text)
     lock.write_text(lock_text, "utf-8")
     changed.append(
-        "frontend/package-lock.json: root + packages[''] -> 1.0.2-rc1 (delayed-stream untouched)"
+        f"frontend/package-lock.json: root + packages[''] -> {NEW} (delayed-stream untouched)"
     )
 else:
     skipped.append("frontend/package-lock.json: already bumped")
 
-# 6. Helm Chart.yaml: version, appVersion, prerelease annotation
+# 6. Helm Chart.yaml: version, appVersion, prerelease annotation back to false
 edit("deployment/helm/cap/Chart.yaml", f"version: {OLD}", f"version: {NEW}", count=1)
 edit("deployment/helm/cap/Chart.yaml", f'appVersion: "{OLD}"', f'appVersion: "{NEW}"', count=1)
 edit(
     "deployment/helm/cap/Chart.yaml",
-    'artifacthub.io/prerelease: "false"',
     'artifacthub.io/prerelease: "true"',
+    'artifacthub.io/prerelease: "false"',
     count=1,
 )
 
@@ -105,12 +108,19 @@ edit("backend/app/config/settings.py", f'app_version: str = "{OLD}"', f'app_vers
 edit("backend/app/__init__.py", f'__version__ = "{OLD}"', f'__version__ = "{NEW}"', count=1)
 
 # 12. uv.lock root package (PEP 440). Anchor on the package name block so we do
-#     not touch any dependency that happens to be version 1.0.1.
+#     not touch any dependency that happens to share the version string.
 uv = ROOT / "backend/uv.lock"
 uv_text = uv.read_text("utf-8")
-if NEW_PEP440 not in uv_text:
+# Anchored guard (same reasoning as package-lock above): match the root package
+# block specifically so a dependency that happens to be version 1.0.2 cannot
+# make the script skip the real root bump.
+if len(re.findall(
+    r'\[\[package\]\]\nname = "cyber-agent-platform-backend"\nversion = "'
+    + re.escape(NEW_PEP440) + r'"',
+    uv_text,
+)) == 0:
     uv_pat = re.compile(
-        r'(\[\[package\]\]\nname = "cyber-agent-platform-backend"\nversion = ")1\.0\.1(")'
+        r'(\[\[package\]\]\nname = "cyber-agent-platform-backend"\nversion = ")1\.0\.2rc1(")'
     )
     assert len(uv_pat.findall(uv_text)) == 1, "uv.lock root package not uniquely found"
     uv_text = uv_pat.sub(lambda m: f"{m.group(1)}{NEW_PEP440}{m.group(2)}", uv_text)
@@ -119,28 +129,28 @@ if NEW_PEP440 not in uv_text:
 else:
     skipped.append("backend/uv.lock: already bumped")
 
-# 13. test_phase_23 RC_VERSION constant + release-notes list
+# 13. test_phase_23 RC_VERSION constant + GA release notes path
 edit(
     "backend/tests/test_phase_23_release_candidate.py",
     f'RC_VERSION = "{OLD}"',
     f'RC_VERSION = "{NEW}"',
     count=1,
 )
-# GUARDED: the v1.0.1 entry stays in the release-notes list forever, so testing
-# for the presence of OLD would re-append the rc1 path on every re-run. Guard on
+# GUARDED: the rc1 entry stays in the release-notes list forever, so testing
+# for the presence of OLD would re-append the GA path on every re-run. Guard on
 # the NEW path instead.
 notes_rel = "backend/tests/test_phase_23_release_candidate.py"
-if '        "docs/releases/v1.0.2-rc1.md",\n' not in (ROOT / notes_rel).read_text("utf-8"):
+if '        "docs/releases/v1.0.2.md",\n' not in (ROOT / notes_rel).read_text("utf-8"):
     edit(
         notes_rel,
-        '        "docs/releases/v1.0.1.md",\n',
-        '        "docs/releases/v1.0.1.md",\n        "docs/releases/v1.0.2-rc1.md",\n',
+        '        "docs/releases/v1.0.2-rc1.md",\n',
+        '        "docs/releases/v1.0.2-rc1.md",\n        "docs/releases/v1.0.2.md",\n',
         count=1,
     )
 else:
-    skipped.append(f"{notes_rel}: rc1 notes path already listed")
+    skipped.append(f"{notes_rel}: GA notes path already listed")
 
-print("Bumped all version carriers to", NEW)
+print(f"Bumped all version carriers to {NEW} (GA)")
 for line in changed:
     print("  -", line)
 for line in skipped:

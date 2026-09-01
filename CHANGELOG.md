@@ -4,6 +4,22 @@ All notable changes follow Keep a Changelog categories and Semantic Versioning 2
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-01
+
+GA promotion of 1.0.2-rc1: identical artifacts, promoted version metadata only
+(pure version bump; no runtime changes since rc1). Certified at the rc1 anchor
+`aa9008d` — 40/40 GA gates, 2h soak with availability 1.0.
+
+### Fixed
+
+- Egress proxy consumed only the CONNECT request line, leaving the request's
+  remaining headers in the buffer to be piped upstream as tunnel payload.
+  TLS through the proxy failed with `WRONG_VERSION_NUMBER` and HTTP origins
+  answered `400 malformed HTTP request "Host: ..."`, so every real external
+  acquisition returned zero bytes and terminated `BLOCKED`. The headers are
+  now drained before the tunnel is established. Present identically in v1.0.0
+  and v1.0.1; disclosed as a v1.0.1 known limitation and fixed here.
+
 ## [1.0.2-rc1] - 2026-09-01
 
 Release candidate for the 1.0.2 line, cut to re-earn runtime certification for
