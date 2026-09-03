@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Cyber Agent Platform"
-    app_version: str = "1.0.2"
+    app_version: str = "1.0.3-rc1"
     app_environment: str = "development"
     api_prefix: str = ""
     api_docs_enabled: bool = True
