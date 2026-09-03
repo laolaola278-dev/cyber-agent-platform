@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AlertOutlined,
   ApiOutlined,
@@ -39,13 +39,11 @@ import {
   Tag,
   Typography,
 } from "antd";
-import type { MenuProps, TableProps } from "antd";
+import type { MenuProps } from "antd";
 import {
   createInvestigation,
   getApprovals,
-  getAudit,
   getDashboard,
-  getDomainRecords,
   getEvaluations,
   getHealth,
   getModelComparison,
@@ -69,22 +67,30 @@ import type {
 } from "./api/client";
 import type {
   ApprovalItem,
-  AuditEvent,
   Dashboard,
-  DomainRecord,
   Health,
   PlatformUser,
   PluginItem,
   Role,
   SettingsView,
 } from "./types";
+import IncidentsPage from "./pages/IncidentsPage";
+import AssetsPage from "./pages/AssetsPage";
+import AssessmentPage from "./pages/AssessmentPage";
+import DetectionPage from "./pages/DetectionPage";
+import ResponsePage from "./pages/ResponsePage";
+import PlaybooksPage from "./pages/PlaybooksPage";
+import WorkersPage from "./pages/WorkersPage";
+import KnowledgePage from "./pages/KnowledgePage";
+import AuditPage from "./pages/AuditPage";
+import { statusColor } from "./api/constants";
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 
 type PageKey =
-  | "dashboard" | "investigations" | "acquisitions" | "assets" | "knowledge" | "evidence" | "assessment" | "detection"
-  | "incidents" | "response" | "playbooks" | "approvals" | "workers" | "sandbox"
+  | "dashboard" | "investigations" | "acquisitions" | "assets" | "knowledge" | "assessment" | "detection"
+  | "incidents" | "response" | "playbooks" | "approvals" | "workers"
   | "plugins" | "audit" | "access" | "settings";
 
 const menuItems: MenuProps["items"] = [
@@ -94,12 +100,11 @@ const menuItems: MenuProps["items"] = [
     { key: "acquisitions", icon: <CloudDownloadOutlined />, label: "Data Acquisition" },
   ] },
   { type: "group", label: "SECURITY OPERATIONS", children: [
+    { key: "incidents", icon: <NotificationOutlined />, label: "Incident" },
     { key: "assets", icon: <DatabaseOutlined />, label: "Assets" },
     { key: "knowledge", icon: <FileSearchOutlined />, label: "Knowledge" },
-    { key: "evidence", icon: <SafetyCertificateOutlined />, label: "Evidence" },
     { key: "assessment", icon: <BugOutlined />, label: "Assessment" },
     { key: "detection", icon: <AlertOutlined />, label: "Detection" },
-    { key: "incidents", icon: <NotificationOutlined />, label: "Incident" },
     { key: "response", icon: <BlockOutlined />, label: "Response" },
     { key: "playbooks", icon: <PlayCircleOutlined />, label: "Playbook" },
   ] },
@@ -109,29 +114,18 @@ const menuItems: MenuProps["items"] = [
     { key: "access", icon: <TeamOutlined />, label: "Access Control" },
   ] },
   { type: "group", label: "PLATFORM", children: [
-    { key: "workers", icon: <CloudServerOutlined />, label: "Workers" },
-    { key: "sandbox", icon: <SafetyCertificateOutlined />, label: "Sandbox" },
+    { key: "workers", icon: <CloudServerOutlined />, label: "Workers & Sandbox" },
     { key: "plugins", icon: <ApiOutlined />, label: "Plugin" },
     { key: "settings", icon: <SettingOutlined />, label: "Settings" },
   ] },
 ];
 
-const statusColor = (value?: string) => {
-  const status = value?.toUpperCase() ?? "UNKNOWN";
-  if (["OK", "HEALTHY", "ONLINE", "SUCCEEDED", "VERIFIED", "APPROVED", "EXECUTED"].includes(status)) return "success";
-  if (["FAILED", "ERROR", "REJECTED", "OFFLINE"].includes(status)) return "error";
-  if (["RUNNING", "PENDING", "PENDING_APPROVAL", "WAITING_APPROVAL"].includes(status)) return "processing";
-  return "default";
-};
-
 function App() {
   const [page, setPage] = useState<PageKey>("dashboard");
   const [health, setHealth] = useState<Health | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
-  const [records, setRecords] = useState<DomainRecord[]>([]);
   const [plugins, setPlugins] = useState<PluginItem[]>([]);
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
-  const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<PlatformUser[]>([]);
   const [settings, setSettings] = useState<SettingsView | null>(null);
@@ -157,7 +151,6 @@ function App() {
       if (page === "dashboard") setDashboard(await getDashboard());
       else if (page === "plugins") setPlugins(await getPlugins());
       else if (page === "approvals") setApprovals(await getApprovals());
-      else if (page === "audit") setAudit((await getAudit()).items);
       else if (page === "investigations") {
         setEvaluation(await getEvaluations());
         try {
@@ -168,7 +161,6 @@ function App() {
         const [roleData, userData] = await Promise.all([getRoles(), getUsers()]);
         setRoles(roleData); setUsers(userData);
       } else if (page === "settings") setSettings(await getSettings());
-      else setRecords(await getDomainRecords(page));
       setError(null);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "无法连接平台 API");
@@ -179,13 +171,6 @@ function App() {
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { void loadAcquisitions(); }, []);
-
-  const genericColumns: TableProps<DomainRecord>["columns"] = useMemo(() => [
-    { title: "名称 / 标题", key: "name", render: (_, row) => row.name ?? row.title ?? row.id },
-    { title: "状态", dataIndex: "status", key: "status", render: (v?: string) => <Tag color={statusColor(v)}>{v ?? "—"}</Tag> },
-    { title: "严重度", dataIndex: "severity", key: "severity", render: (v?: string) => v ?? "—" },
-    { title: "更新时间", key: "updated", render: (_, row) => row.updated_at ? new Date(row.updated_at).toLocaleString("zh-CN") : "—" },
-  ], []);
 
   const dashboardView = dashboard && (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
@@ -226,11 +211,6 @@ function App() {
     { title: "Certified", dataIndex: "certified", render: (v) => v ? "Yes" : "No" },
   ]} /></Card>;
 
-  const auditView = <Card title="Audit Center" extra={<Tag color="blue">Immutable</Tag>}><Table rowKey="id" loading={loading} dataSource={audit} columns={[
-    { title: "时间", dataIndex: "timestamp", render: (v) => new Date(v).toLocaleString("zh-CN") }, { title: "用户", dataIndex: "operator" },
-    { title: "事件", dataIndex: "action" }, { title: "资源", dataIndex: "resource" }, { title: "Trace ID", dataIndex: "trace_id" },
-  ]} /></Card>;
-
   const accessView = <Row gutter={[16, 16]}><Col xs={24} xl={12}><Card title="Roles"><Table rowKey="name" dataSource={roles} pagination={false} columns={[
     { title: "角色", dataIndex: "name" }, { title: "说明", dataIndex: "description" }, { title: "权限数", dataIndex: "permissions", render: (v: string[]) => v.length },
   ]} /></Card></Col><Col xs={24} xl={12}><Card title="Local Users"><Table rowKey="username" dataSource={users} pagination={false} columns={[
@@ -240,8 +220,6 @@ function App() {
   const settingsView = settings ? <Card title="System Settings" extra={<Tag>只读</Tag>}><Alert type="info" showIcon message="配置仅展示脱敏投影，控制台不提供修改入口。" style={{ marginBottom: 20 }} /><Descriptions bordered column={{ xs: 1, md: 2 }}>
     {Object.entries(settings).map(([key, value]) => <Descriptions.Item key={key} label={key}>{Array.isArray(value) ? value.join(", ") : String(value)}</Descriptions.Item>)}
   </Descriptions></Card> : <Empty />;
-
-  const genericView = <Card title={page.charAt(0).toUpperCase() + page.slice(1)} extra={<Tag>API-backed read view</Tag>}><Table rowKey="id" loading={loading} columns={genericColumns} dataSource={records} /></Card>;
 
   const runInvestigation = async (goal: string) => {
     setSubmitting(true);
@@ -662,11 +640,22 @@ function App() {
   );
 
   const content: Record<PageKey, React.ReactNode> = {
-    dashboard: dashboardView, investigations: investigationsView, acquisitions: acquisitionsView,
-    assets: genericView, knowledge: genericView, evidence: genericView,
-    assessment: genericView, detection: genericView, incidents: genericView, response: genericView,
-    playbooks: genericView, workers: genericView, sandbox: genericView, approvals: approvalsView,
-    plugins: pluginsView, audit: auditView, access: accessView, settings: settingsView,
+    dashboard: dashboardView,
+    investigations: investigationsView,
+    acquisitions: acquisitionsView,
+    incidents: <IncidentsPage />,
+    assets: <AssetsPage />,
+    assessment: <AssessmentPage />,
+    detection: <DetectionPage />,
+    response: <ResponsePage />,
+    playbooks: <PlaybooksPage />,
+    knowledge: <KnowledgePage />,
+    workers: <WorkersPage />,
+    approvals: approvalsView,
+    plugins: pluginsView,
+    audit: <AuditPage />,
+    access: accessView,
+    settings: settingsView,
   };
 
   return <Layout className="app-shell">

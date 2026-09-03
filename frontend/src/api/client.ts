@@ -1,16 +1,32 @@
 import axios from "axios";
 import type {
   ApprovalItem,
+  AssessmentTask,
+  Asset,
   AuditEvent,
   Dashboard,
+  DetectionTask,
   DomainRecord,
+  Finding,
   Health,
+  Incident,
+  KnowledgeEntry,
+  NotificationRecord,
   PageResponse,
   PlatformUser,
+  Playbook,
+  PlaybookExecution,
   PluginItem,
+  ResponsePlan,
+  ResponsePlugin,
   Role,
+  SandboxExecution,
+  SecurityEvent,
   SettingsView,
+  Ticket,
+  Worker,
 } from "../types";
+import type { ApprovalState, ExecutionState } from "./constants";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? "/api",
@@ -248,3 +264,226 @@ export const getAcquisitionEvidence = async (id: string): Promise<{ run_id: stri
 
 export const getAcquisitionCompleteness = async (id: string): Promise<Record<string, unknown>> =>
   (await api.get(`/acquisitions/${id}/completeness`)).data;
+
+// ---- Console v1.1: 域列表（带过滤/分页）与操作端点 ---------------------------
+
+export interface IncidentFilters {
+  severity?: string;
+  status?: string;
+  priority?: string;
+  owner?: string;
+  assignee?: string;
+  queue?: string;
+}
+
+export const listIncidents = async (
+  filters: IncidentFilters = {},
+  page = 1,
+  pageSize = 20,
+): Promise<PageResponse<Incident>> =>
+  (await api.get<PageResponse<Incident>>("/incidents", { params: { ...filters, page, page_size: pageSize } })).data;
+
+export const getIncident = async (id: string): Promise<Incident> =>
+  (await api.get<Incident>(`/incidents/${id}`)).data;
+
+export const createIncident = async (payload: Record<string, unknown>): Promise<Incident> =>
+  (await api.post<Incident>("/incidents", payload)).data;
+
+export const transitionIncident = async (
+  id: string,
+  payload: { status: string; actor: string; reason?: string },
+): Promise<Incident> =>
+  (await api.post<Incident>(`/incidents/${id}/transition`, payload)).data;
+
+export const assignIncident = async (
+  id: string,
+  payload: { actor: string; owner?: string; assignee?: string; queue?: string; priority?: string; reason?: string },
+): Promise<Incident> =>
+  (await api.post<Incident>(`/incidents/${id}/assign`, payload)).data;
+
+export interface AssetFilters {
+  name?: string;
+  asset_type?: string;
+  tag?: string;
+  owner?: string;
+  risk?: string;
+  environment?: string;
+  capability?: string;
+}
+
+export const listAssets = async (
+  filters: AssetFilters = {},
+  page = 1,
+  pageSize = 20,
+): Promise<PageResponse<Asset>> =>
+  (await api.get<PageResponse<Asset>>("/assets", { params: { ...filters, page, page_size: pageSize } })).data;
+
+export const getAsset = async (id: string): Promise<Asset> =>
+  (await api.get<Asset>(`/assets/${id}`)).data;
+
+export const createAsset = async (payload: Record<string, unknown>): Promise<Asset> =>
+  (await api.post<Asset>("/assets", payload)).data;
+
+export const updateAsset = async (id: string, payload: Record<string, unknown>): Promise<Asset> =>
+  (await api.put<Asset>(`/assets/${id}`, payload)).data;
+
+export const getAssetRelations = async (id: string): Promise<Record<string, unknown>[]> =>
+  (await api.get(`/assets/${id}/relations`)).data;
+
+export const getAssetEvidence = async (id: string): Promise<Record<string, unknown>[]> =>
+  (await api.get(`/assets/${id}/evidence`)).data;
+
+export interface EventFilters { severity?: string; status?: string; asset_id?: string }
+
+export const listSecurityEvents = async (
+  filters: EventFilters = {},
+  page = 1,
+  pageSize = 20,
+): Promise<PageResponse<SecurityEvent>> =>
+  (await api.get<PageResponse<SecurityEvent>>("/detection/events", { params: { ...filters, page, page_size: pageSize } })).data;
+
+export const getSecurityEvent = async (id: string): Promise<SecurityEvent> =>
+  (await api.get<SecurityEvent>(`/detection/events/${id}`)).data;
+
+export const listDetectionTasks = async (page = 1, pageSize = 20): Promise<PageResponse<DetectionTask>> =>
+  (await api.get<PageResponse<DetectionTask>>("/detection/tasks", { params: { page, page_size: pageSize } })).data;
+
+export interface FindingFilters { severity?: string; status?: string; asset_id?: string }
+
+export const listFindings = async (
+  filters: FindingFilters = {},
+  page = 1,
+  pageSize = 20,
+): Promise<PageResponse<Finding>> =>
+  (await api.get<PageResponse<Finding>>("/assessment/findings", { params: { ...filters, page, page_size: pageSize } })).data;
+
+export const getFinding = async (id: string): Promise<Finding> =>
+  (await api.get<Finding>(`/assessment/findings/${id}`)).data;
+
+export const transitionFinding = async (
+  id: string,
+  payload: { status: string; actor: string; reason?: string },
+): Promise<Record<string, unknown>> =>
+  (await api.post(`/assessment/findings/${id}/transition`, payload)).data;
+
+export const listAssessmentTasks = async (page = 1, pageSize = 20): Promise<PageResponse<AssessmentTask>> =>
+  (await api.get<PageResponse<AssessmentTask>>("/assessment/tasks", { params: { page, page_size: pageSize } })).data;
+
+export interface ResponsePlanFilters {
+  incident_id?: string;
+  approval_state?: ApprovalState;
+  execution_state?: ExecutionState;
+}
+
+export const listResponsePlans = async (
+  filters: ResponsePlanFilters = {},
+  page = 1,
+  pageSize = 20,
+): Promise<PageResponse<ResponsePlan>> =>
+  (await api.get<PageResponse<ResponsePlan>>("/response/plans", { params: { ...filters, page, page_size: pageSize } })).data;
+
+export const getResponsePlan = async (id: string): Promise<ResponsePlan> =>
+  (await api.get<ResponsePlan>(`/response/plans/${id}`)).data;
+
+export const createResponsePlan = async (payload: Record<string, unknown>): Promise<ResponsePlan> =>
+  (await api.post<ResponsePlan>("/response/plans", payload)).data;
+
+export const approveResponsePlan = async (
+  id: string,
+  payload: { approver: string; comment?: string; level?: number },
+): Promise<ResponsePlan> =>
+  (await api.post<ResponsePlan>(`/response/plans/${id}/approve`, payload)).data;
+
+export const rejectResponsePlan = async (
+  id: string,
+  payload: { approver: string; comment: string },
+): Promise<ResponsePlan> =>
+  (await api.post<ResponsePlan>(`/response/plans/${id}/reject`, payload)).data;
+
+export const executeResponsePlan = async (
+  id: string,
+  payload: { actor: string },
+): Promise<ResponsePlan> =>
+  (await api.post<ResponsePlan>(`/response/plans/${id}/execute`, payload)).data;
+
+export const rollbackResponsePlan = async (
+  id: string,
+  payload: { actor: string; reason: string },
+): Promise<ResponsePlan> =>
+  (await api.post<ResponsePlan>(`/response/plans/${id}/rollback`, payload)).data;
+
+export const listResponsePlugins = async (): Promise<ResponsePlugin[]> =>
+  (await api.get<ResponsePlugin[]>("/response/plugins")).data;
+
+export const listPlaybooks = async (page = 1, pageSize = 20): Promise<PageResponse<Playbook>> =>
+  (await api.get<PageResponse<Playbook>>("/playbooks", { params: { page, page_size: pageSize } })).data;
+
+export const getPlaybook = async (id: string): Promise<Playbook> =>
+  (await api.get<Playbook>(`/playbooks/${id}`)).data;
+
+export const listPlaybookExecutions = async (page = 1, pageSize = 20): Promise<PageResponse<PlaybookExecution>> =>
+  (await api.get<PageResponse<PlaybookExecution>>("/playbooks/executions", { params: { page, page_size: pageSize } })).data;
+
+export const getPlaybookExecution = async (id: string): Promise<PlaybookExecution> =>
+  (await api.get<PlaybookExecution>(`/playbooks/executions/${id}`)).data;
+
+export const resumePlaybookExecution = async (
+  id: string,
+  payload: { actor: string; input?: Record<string, unknown> },
+): Promise<PlaybookExecution> =>
+  (await api.post<PlaybookExecution>(`/playbooks/executions/${id}/resume`, payload)).data;
+
+export const listWorkers = async (): Promise<Worker[]> =>
+  (await api.get<Worker[]>("/workers")).data;
+
+export const listSandboxExecutions = async (): Promise<SandboxExecution[]> =>
+  (await api.get<SandboxExecution[]>("/sandbox")).data;
+
+export const getSandboxExecution = async (id: string): Promise<SandboxExecution> =>
+  (await api.get<SandboxExecution>(`/sandbox/${id}`)).data;
+
+export interface KnowledgeFilters { knowledge_type?: string; source?: string; status?: string }
+
+export const listKnowledge = async (
+  filters: KnowledgeFilters = {},
+  page = 1,
+  pageSize = 20,
+): Promise<PageResponse<KnowledgeEntry>> =>
+  (await api.get<PageResponse<KnowledgeEntry>>("/knowledge", { params: { ...filters, page, page_size: pageSize } })).data;
+
+export const searchKnowledge = async (
+  q: string,
+  page = 1,
+  pageSize = 20,
+): Promise<PageResponse<KnowledgeEntry>> =>
+  (await api.get<PageResponse<KnowledgeEntry>>("/knowledge/search", { params: { q, page, page_size: pageSize } })).data;
+
+export interface NotificationFilters { incident_id?: string; status?: string }
+
+export const listNotifications = async (
+  filters: NotificationFilters = {},
+  page = 1,
+  pageSize = 20,
+): Promise<PageResponse<NotificationRecord>> =>
+  (await api.get<PageResponse<NotificationRecord>>("/notifications", { params: { ...filters, page, page_size: pageSize } })).data;
+
+export const listTickets = async (status?: string, page = 1, pageSize = 20): Promise<PageResponse<Ticket>> =>
+  (await api.get<PageResponse<Ticket>>("/tickets", { params: { status, page, page_size: pageSize } })).data;
+
+export interface AuditFilters {
+  operator?: string;
+  event_type?: string;
+  resource?: string;
+  plugin?: string;
+  incident?: string;
+  worker?: string;
+  start?: string;
+  end?: string;
+}
+
+export const queryAudit = async (
+  filters: AuditFilters = {},
+  page = 1,
+  pageSize = 20,
+): Promise<PageResponse<AuditEvent>> =>
+  (await api.get<PageResponse<AuditEvent>>("/audit", { params: { ...filters, page, page_size: pageSize } })).data;
