@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button, Card, DatePicker, Input, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import dayjs, { type Dayjs } from "dayjs";
+import dayjs from "dayjs";
 import { usePageList } from "../hooks/usePageList";
 import type { AuditEvent } from "../types";
 import { formatTime } from "../api/constants";

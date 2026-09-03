@@ -3,7 +3,7 @@ import { Button, Card, Descriptions, Drawer, Form, Input, Modal, Select, Space, 
 import type { ColumnsType } from "antd/es/table";
 import { App } from "antd";
 import { usePageList } from "../hooks/usePageList";
-import { getFinding, listAssessmentTasks, transitionFinding } from "../api/client";
+import { getFinding, transitionFinding } from "../api/client";
 import type { AssessmentTask, Finding } from "../types";
 import { FINDING_STATUSES, SEVERITIES, formatTime, severityTag, statusTag } from "../api/constants";
 import { errorMessage } from "../api/http";

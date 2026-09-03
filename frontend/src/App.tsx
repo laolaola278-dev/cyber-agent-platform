@@ -14,7 +14,6 @@ import {
   LockOutlined,
   NotificationOutlined,
   PlayCircleOutlined,
-  SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined,
 } from "@ant-design/icons";

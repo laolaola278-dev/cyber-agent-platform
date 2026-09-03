@@ -10,7 +10,7 @@ import {
   rejectResponsePlan, rollbackResponsePlan,
 } from "../api/client";
 import type { ResponsePlan } from "../types";
-import { APPROVAL_STATES, EXECUTION_STATES, RISK_LEVELS, formatTime, statusTag } from "../api/constants";
+import { APPROVAL_STATES, EXECUTION_STATES, formatTime, statusTag } from "../api/constants";
 import { errorMessage } from "../api/http";
 import { useEffect } from "react";
 
