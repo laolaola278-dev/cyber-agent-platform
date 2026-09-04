@@ -40,6 +40,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import (
+    AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
@@ -50,6 +51,7 @@ from app.models.worker import SandboxExecution
 from app.models.worker import WorkerLease as WorkerLeaseModel
 from app.sandbox.policy import SandboxPolicyEngine
 from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
+from app.worker.contracts import WorkerRecord
 from app.worker.lease import WorkerLeaseManager
 from app.worker.registry import WorkerRegistry
 from app.worker.runtime import WorkerRuntime
@@ -131,6 +133,28 @@ def _pending_execution(worker_id: uuid.UUID) -> SandboxExecution:
     )
 
 
+async def _register_test_worker(
+    session: AsyncSession, worker_id: uuid.UUID, name: str
+) -> None:
+    """Register the workers row BEFORE acquiring its lease.
+
+    worker_leases.worker_id carries a real FK to workers. SQLite does not
+    enforce FKs by default, which let bare-uuid4() fixtures pass silently,
+    while PostgreSQL (authoritative) correctly rejected them with
+    fk_worker_leases_worker_id_workers violations. DB semantic mismatch,
+    fixed at the fixture.
+    """
+    await WorkerRegistry(session).register(
+        WorkerRecord(
+            id=worker_id,
+            name=name,
+            runtime_version="28.7",
+            capabilities=frozenset({"acquisition.http"}),
+            max_concurrency=2,
+        )
+    )
+
+
 async def test_heartbeat_renewal_is_isolated_from_open_main_transaction(
     hb_engine,
 ) -> None:
@@ -169,6 +193,7 @@ async def test_heartbeat_renewal_is_isolated_from_open_main_transaction(
 
     worker_id = uuid4()
     execution_id = uuid4()
+    await _register_test_worker(runtime_session, worker_id, "hb-invariant")
     lease = await leases.acquire(
         worker_id=worker_id,
         execution_id=execution_id,
@@ -243,6 +268,7 @@ async def test_heartbeat_write_contention_uses_separate_connections(
     )
 
     worker_id = uuid4()
+    await _register_test_worker(runtime_session, worker_id, "hb-contention")
     lease = await leases.acquire(
         worker_id=worker_id,
         execution_id=uuid4(),
@@ -293,55 +319,67 @@ async def test_heartbeat_renewal_isolation_postgres_authoritative() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
     runtime_session = factory()
-    leases = WorkerLeaseManager(runtime_session)
-    runtime = WorkerRuntime(
-        runtime_session,
-        WorkerRegistry(runtime_session),
-        WorkerScheduler(WorkerRegistry(runtime_session)),
-        leases,
-        SandboxRuntime(MemorySandboxProvider(), SandboxPolicyEngine()),
-        lease_ttl_seconds=120,
-        heartbeat_session_factory=factory,
-    )
-    worker_id = uuid4()
-    lease = await leases.acquire(
-        worker_id=worker_id,
-        execution_id=uuid4(),
-        owner="acquisition:pg-hb-invariant",
-        ttl_seconds=120,
-    )
-
-    # main execution transaction DELIBERATELY OPEN with an uncommitted write
-    pending = _pending_execution(worker_id)
-    runtime_session.add(pending)
-    await runtime_session.flush()
-
-    # concurrent renewal on the dedicated connection must succeed
-    renewed = await runtime._renew_on_dedicated_session(lease, owner="acquisition:pg-hb-invariant")
-    assert renewed.version == lease.version + 1
-    assert datetime.now(UTC) >= renewed.renewed_at.replace(tzinfo=UTC)
-
-    # fresh connection sees the committed renewal; the uncommitted write is
-    # still invisible there but present in the open main transaction
-    check = factory()
     try:
-        rows = (
-            (
-                await check.execute(
-                    select(WorkerLeaseModel.version).where(WorkerLeaseModel.id == lease.id)
-                )
-            )
-            .scalars()
-            .all()
+        leases = WorkerLeaseManager(runtime_session)
+        runtime = WorkerRuntime(
+            runtime_session,
+            WorkerRegistry(runtime_session),
+            WorkerScheduler(WorkerRegistry(runtime_session)),
+            leases,
+            SandboxRuntime(MemorySandboxProvider(), SandboxPolicyEngine()),
+            lease_ttl_seconds=120,
+            heartbeat_session_factory=factory,
         )
-        assert rows == [lease.version + 1]
-        invisible = await check.get(SandboxExecution, pending.id)
-        assert invisible is None
-    finally:
-        await check.close()
-    again = await runtime_session.get(SandboxExecution, pending.id)
-    assert again is not None
+        worker_id = uuid4()
+        await _register_test_worker(runtime_session, worker_id, "pg-hb-invariant")
+        lease = await leases.acquire(
+            worker_id=worker_id,
+            execution_id=uuid4(),
+            owner="acquisition:pg-hb-invariant",
+            ttl_seconds=120,
+        )
 
-    await runtime_session.rollback()  # clean recovery, no state-machine error
-    await runtime_session.close()
-    await engine.dispose()
+        # main execution transaction DELIBERATELY OPEN with an uncommitted write
+        pending = _pending_execution(worker_id)
+        runtime_session.add(pending)
+        await runtime_session.flush()
+
+        # concurrent renewal on the dedicated connection must succeed
+        renewed = await runtime._renew_on_dedicated_session(
+            lease, owner="acquisition:pg-hb-invariant"
+        )
+        assert renewed.version == lease.version + 1
+        assert datetime.now(UTC) >= renewed.renewed_at.replace(tzinfo=UTC)
+
+        # fresh connection sees the committed renewal; the uncommitted write is
+        # still invisible there but present in the open main transaction
+        check = factory()
+        try:
+            rows = (
+                (
+                    await check.execute(
+                        select(WorkerLeaseModel.version).where(
+                            WorkerLeaseModel.id == lease.id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert rows == [lease.version + 1]
+            invisible = await check.get(SandboxExecution, pending.id)
+            assert invisible is None
+        finally:
+            await check.close()
+        again = await runtime_session.get(SandboxExecution, pending.id)
+        assert again is not None
+
+        await runtime_session.rollback()  # clean recovery, no state-machine error
+    finally:
+        # A mid-test failure must NOT leak the checked-out asyncpg connection:
+        # its GC finalizer fires as an unraisable SAWarning minutes later and
+        # pytest's unraisable hook then attributes it to whichever long test
+        # happens to be running (that is how a fixture bug here poisoned the
+        # 27-minute capacity gate in the 2e4d0b1 CI run).
+        await runtime_session.close()
+        await engine.dispose()
