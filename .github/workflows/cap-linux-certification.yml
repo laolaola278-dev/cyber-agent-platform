@@ -78,9 +78,9 @@ jobs:
         command: server /data --console-address :9001
         ports: ["9000:9000"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v6
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
       - name: Install deps
         run: uv sync --project backend --frozen --extra dev
@@ -154,9 +154,9 @@ jobs:
         command: server /data --console-address :9001
         ports: ["9000:9000"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v6
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
       - run: uv sync --project backend --frozen --extra dev
       - name: Build images + setup
@@ -235,9 +235,9 @@ jobs:
         command: server /data --console-address :9001
         ports: ["9000:9000"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v6
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
       - run: uv sync --project backend --frozen --extra dev
       - name: Build images + setup infra (http/browser images + PG/MinIO/egress)
