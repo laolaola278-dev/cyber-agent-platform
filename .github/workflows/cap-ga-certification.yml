@@ -6,6 +6,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      ga_strict:
+        description: "Final-strict FULL GA mode (CAP_GA_STRICT=1): PLANNED == failure, 40/40 required. Dispatch the reliability soak for this commit FIRST and let it finish, otherwise the run fails."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -19,6 +25,11 @@ env:
   CAP_K8S_STRICT: "1"
   PHASE_28_6_RUN: "32565459369"
   KIND_CLUSTER: cap-k8s
+  # Final-strict FULL GA meta-gate. Push/PR runs stay in development mode
+  # (IMPLEMENTED-SCOPE semantics) because a reliability soak for every push
+  # would cost ~2h of CI each time. ONLY a workflow_dispatch with ga_strict=true
+  # switches the meta-gate to FULL GA semantics (PLANNED == failure).
+  CAP_GA_STRICT: ${{ (github.event_name == 'workflow_dispatch' && inputs.ga_strict == true) && '1' || '0' }}
   # ABSOLUTE paths: the pytest step runs with working-directory=backend while
   # the report generator runs at the repo root -- a relative GA_REPORT_DIR
   # made the test write DR evidence under backend/outputs/ga-dr/ while the
@@ -198,6 +209,7 @@ jobs:
           # JUnit goes to the REPO ROOT outputs dir (the generator reads it there)
           mkdir -p ../outputs/cap-cert-ga
           uv run pytest tests/test_phase_28_7_ga_pregate_heartbeat.py \
+            tests/test_phase_28_7_ga_heartbeat_invariant.py \
             tests/test_phase_28_7_ga_certification.py \
             tests/test_phase_28_7_reconciliation_unit.py \
             tests/test_phase_28_7_ga_tier2_cluster.py \
@@ -219,9 +231,33 @@ jobs:
         continue-on-error: true
 
       # Reliability gates (24-26/34/35) certify in cap-ga-reliability
-      # (nightly/dispatch). When a run for THIS commit exists -- e.g. the
-      # full-GA proof dispatches both workflows -- its JUnit merges here;
-      # otherwise those gates report PLANNED (dev mode) / fail (strict).
+      # (nightly/dispatch). DEFECT FIXED HERE: download-artifact@v4 is
+      # SAME-RUN ONLY unless `run-id` + `github-token` are supplied, and the
+      # previous version of this step supplied neither -- so it could never
+      # see another workflow's artifact and gates 24/25/26/34/35 were
+      # structurally always PLANNED, making a FULL GA proof impossible from
+      # CI alone. We now resolve the soak run FOR THIS COMMIT first and
+      # download from it explicitly.
+      #
+      # NOTE on filters: the runs endpoint IGNORES a `conclusion` query param
+      # (verified: an in_progress run is returned even with conclusion=success),
+      # so we filter with `status=completed` server-side and select the
+      # successful run in jq. A soak that is still running -- or that failed --
+      # yields NO evidence, which is the correct fail-closed behavior: the
+      # gates then report PLANNED (dev mode) / fail (strict).
+      - name: Resolve reliability soak run for this commit
+        id: reliability-run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id="$(gh api \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/cap-ga-reliability.yml/runs?head_sha=${GITHUB_SHA}&status=completed&per_page=5" \
+            --jq '[.workflow_runs[] | select(.conclusion=="success")][0].id // empty')"
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+          echo "reliability soak run for ${GITHUB_SHA}: ${run_id:-<none>}"
+        # An API hiccup must degrade to PLANNED (dev mode), never fail the job.
+        continue-on-error: true
       # The artifact's contents are LCA-stripped by download-artifact (cap-cert-ga/
       # + ga-dr/ with NO outer `outputs/` ancestor), so we download into `outputs/`
       # to land exactly where the generator reads: outputs/cap-cert-ga/junit-
@@ -229,10 +265,14 @@ jobs:
       # workspace }} directly -- the old behavior -- dropped the reliability
       # evidence at repo-root and the GA report silently lost gates 24/25/26.
       - uses: actions/download-artifact@v4
-        if: always()
+        if: always() && steps.reliability-run.outputs.run_id != ''
         with:
           name: reliability-evidence
           path: ${{ github.workspace }}/outputs
+          run-id: ${{ steps.reliability-run.outputs.run_id }}
+          github-token: ${{ github.token }}
+        # A soak run for this SHA may legitimately not exist yet (every push) --
+        # that is the development-mode path, never a hard failure.
         continue-on-error: true
 
       # GA-GATE 33: control-plane security re-certification -- the Phase 28.5
