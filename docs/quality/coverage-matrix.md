@@ -14,16 +14,16 @@
 |---|---|---|---|---|---|---|
 | 外网采集 CONNECT 隧道（egress） | ✅ | ✅ | ✅ (`cfd5289`, `test_phase_27_probe.py`) | — | GA-GATE 24/25 | 已堵盲区 |
 | Linux 运行时网络探针 | ✅ | ✅ | ✅ (`test_phase_28_5_linux_network.py`) | — | Phase 28.5-L | 已堵盲区 |
-| Zeek JSONL 摄入（Adapter→Telemetry→Detection 三件套） | ✅ (`test_phase_13_*`) | ✅ | ❌ 需真实 Zeek 传感器 | — | — | 盲区：无传感器环境，缓解=fixture 回放 |
+| Zeek JSONL 摄入（Adapter→Telemetry→Detection 三件套） | ✅ (`test_phase_13_*`) | ✅ | ❌ 盲区：需真实 Zeek 传感器，缓解=fixture 回放 | — | — | 盲区：无传感器环境，缓解=fixture 回放 |
 | Zeek TSV 摄入 | ✅ 锚定拒绝 (`tools/zeek/adapter.py:107`) | — | — | — | — | 🚫 known limitation（设计性拒绝，带 remediation） |
-| Suricata EVE JSON 摄入 | ✅ | ✅ | ❌ 需真实 sensor | — | — | 盲区：同 Zeek，缓解=fixture 回放 |
-| Nuclei 扫描结果归一化 | ✅ | ✅ | ❌ 需真实 nuclei 二进制 | — | — | 盲区：CI 不装外部扫描器，缓解=fixture 回放 |
-| ZAP 扫描结果归一化 | ✅ | ✅ | ❌ 需真实 ZAP | — | — | 盲区：同上 |
-| EDR 阻断响应 | ✅ (`test_phase_19_edr_response.py`) | ✅ | ❌ mock-only (`fake_plugin.py`) | — | GA-GATE 13 | 🚫 known limitation（v1.0.2 起登记） |
-| WAF 拦截响应 | ✅ (`test_phase_16_waf_response.py`) | ✅ | ❌ mock-only | — | GA-GATE 13 | 🚫 known limitation（同上） |
-| Firewall 阻断响应 | ✅ (`test_phase_17_firewall_response.py`) | ✅ | ❌ mock-only | — | GA-GATE 13 | 🚫 known limitation（同上） |
-| Notification（邮件/webhook 出站） | ✅ | ✅ | ❌ 无真实 SMTP/webhook 探针 | — | — | 盲区：待真实出站探针（P0 候选） |
-| Ticket（ITSM 工单出站） | ✅ | ✅ | ❌ 无真实 ITSM | — | — | 盲区：同上 |
+| Suricata EVE JSON 摄入 | ✅ | ✅ | ❌ 盲区：同 Zeek 需真实 sensor，缓解=fixture 回放 | — | — | 盲区：同 Zeek，缓解=fixture 回放 |
+| Nuclei 扫描结果归一化 | ✅ | ✅ | ❌ 盲区：CI 不装外部扫描器，缓解=fixture 回放 | — | — | 盲区：CI 不装外部扫描器，缓解=fixture 回放 |
+| ZAP 扫描结果归一化 | ✅ | ✅ | ❌ 盲区：同 Nuclei 需真实 ZAP，缓解=fixture 回放 | — | — | 盲区：同上 |
+| EDR 阻断响应 | ✅ (`test_phase_19_edr_response.py`) | ✅ | ❌ 盲区：mock-only (`fake_plugin.py`)，缓解=真实 provider 见 roadmap 赛道 2 | — | GA-GATE 13 | 🚫 known limitation（v1.0.2 起登记） |
+| WAF 拦截响应 | ✅ (`test_phase_16_waf_response.py`) | ✅ | ❌ 盲区：mock-only，缓解=同 EDR 真实 provider 立项 | — | GA-GATE 13 | 🚫 known limitation（同上） |
+| Firewall 阻断响应 | ✅ (`test_phase_17_firewall_response.py`) | ✅ | ❌ 盲区：mock-only，缓解=同 EDR 真实 provider 立项 | — | GA-GATE 13 | 🚫 known limitation（同上） |
+| Notification（邮件/webhook 出站） | ✅ | ✅ | ❌ 盲区：无真实 SMTP/webhook 探针，缓解=待补出站探针（P0 候选） | — | — | 盲区：待真实出站探针（P0 候选） |
+| Ticket（ITSM 工单出站） | ✅ | ✅ | ❌ 盲区：无真实 ITSM，缓解=同 Notification 待补探针 | — | — | 盲区：同上 |
 | cancel/complete 线性化契约 | ✅ DB-atomic 证明 | ✅ SQLite+PG 双权威 | — | ✅ | heartbeat_invariant 三项 PASS（v1.0.3 起） | 已堵盲区（`2e4d0b1`/`4bc5169`） |
 | 执行租约误回收（heartbeat） | ✅ | ✅ 静态+SQLite+PG | — | ✅ | 同上 | 已堵盲区（同上） |
 | DR 恢复（RPO/RTO） | ✅ | ✅ | — | ✅ | GA-GATE 2..4（RPO 12.19s / RTO 210.48s） | 已验证 |
@@ -32,7 +32,7 @@
 | 供应链（SBOM/Trivy/锁文件） | — | ✅ | — | — | GA supply-chain job + GA-GATE 33 | 已验证 |
 | SLO 强制执行 | — | — | — | — | — | 盲区（设计如此）：`slo-candidates.json` 为候选，转正待满月生产数据 |
 | SLI 生产导出 | — | — | — | — | — | 盲区：GA 报告 `sli` 块无生产者（转正 SLO 时同步解决） |
-| 24 小时长稳 | — | — | — | ❌（认证 soak 为 7200s） | — | 🚫 known limitation（v1.0.2 起登记） |
+| 24 小时长稳 | — | — | — | ❌ 盲区：认证 soak 为 7200s，缓解=真实设备赛道 24h soak 立项 | — | 🚫 known limitation（v1.0.2 起登记） |
 
 ## 空格理由汇总
 

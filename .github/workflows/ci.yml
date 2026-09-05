@@ -20,6 +20,14 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      # CI blind-spot governance P0 gate (docs/quality/ci-blindspot-
+      # governance.md): the coverage matrix must stay self-consistent —
+      # any promised capability registering a verification gap must carry
+      # an inline accountability anchor, otherwise this job fails before
+      # dependencies install (fail-fast, stdlib only, mirrors the inline
+      # chart-defaults assertion precedent in the packaging job).
+      - name: Assert coverage-matrix discipline
+        run: python scripts/quality/assert_coverage_matrix.py
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
