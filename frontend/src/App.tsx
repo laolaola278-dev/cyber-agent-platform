@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import {
   AlertOutlined,
   ApiOutlined,
@@ -17,7 +17,7 @@ import {
   SettingOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
-import { Alert, Badge, Layout, Menu, Typography } from "antd";
+import { Alert, Badge, Layout, Menu, Spin, Typography } from "antd";
 import type { MenuProps } from "antd";
 import {
   getApprovals,
@@ -37,22 +37,28 @@ import type {
   Role,
   SettingsView,
 } from "./types";
-import IncidentsPage from "./pages/IncidentsPage";
-import AssetsPage from "./pages/AssetsPage";
-import AssessmentPage from "./pages/AssessmentPage";
-import DetectionPage from "./pages/DetectionPage";
-import ResponsePage from "./pages/ResponsePage";
-import PlaybooksPage from "./pages/PlaybooksPage";
-import KnowledgePage from "./pages/KnowledgePage";
-import WorkersPage from "./pages/WorkersPage";
-import AuditPage from "./pages/AuditPage";
+
+// Route-level code splitting (roadmap track 4): each of the 16 views
+// loads on first navigation, so the initial bundle carries only the
+// shell + antd vendor chunk. Home (dashboard) keeps prefetch priority
+// via eager import below.
 import DashboardPage from "./pages/DashboardPage";
-import InvestigationsPage from "./pages/InvestigationsPage";
-import AcquisitionsPage from "./pages/AcquisitionsPage";
-import ApprovalsPage from "./pages/ApprovalsPage";
-import PluginsPage from "./pages/PluginsPage";
-import AccessPage from "./pages/AccessPage";
-import SettingsPage from "./pages/SettingsPage";
+
+const InvestigationsPage = lazy(() => import("./pages/InvestigationsPage"));
+const AcquisitionsPage = lazy(() => import("./pages/AcquisitionsPage"));
+const IncidentsPage = lazy(() => import("./pages/IncidentsPage"));
+const AssetsPage = lazy(() => import("./pages/AssetsPage"));
+const AssessmentPage = lazy(() => import("./pages/AssessmentPage"));
+const DetectionPage = lazy(() => import("./pages/DetectionPage"));
+const ResponsePage = lazy(() => import("./pages/ResponsePage"));
+const PlaybooksPage = lazy(() => import("./pages/PlaybooksPage"));
+const KnowledgePage = lazy(() => import("./pages/KnowledgePage"));
+const WorkersPage = lazy(() => import("./pages/WorkersPage"));
+const AuditPage = lazy(() => import("./pages/AuditPage"));
+const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
+const PluginsPage = lazy(() => import("./pages/PluginsPage"));
+const AccessPage = lazy(() => import("./pages/AccessPage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -149,7 +155,10 @@ function App() {
       <div className="phase-badge"><span>v2.0</span><small>Agentic Security</small></div>
     </Sider>
     <Layout><Header className="app-header"><div><Text strong>Security Operations Console</Text><Badge status={health?.status === "ok" ? "success" : "warning"} text={health?.status ?? "unknown"} /></div><Text type="secondary">RBAC · Audit · Metrics · Trace</Text></Header>
-      <Content className="app-content">{error && <Alert type="warning" showIcon message="数据加载失败" description={error} style={{ marginBottom: 16 }} />}{content[page]}</Content>
+      <Content className="app-content">
+        {error && <Alert type="warning" showIcon message="数据加载失败" description={error} style={{ marginBottom: 16 }} />}
+        <Suspense fallback={<div className="page-loading"><Spin size="large" /></div>}>{content[page]}</Suspense>
+      </Content>
     </Layout>
   </Layout>;
 }

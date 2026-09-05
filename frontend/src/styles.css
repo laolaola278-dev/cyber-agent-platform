@@ -173,3 +173,10 @@ body {
     padding: 18px;
   }
 }
+
+/* Route-level lazy loading (Suspense fallback for code-split pages). */
+.page-loading {
+  display: grid;
+  min-height: 40vh;
+  place-items: center;
+}
