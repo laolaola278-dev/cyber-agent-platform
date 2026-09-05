@@ -32,12 +32,59 @@ from app.worker.registry import WorkerRegistry
 from app.worker.runtime import WorkerRuntime
 from app.worker.scheduler import WorkerScheduler
 from tests.acquisition_lab import AcquisitionLabServer, lab_policy, lab_url_validator
-from tests.conftest import TestSessionFactory
 
 
 @pytest_asyncio.fixture
-async def session() -> AsyncSession:
-    async with TestSessionFactory() as session:
+async def db(tmp_path) -> tuple:
+    """Per-test file-backed SQLite with per-session connections.
+
+    The in-memory StaticPool engine in conftest shares ONE aiosqlite
+    connection across ALL sessions. The worker-path execution opens its
+    own poll sessions (``async_sessionmaker(service.session.bind)``), so
+    operation COMMITs and poll SELECTs interleave on that single
+    connection -- the load-sensitive
+    ``cannot commit transaction - SQL statements in progress`` flake seen
+    in CI (run 33946618296; classified harness race in
+    docs/quality/cert-rerun-triage-33946618296.md). A per-test file DB
+    gives each session its own connection, mirroring the production
+    PostgreSQL topology. Same pattern as the 28.2 cancellation suite.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from app.database import Base
+
+    db_path = tmp_path / "security_regression.db"
+    # NullPool: every session/connection is brand new, so a poll session can
+    # never reuse a pooled connection carrying a stale WAL snapshot.
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{db_path.as_posix()}",
+        connect_args={
+            "check_same_thread": False,
+            # WAL + busy timeout: readers never block the writer and a
+            # contended write waits instead of erroring (mirrors MVCC).
+            "timeout": 30,
+        },
+        poolclass=NullPool,
+    )
+    SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
+    yield engine, SessionFactory
+    import asyncio as _asyncio
+    import gc as _gc
+
+    await _asyncio.sleep(0.05)
+    _gc.collect()
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def session(db) -> AsyncSession:
+    _engine, SessionFactory = db
+    async with SessionFactory() as session:
         yield session
 
 
