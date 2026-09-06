@@ -12,8 +12,14 @@ FROM nginx:1.30.4-alpine AS runtime
 # CVE-2026-14456 (openssl DoS via unbounded QUIC memory growth): this base
 # image ships openssl 3.5.7-r0; the alpine 3.24 repo carries the fixed
 # 3.5.8-r0 (landed 2026-08-25, after every published nginx:*-alpine build).
-# Upgrade the two runtime openssl libraries in place at build time.
-RUN apk upgrade --no-cache libssl3 libcrypto3
+# CVE-2026-53612/53613/53614, CVE-2026-76642, CVE-2026-78408/78409/78410
+# (util-linux mount TOCTOU, SUID nosuid/noexec bypass, nsenter cgroup leak,
+# X-mount.subdir detached-tree, mount helper privilege): this base layer
+# ships libuuid/util-linux 2.42.1-r0; the alpine 3.24 repo carries the fixed
+# 2.42.3-r0/r1. Same pattern as openssl above: upgrade the affected runtime
+# libraries in place at build time rather than waiting on the next
+# nginx:*-alpine tag to pick up the refreshed alpine 3.24 base.
+RUN apk upgrade --no-cache libssl3 libcrypto3 libuuid
 ARG VERSION=1.0.4
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="Cyber Agent Platform Console" \
