@@ -22,8 +22,8 @@
 | EDR 阻断响应 | ✅ (`test_phase_19_edr_response.py`) | ✅ | ❌ 盲区：mock-only (`fake_plugin.py`)，缓解=真实 provider 见 roadmap 赛道 2 | — | GA-GATE 13 | 🚫 known limitation（v1.0.2 起登记） |
 | WAF 拦截响应 | ✅ (`test_phase_16_waf_response.py`) | ✅ | ❌ 盲区：mock-only，缓解=同 EDR 真实 provider 立项 | — | GA-GATE 13 | 🚫 known limitation（同上） |
 | Firewall 阻断响应 | ✅ (`test_phase_17_firewall_response.py`) | ✅ | ❌ 盲区：mock-only，缓解=同 EDR 真实 provider 立项 | — | GA-GATE 13 | 🚫 known limitation（同上） |
-| Notification（邮件/webhook 出站） | ✅ | ✅ | ❌ 盲区：无真实 SMTP/webhook 探针，缓解=待补出站探针（P0 候选） | — | — | 盲区：待真实出站探针（P0 候选） |
-| Ticket（ITSM 工单出站） | ✅ | ✅ | ❌ 盲区：无真实 ITSM，缓解=同 Notification 待补探针 | — | — | 盲区：同上 |
+| Notification（邮件/webhook 出站） | ✅ | ✅ | ✅ (`test_phase_28_8_notification_egress.py`，真实 HTTP 往返) | — | GA-GATE 13 | 已堵盲区（1.0.5 线） |
+| Ticket（ITSM 工单出站） | ✅ | ✅ | ✅ (`test_phase_28_8_notification_egress.py`，ticket 能力同链真实投递) | — | GA-GATE 13 | 已堵盲区（1.0.5 线） |
 | cancel/complete 线性化契约 | ✅ DB-atomic 证明 | ✅ SQLite+PG 双权威 | — | ✅ | heartbeat_invariant 三项 PASS（v1.0.3 起） | 已堵盲区（`2e4d0b1`/`4bc5169`） |
 | 执行租约误回收（heartbeat） | ✅ | ✅ 静态+SQLite+PG | — | ✅ | 同上 | 已堵盲区（同上） |
 | DR 恢复（RPO/RTO） | ✅ | ✅ | — | ✅ | GA-GATE 2..4（RPO 12.19s / RTO 210.48s） | 已验证 |
@@ -40,5 +40,8 @@
   当前以 fixture 回放覆盖解析与归一化路径。清除条件 = 引入带真实工具的 self-hosted runner 或容器化 sensor job。
 - **Response 三家 provider（EDR/WAF/FW）**：产品内无真实设备集成，`fake_plugin.py`
   为 v1 冻结契约下的既定实现；清除 = Phase 29+ 真实 provider 立项（MAJOR/MINOR 评估见 roadmap）。
-- **出站通知/工单**：缺真实 SMTP/ITSM 探针，属 P0"真实路径测试层"下一步候选。
+- **出站通知/工单**：已清除（1.0.5 线，`test_phase_28_8_notification_egress.py`）——真实 HTTP
+  出站探针（本机验收服务器 + httpx 真实 POST/GET 往返 + fail-closed 反向探针）覆盖
+  `notification.webhook` 与 `notification.ticket` 两条能力；SMTP 邮件通道仍为 fixture 单测
+  （无真实 SMTP 中继环境），缓解=需 SMTP 合同后补真实中继探针。
 - **SLO/SLI**：按 GA 认证设计，sli 块无生产者不是缺陷；转正流程见 `slo-candidates.json` note。
