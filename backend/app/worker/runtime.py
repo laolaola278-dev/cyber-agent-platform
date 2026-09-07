@@ -44,6 +44,15 @@ logger = logging.getLogger("cap.worker.runtime")
 # successful result. Both call sites below retry on WorkerConflict with a
 # fresh read; the exit path is additionally best-effort (never raises).
 _HEARTBEAT_ATTEMPTS = 4
+# Budget for the execution-lease heartbeat to finish an in-flight renewal
+# during teardown. Teardown is COOPERATIVE (a stop event, never a bare
+# cancel): cancelling a coroutine that is mid-DB-statement abandons the
+# statement, and the abandoned statement keeps the SQLite write lock held
+# in a zombie transaction until CPython's GC finalises it -- observed as a
+# 22-33s "database is locked" stall in the release UPDATE downstream.
+# The budget only bounds a wedged renewal (DB contention); the normal path
+# returns as soon as the current renewal commits.
+_HEARTBEAT_JOIN_TIMEOUT = 10.0
 
 
 class WorkerRuntime:
@@ -107,7 +116,10 @@ class WorkerRuntime:
         # while the sandbox operation runs so a healthy long-running operation
         # is never fenced out at commit (commit_result checks expires_at).
         lease_holder: list[WorkerLease] = [lease]
-        heartbeat_task = asyncio.create_task(self._heartbeat_lease(lease_holder, owner))
+        heartbeat_stop = asyncio.Event()
+        heartbeat_task = asyncio.create_task(
+            self._heartbeat_lease(lease_holder, owner, heartbeat_stop)
+        )
         try:
             while attempts <= request.retry_limit:
                 attempts += 1
@@ -189,15 +201,22 @@ class WorkerRuntime:
             raise WorkerExecutionError("Worker retry loop exhausted unexpectedly")
         finally:
             # stop the execution-lease heartbeat (no renewal after exit)
-            heartbeat_task.cancel()
-            # Cancellation can land while the heartbeat is mid-DB-operation;
-            # drivers surface that as driver-specific errors (aiosqlite
-            # "closed database", asyncpg "provisioning a new connection")
-            # instead of CancelledError. Teardown is BEST-EFFORT by design:
-            # commit_result fences on the lease version, so a lost final
-            # renewal can never produce a stale commit (Phase 28.3).
-            with suppress(asyncio.CancelledError, Exception):
-                await heartbeat_task
+            # COOPERATIVE stop: the heartbeat observes ``stop`` between
+            # renewals. A renewal already in flight runs to completion and
+            # disposes its session, so no statement is ever abandoned.
+            # (A mid-statement cancel used to leave the SQLite write lock
+            # held by a zombie transaction until GC -- run 34012500372.)
+            heartbeat_stop.set()
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(heartbeat_task), timeout=_HEARTBEAT_JOIN_TIMEOUT
+                )
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                # last resort: the renewal is wedged past the join budget --
+                # reap the task so none outlives ``execute``.
+                heartbeat_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await heartbeat_task
             # tolerate a broken transaction (e.g. concurrent cancel released
             # the lease mid-run) so the best-effort release can still proceed
             try:
@@ -300,7 +319,9 @@ class WorkerRuntime:
             f"exit heartbeat for worker {worker_id} kept losing the CAS race"
         ) from last_error
 
-    async def _heartbeat_lease(self, holder: list[WorkerLease], owner: str) -> None:
+    async def _heartbeat_lease(
+        self, holder: list[WorkerLease], owner: str, stop: asyncio.Event
+    ) -> None:
         """Renew the execution lease while the sandbox operation runs.
 
         Phase 28.3: ``commit_result`` fences on ``expires_at > now``, so an
@@ -308,13 +329,23 @@ class WorkerRuntime:
         look stale at commit. Renewal is fencing-gated (version + token CAS):
         only the current lease holder can renew; if the lease is lost (e.g. a
         concurrent release/expiry), the heartbeat stops and the final commit
-        is correctly fenced out. The heartbeat is cancelled in ``execute``'s
-        finally -- no background task leaks.
+        is correctly fenced out. Teardown is COOPERATIVE (``stop`` event,
+        observed between renewals) so a renewal in flight never has its
+        statement abandoned -- no background task outlives ``execute``.
         """
         interval = max(1.0, self._lease_ttl_seconds / 3.0)
         try:
             while True:
-                await asyncio.sleep(interval)
+                # Interruptible wait: teardown sets ``stop`` and the wait
+                # returns immediately, so the loop never starts a new renewal
+                # after exit. Wait-cancellation is safe -- no DB statement is
+                # in flight between renewals.
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=interval)
+                except TimeoutError:
+                    pass
+                else:
+                    return
                 current = holder[0]
                 try:
                     if self._heartbeat_session_factory is not None:
@@ -335,7 +366,21 @@ class WorkerRuntime:
             raise
 
     async def _renew_on_dedicated_session(self, current: WorkerLease, owner: str) -> WorkerLease:
-        """One renewal on a private short-lived session (concurrency-safe)."""
+        """One renewal on a private short-lived session (concurrency-safe).
+
+        Cleanup MUST be cancel-safe. ``execute``'s teardown is cooperative,
+        but a renewal wedged past ``_HEARTBEAT_JOIN_TIMEOUT`` is still
+        cancelled as a last resort -- i.e. the surrounding task can be
+        cancelled while the renewal UPDATE is in flight on the aiosqlite
+        worker thread. The UPDATE then holds the SQLite write lock while a
+        plain ``await`` inside an already-cancelled coroutine raises
+        CancelledError BEFORE rollback/close are queued, leaking the session
+        and its write lock until GC (observed as a 22-33s busy_timeout
+        exhaustion in the release UPDATE downstream -- run 34012500372 /
+        pregate D). ``asyncio.shield`` keeps the teardown awaitable running
+        even when the surrounding task is cancelled, so the lock is released
+        promptly.
+        """
         session = self._heartbeat_session_factory()
         try:
             renewed = await WorkerLeaseManager(session).renew(
@@ -347,6 +392,16 @@ class WorkerRuntime:
             )
             return renewed
         finally:
+            cleanup = asyncio.ensure_future(asyncio.shield(self._close_heartbeat_session(session)))
+            # never let cleanup failures surface into the renewal path
+            with suppress(Exception):
+                await cleanup
+
+    async def _close_heartbeat_session(self, session: AsyncSession) -> None:
+        """Rollback + close a heartbeat session, releasing any held write lock."""
+        with suppress(Exception):
+            await session.rollback()
+        with suppress(Exception):
             await session.close()
 
     async def health(self) -> bool:
