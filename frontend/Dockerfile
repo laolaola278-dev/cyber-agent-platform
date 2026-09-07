@@ -20,7 +20,7 @@ FROM nginx:1.30.4-alpine AS runtime
 # libraries in place at build time rather than waiting on the next
 # nginx:*-alpine tag to pick up the refreshed alpine 3.24 base.
 RUN apk upgrade --no-cache libssl3 libcrypto3 libuuid
-ARG VERSION=1.0.4
+ARG VERSION=1.0.5-rc1
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="Cyber Agent Platform Console" \
       org.opencontainers.image.version="$VERSION" \
