@@ -5,7 +5,6 @@ import type {
   AuditEvent,
   Dashboard,
   DetectionTask,
-  DomainRecord,
   Finding,
   Health,
   Incident,
@@ -183,26 +182,6 @@ export const getHybridEvaluation = async (): Promise<{
   groups: Record<string, Record<string, number | string>>;
   note: string;
 }> => (await api.get("/agent/hybrid/evaluation")).data;
-
-const domainPaths: Record<string, string> = {
-  assets: "/assets",
-  knowledge: "/knowledge",
-  evidence: "/assets?page_size=20",
-  assessment: "/assessment/tasks",
-  detection: "/detection/events",
-  incidents: "/incidents",
-  response: "/response/plans",
-  playbooks: "/playbooks/executions",
-  workers: "/workers",
-  sandbox: "/sandbox",
-};
-
-export const getDomainRecords = async (domain: string): Promise<DomainRecord[]> => {
-  const path = domainPaths[domain];
-  if (!path) return [];
-  const data = (await api.get<PageResponse<DomainRecord> | DomainRecord[]>(path)).data;
-  return Array.isArray(data) ? data : data.items;
-};
 
 // -- Phase 28: Data Acquisition --------------------------------------------
 

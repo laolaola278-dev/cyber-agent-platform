@@ -1,4 +1,9 @@
-import { AxiosError, type AxiosResponse } from "axios";
+import {
+  AxiosError,
+  AxiosHeaders,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
+} from "axios";
 import { describe, expect, it } from "vitest";
 
 import { errorMessage } from "./http";
@@ -6,14 +11,18 @@ import { errorMessage } from "./http";
 /**
  * errorMessage() is the only thing standing between a platform failure and a
  * useful message in the console, so it is tested against the real payloads --
- * captured from a live run, not invented here.
+ * captured from a live run, not invented here. The config carries a real
+ * AxiosHeaders instance because that is what axios attaches on the way out.
  */
 const failing = (status: number, data: unknown): AxiosError => {
-  const response = { status, statusText: "Error", data, headers: {}, config: {} } as AxiosResponse;
+  const config: InternalAxiosRequestConfig = { headers: new AxiosHeaders() };
+  const response: AxiosResponse = {
+    status, statusText: "Error", data, headers: {}, config,
+  };
   return new AxiosError(
     `Request failed with status code ${status}`,
     "ERR_BAD_RESPONSE",
-    {},
+    config,
     {},
     response,
   );

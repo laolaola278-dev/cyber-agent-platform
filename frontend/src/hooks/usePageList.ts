@@ -90,27 +90,3 @@ export function usePageList<Row, Filters extends object = object>(
 
   return { rows, loading, error, pagination, refresh, reload: load, page };
 }
-
-export function useDetail<Detail>(path: string | null) {
-  const [detail, setDetail] = useState<Detail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!path) { setDetail(null); setError(null); return; }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    api.get<Detail>(path)
-      .then((response) => { if (!cancelled) setDetail(response.data); })
-      .catch((requestError) => {
-        if (cancelled) return;
-        import("../api/http").then(({ errorMessage }) =>
-          setError(errorMessage(requestError, "详情加载失败")));
-      })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [path]);
-
-  return { detail, loading, error };
-}

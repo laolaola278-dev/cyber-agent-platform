@@ -4,7 +4,7 @@ import type { ColumnsType } from "antd/es/table";
 import { usePageList } from "../hooks/usePageList";
 import { ListError } from "../components/ListError";
 import type { KnowledgeEntry, NotificationRecord, Ticket } from "../types";
-import { formatTime, severityTag, statusTag } from "../api/constants";
+import { formatTime, severityTag, statusTag, TICKET_STATUSES } from "../api/constants";
 
 function KnowledgeTab() {
   const [mode, setMode] = useState<"browse" | "search">("browse");
@@ -100,7 +100,7 @@ function TicketsTab() {
   return (
     <Space direction="vertical" size={12} style={{ width: "100%" }}>
       <Space wrap>
-        {["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"].map((s) => (
+        {TICKET_STATUSES.map((s) => (
           <Button key={s} type={status === s ? "primary" : "default"} size="small" onClick={() => setStatus(status === s ? undefined : s)}>{s}</Button>
         ))}
         <Button onClick={refresh}>刷新</Button>

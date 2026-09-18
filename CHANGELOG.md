@@ -20,17 +20,43 @@ published release contents are immutable.
   `AssessmentService`, **creating an incident was impossible on a fresh
   deployment**. The startup path now seeds the provider with the configured
   reference name.
-- Console test suite covering the operator flows the audit closed (27 tests,
-  including the platform's three error payload shapes).
+- Console test suite covering the operator flows the audit closed (29 tests,
+  including the platform's three error payload shapes and the incident
+  assignment dialog's refuse-a-no-op / post-a-real-change pair).
 - Console acquisition run lifecycle: `POST /acquisitions/{run_id}/resume` (requeue
   at the persisted checkpoint) and `POST /acquisitions/{run_id}/cancel` existed
   and were covered by backend tests, but the console exposed neither, so an
   operator could start a run and could not stop or resume one from the UI. Both
   are now wired with a confirmation step and status-gating that mirrors the
   backend's terminal-state rule (resume on a terminal run is a 409).
+- `scripts/certification/verify_backup_manifest.py` -- the last gate before a DR
+  restore is applied -- is now covered by hermetic tests. Until now it was only
+  ever exercised against a live certification run's evidence directory, so the
+  fail-closed behaviour itself had no local proof. The new tests build a backup
+  whose manifest is produced by the same algorithm, assert it verifies, and then
+  tamper an object, truncate the pg dump, append an object after the manifest
+  was written (how a stale evidence directory drifts), and delete the manifest
+  or the dump -- each refused before any restore step runs.
 
 ### Fixed
 
+- `npm run build` was broken by this audit's own new fixture. The build
+  typechecks `src/**/*.test.ts` as well, and `http.test.ts` passed `{}` where
+  axios requires an `InternalAxiosRequestConfig` (`headers` is not optional), so
+  `tsc` failed with TS2345 before Vite ever ran. The fixture now carries a real
+  `AxiosHeaders` config -- which is also closer to the object axios actually
+  hands `errorMessage()` at runtime.
+- Half-finished console surfaces closed in the remaining pages: five tables
+  rendered their action column under an empty header (now `操作`); the Playbook
+  detail card announced a "YAML 结构" document while rendering
+  `JSON.stringify(...)` output (now labelled as the structured JSON it is); the
+  ticket status filter carried an inline copy of the canonical status list
+  (now `TICKET_STATUSES`, so it cannot drift); and the incident assignment
+  dialog accepted a submission that changed no field at all -- with only the
+  pre-filled operator it POSTed an empty partial assignment and reported
+  success -- which is now refused with a message naming what to fill in. Dead
+  client code (`domainPaths` / `getDomainRecords`) and the unused `useDetail`
+  hook, including its dynamic `import("../api/http")` in a catch path, are gone.
 - Asset search crashed on PostgreSQL. `AssetRepository.search` applied
   `statement.distinct()` unconditionally, so its count query became
   `SELECT DISTINCT` over every asset column -- and PostgreSQL has no equality

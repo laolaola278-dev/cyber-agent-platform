@@ -46,7 +46,7 @@ function FindingsTab({ message }: { message: { success: (m: string) => void; err
     { title: "插件", dataIndex: "plugin", width: 140, ellipsis: true },
     { title: "发现时间", dataIndex: "created_at", width: 160, render: formatTime },
     {
-      title: "", width: 150, render: (_, row) => (
+      title: "操作", width: 150, render: (_, row) => (
         <Space>
           <Button size="small" onClick={() => void openDetail(row.id)}>详情</Button>
           <Button size="small" onClick={() => { setTransitionTarget(row); form.setFieldsValue({ actor: "console-operator" }); }}>处置</Button>

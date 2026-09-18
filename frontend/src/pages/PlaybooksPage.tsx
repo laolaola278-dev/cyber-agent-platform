@@ -28,7 +28,7 @@ function PlaybooksTab({ message }: { message: { success: (m: string) => void; er
     { title: "启用", dataIndex: "enabled", width: 80, render: (v: boolean) => <Tag color={v ? "green" : "default"}>{v ? "是" : "否"}</Tag> },
     { title: "描述", dataIndex: "description", ellipsis: true },
     { title: "更新时间", dataIndex: "updated_at", width: 160, render: formatTime },
-    { title: "", width: 90, render: (_, row) => <Button size="small" onClick={() => void openDetail(row.id)}>详情</Button> },
+    { title: "操作", width: 90, render: (_, row) => <Button size="small" onClick={() => void openDetail(row.id)}>详情</Button> },
   ];
 
   return (
@@ -46,7 +46,7 @@ function PlaybooksTab({ message }: { message: { success: (m: string) => void; er
               <Descriptions.Item label="更新">{formatTime(detail.updated_at)}</Descriptions.Item>
               <Descriptions.Item label="描述" span={2}>{detail.description ?? "—"}</Descriptions.Item>
             </Descriptions>
-            <Card size="small" title="文档（YAML 结构）">
+            <Card size="small" title="文档（结构化 JSON）">
               <pre style={{ margin: 0, fontSize: 12, maxHeight: 480, overflow: "auto" }}>{JSON.stringify(detail.document, null, 2)}</pre>
             </Card>
           </Space>
@@ -87,7 +87,7 @@ function ExecutionsTab({ message }: { message: { success: (m: string) => void; e
     { title: "错误", dataIndex: "error", ellipsis: true, render: (v: string | null) => v ?? "—" },
     { title: "开始时间", dataIndex: "started_at", width: 160, render: formatTime },
     {
-      title: "", width: 150, render: (_, row) => (
+      title: "操作", width: 150, render: (_, row) => (
         <Space>
           <Button size="small" onClick={() => void openDetail(row.id)}>详情</Button>
           {row.status === "FAILED" && (

@@ -9,6 +9,7 @@ import InvestigationsPage from "../pages/InvestigationsPage";
 import AcquisitionsPage from "../pages/AcquisitionsPage";
 import ApprovalsPage from "../pages/ApprovalsPage";
 import AssetsPage from "../pages/AssetsPage";
+import IncidentsPage from "../pages/IncidentsPage";
 import PluginsPage from "../pages/PluginsPage";
 
 /**
@@ -331,5 +332,66 @@ describe("Plugin inventory", () => {
     expect(within(table).getByText("已认证")).toBeInTheDocument();
     expect(within(table).getByText("未认证")).toBeInTheDocument();
     expect(within(table).getByText("DEGRADED")).toBeInTheDocument();
+  });
+});
+
+describe("Incident assignment", () => {
+  const incident = {
+    id: "inc-9", title: "Kerberoasting burst from workstation", severity: "HIGH",
+    status: "TRIAGED", description: "", priority: "P2", confidence: "MEDIUM",
+    source: "DETECTION", owner: null, assignee: null, queue: null,
+    classification: null, risk: null, attributes: {}, finding_ids: [], event_ids: [],
+    created_at: "2026-09-18T09:00:00Z", updated_at: "2026-09-18T09:00:00Z",
+  };
+
+  const listOnly = {
+    "/incidents": { data: { items: [incident], page: 1, page_size: 20, total: 1 } },
+  };
+
+  const openDialog = async () => {
+    await userEvent.click(await screen.findByRole("button", { name: /指\s*派/ }));
+    const dialog = await screen.findByRole("dialog");
+    return within(dialog);
+  };
+
+  it("sends nothing when the dialog would change no field", async () => {
+    resetCalls();
+    stub(listOnly);
+    mount(<IncidentsPage />);
+
+    const dialog = await openDialog();
+    // 操作人 is pre-filled, so pressing OK here used to POST a partial
+    // assignment that changed nothing and still reported "已更新指派".
+    await userEvent.click(dialog.getByRole("button", { name: /OK|确\s*定/ }));
+
+    expect(calls("post")).toHaveLength(0);
+    expect(await screen.findByText("请至少修改 Owner、处理人或优先级中的一项")).toBeInTheDocument();
+    // The dialog stays open so the operator can correct it rather than lose input.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("posts the operator together with the field that changed", async () => {
+    resetCalls();
+    stub({
+      ...listOnly,
+      "POST /incidents/inc-9/assign": {
+        data: { ...incident, assignee: "ana", status: "INVESTIGATING" },
+      },
+    });
+    mount(<IncidentsPage />);
+
+    const dialog = await openDialog();
+    await userEvent.type(dialog.getByLabelText("处理人"), "ana");
+    await userEvent.click(dialog.getByRole("button", { name: /OK|确\s*定/ }));
+
+    await waitFor(() => expect(calls("post")).toHaveLength(1));
+    const [post] = calls("post");
+    expect(post.url).toBe("/incidents/inc-9/assign");
+    // Undefined optional fields are dropped by serialisation: the platform
+    // receives only what the operator actually set.
+    expect(JSON.parse(String(post.config.data))).toEqual({
+      actor: "console-operator", assignee: "ana",
+    });
+    expect(await screen.findByText("已更新指派")).toBeInTheDocument();
   });
 });

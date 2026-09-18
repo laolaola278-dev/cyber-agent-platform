@@ -75,6 +75,13 @@ export default function IncidentsPage() {
 
   const submitAssign = async (values: { actor: string; owner?: string; assignee?: string; priority?: string }) => {
     if (!assignTarget) return;
+    // The endpoint applies a partial assignment, so a form filled with nothing
+    // but the operator would fire a request that changes no field at all and
+    // still report success. Require an actual change before submitting.
+    if (!values.owner?.trim() && !values.assignee?.trim() && !values.priority) {
+      message.warning("请至少修改 Owner、处理人或优先级中的一项");
+      return;
+    }
     setActing(true);
     try {
       const updated = await assignIncident(assignTarget.id, values);

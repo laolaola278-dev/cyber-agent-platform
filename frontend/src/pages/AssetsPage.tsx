@@ -62,7 +62,7 @@ export default function AssetsPage() {
     { title: "关键度", dataIndex: "criticality", width: 100, render: (v: string | null) => v ?? "—" },
     { title: "标签", dataIndex: "tags", width: 200, render: (tags: string[]) => tags.slice(0, 3).map((t) => <Tag key={t}>{t}</Tag>) },
     { title: "更新时间", dataIndex: "updated_at", width: 160, render: formatTime },
-    { title: "", width: 90, render: (_, row) => <Button size="small" onClick={() => void openDetail(row.id)}>详情</Button> },
+    { title: "操作", width: 90, render: (_, row) => <Button size="small" onClick={() => void openDetail(row.id)}>详情</Button> },
   ];
 
   return (

@@ -28,7 +28,7 @@ function EventsTab({ message }: { message: { error: (m: string) => void } }) {
     { title: "来源", dataIndex: "source", ellipsis: true, width: 160 },
     { title: "插件", dataIndex: "plugin", width: 150, ellipsis: true },
     { title: "时间", dataIndex: "timestamp", width: 160, render: formatTime },
-    { title: "", width: 90, render: (_, row) => <Button size="small" onClick={() => void openDetail(row.id)}>详情</Button> },
+    { title: "操作", width: 90, render: (_, row) => <Button size="small" onClick={() => void openDetail(row.id)}>详情</Button> },
   ];
 
   return (
