@@ -7,7 +7,9 @@ import App from "../App";
 import WorkersPage from "../pages/WorkersPage";
 import InvestigationsPage from "../pages/InvestigationsPage";
 import AcquisitionsPage from "../pages/AcquisitionsPage";
+import ApprovalsPage from "../pages/ApprovalsPage";
 import AssetsPage from "../pages/AssetsPage";
+import PluginsPage from "../pages/PluginsPage";
 
 /**
  * Core-flow tests for the defects closed in the delivery audit. Each one fails
@@ -223,5 +225,111 @@ describe("Assets", () => {
     expect(drawer).not.toHaveTextContent("加载中…");
     // ListError pins this control's accessible name, so it is matched exactly.
     expect(within(drawer).getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+});
+
+/** Exactly what `GET /approvals` returns for one plan (ApprovalCenterItem). */
+const approvalRow = (overrides: Record<string, unknown> = {}) => ({
+  plan_id: "plan-1", incident_id: "inc-1", capability: "response.block",
+  requested_by: "soc-analyst", risk_level: "HIGH", approval_state: "PENDING_APPROVAL",
+  execution_state: "PLANNED", rollback_state: "AVAILABLE",
+  expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+  approver: null, decision: null, comment: null, decided_at: null,
+  ...overrides,
+});
+
+describe("Approval Center", () => {
+  it("labels a queue item the platform has already given up on", async () => {
+    stub({});
+    mount(
+      <ApprovalsPage approvals={[approvalRow({
+        expires_at: new Date(Date.now() - 60_000).toISOString(),
+      })] as never} loading={false} />,
+    );
+
+    await screen.findByText("response.block");
+    // Before this the row read "待审批" forever, so an operator worked a plan
+    // the server would refuse.
+    expect(screen.getAllByText("已过期").length).toBeGreaterThan(0);
+    expect(screen.getByText("soc-analyst")).toBeInTheDocument();
+    expect(screen.getByText("inc-1", { exact: false })).toBeInTheDocument();
+  });
+
+  it("posts the decision to the plan's approval endpoint and reloads the queue", async () => {
+    resetCalls();
+    stub({
+      "POST /response/plans/plan-1/approve": { data: { id: "plan-1", approval_state: "APPROVED" } },
+    });
+    let reloaded = 0;
+    mount(
+      <ApprovalsPage approvals={[approvalRow()] as never} loading={false} onChanged={() => { reloaded += 1; }} />,
+    );
+
+    const table = await screen.findByRole("table");
+    await userEvent.click(within(table).getByRole("button", { name: /批\s*准/ }));
+
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认批准" }));
+
+    await waitFor(() => expect(calls("post")).toHaveLength(1));
+    const [post] = calls("post");
+    expect(post.url).toBe("/response/plans/plan-1/approve");
+    const body = JSON.parse(String(post.config.data)) as { approver: string };
+    expect(body.approver).toBe("console-operator");
+    await waitFor(() => expect(reloaded).toBe(1));
+  });
+
+  it("refuses to send a rejection without a reason", async () => {
+    resetCalls();
+    stub({});
+    mount(<ApprovalsPage approvals={[approvalRow()] as never} loading={false} />);
+
+    const table = await screen.findByRole("table");
+    await userEvent.click(within(table).getByRole("button", { name: /拒\s*绝/ }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认拒绝" }));
+
+    expect(await screen.findByText("拒绝必须给出理由")).toBeInTheDocument();
+    expect(calls("post")).toHaveLength(0);
+  });
+
+  it("does not offer a decision on a plan that already has one", async () => {
+    stub({});
+    mount(
+      <ApprovalsPage approvals={[approvalRow({
+        plan_id: "plan-done", approval_state: "EXECUTED", execution_state: "SUCCEEDED",
+        approver: "administrator", decision: "APPROVED",
+      })] as never} loading={false} />,
+    );
+
+    const table = await screen.findByRole("table");
+    expect(within(table).getByRole("button", { name: /批\s*准/ })).toBeDisabled();
+    expect(within(table).getByRole("button", { name: /拒\s*绝/ })).toBeDisabled();
+  });
+});
+
+describe("Plugin inventory", () => {
+  it("surfaces the enablement and sandbox fields the platform returns", async () => {
+    stub({});
+    mount(
+      <PluginsPage
+        loading={false}
+        plugins={[
+          { id: "p1", domain: "recon", name: "whois", version: "1.2.0", enabled: true, health_status: "HEALTHY", capabilities: ["recon.whois"], certified: true, sandbox_compatible: true },
+          { id: "p2", domain: "web", name: "browser", version: "0.9.0", enabled: false, health_status: "DEGRADED", capabilities: [], certified: false, sandbox_compatible: false },
+        ]}
+      />,
+    );
+
+    // `enabled` decides whether the scheduler may route work to a plugin, so a
+    // row that cannot show it is hiding a operational fact from the operator.
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("已启用")).toBeInTheDocument();
+    expect(within(table).getByText("已停用")).toBeInTheDocument();
+    expect(within(table).getByText("支持")).toBeInTheDocument();
+    expect(within(table).getByText("不支持")).toBeInTheDocument();
+    expect(within(table).getByText("已认证")).toBeInTheDocument();
+    expect(within(table).getByText("未认证")).toBeInTheDocument();
+    expect(within(table).getByText("DEGRADED")).toBeInTheDocument();
   });
 });
