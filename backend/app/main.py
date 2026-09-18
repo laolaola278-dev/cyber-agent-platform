@@ -31,6 +31,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(configuration_provider.logging)
     sandbox_provider = MemorySandboxProvider()
     secret_provider = MemorySecretProvider()
+    # MemorySecretProvider starts empty and nothing else in the process can
+    # populate it, so a deployment that configured CAP_ZAP_API_KEY (as
+    # .env.example instructs) still had no secret to resolve: every route that
+    # reaches AssessmentService -- POST /incidents included, through
+    # PlaybookService -- failed with SECRET_NOT_FOUND. Seed the exact reference
+    # name the loaded configuration asks for; unset means "not provisioned".
+    if runtime_settings.cap_zap_api_key:
+        secret_provider.put(
+            configuration_provider.assessment.zap.api_key_secret_reference,
+            runtime_settings.cap_zap_api_key,
+        )
     metrics_registry = MetricsRegistry()
     tracer = build_tracer(
         runtime_settings.otel_service_name,

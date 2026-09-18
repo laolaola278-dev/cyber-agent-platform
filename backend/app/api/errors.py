@@ -77,12 +77,17 @@ async def _audit_http_error(
         bus = InMemoryEventBus()
         AuditSubscriber(AuditService(session, AuditRepository(session))).register(bus)
         resource_id = _path_uuid(request)
+        # The authorization middleware puts the verified principal on the
+        # request; recording every rejected call as "api-user" threw away the
+        # one fact an audit trail exists to keep -- who did it.
+        principal = getattr(request.state, "user", None)
+        actor = getattr(principal, "username", None) or "api-user"
         await bus.publish(
             PlatformEvent(
                 type=event_type,
                 trace_id=getattr(request.state, "request_id", "-"),
                 aggregate_id=resource_id,
-                actor="api-user",
+                actor=actor,
                 resource=f"http:{request.method}:{request.url.path}",
                 payload=details,
                 error=error,

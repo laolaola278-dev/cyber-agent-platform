@@ -76,6 +76,14 @@ class Settings(BaseSettings):
     orphan_grace_seconds: float = 3600.0
     gc_interval_seconds: int = 3600
 
+    # -- Integration credentials seeded into the secret provider -------------
+    # Advertised by .env.example. Without a matching field here, Settings
+    # (extra="ignore") discards it, and nothing else in the process can put a
+    # value into MemorySecretProvider -- so the "zap-api-key" reference that
+    # get_zap_api_key resolves could never exist outside the test fixtures.
+    # Empty means "integration not provisioned"; see docs/known-issues.md.
+    cap_zap_api_key: str = ""
+
     @model_validator(mode="after")
     def reject_insecure_production_defaults(self) -> "Settings":
         """Fail startup when production is configured with repository placeholders."""

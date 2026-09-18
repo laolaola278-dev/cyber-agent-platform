@@ -47,7 +47,14 @@ class AssetRepository(SQLAlchemyRepository[Asset]):
     ) -> PageResult[Asset]:
         statement: Select[tuple[Asset]] = select(Asset).where(Asset.deleted_at.is_(None))
         if tag:
-            statement = statement.join(AssetTag).where(func.lower(AssetTag.name) == tag.casefold())
+            # Semi-join, not JOIN: matching the tag row directly would multiply
+            # an asset by its tag count and force a DISTINCT to undo it -- and
+            # PostgreSQL cannot DISTINCT a row containing json columns.
+            statement = statement.where(
+                Asset.id.in_(
+                    select(AssetTag.asset_id).where(func.lower(AssetTag.name) == tag.casefold())
+                )
+            )
         if name:
             pattern = f"%{name.casefold()}%"
             statement = statement.where(
@@ -74,7 +81,8 @@ class AssetRepository(SQLAlchemyRepository[Asset]):
             statement = statement.where(
                 cast(Asset.capabilities, String).like(f'%"{escaped}"%', escape="\\")
             )
-        statement = statement.distinct()
+        # No DISTINCT here: it would have to compare every selected column,
+        # and PostgreSQL rejects equality on the asset json columns entirely.
         total_statement = select(func.count()).select_from(statement.subquery())
         total = await self.session.scalar(total_statement)
         items = list(

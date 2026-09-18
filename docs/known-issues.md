@@ -147,6 +147,37 @@ listed so that an import name is not mistaken for a working capability.
    a run as BLOCKED before a cancel request lands; the cancel API is idempotent
    for already-terminal runs.
 
+## Live verification against a real PostgreSQL server
+
+The post-1.0.5 delivery audit ran the shipped application -- not the test
+harness -- against a real PostgreSQL 16.2 server: `alembic upgrade head` over
+asyncpg (21 revisions, 104 tables, including the five constraint-altering
+revisions SQLite cannot express), then uvicorn in production settings driving
+asset -> incident -> transition -> audit, RBAC refusal of anonymous, spoofed and
+non-directory identities, a read-only role getting 403 rather than 401 on a
+write, invalid input returning 4xx rather than 500, a governed response plan
+appearing in `GET /approvals` and being approved by a second identity, and the
+transitioned incident still `TRIAGED` after a full process restart. 30 checks,
+all passing, with a clean uvicorn error log.
+
+Three defects that only that path could surface were fixed (asset search 500 on
+PostgreSQL, the dead `CAP_ZAP_API_KEY`, the `.env`-dependent test suite); see
+the `[Unreleased]` section of `CHANGELOG.md`.
+
+Two properties of the platform are worth stating where an integrator will meet
+them, since neither is a defect but both surprised the audit:
+
+- `CAP_ZAP_API_KEY` must be set for the incident and assessment planes to serve
+  at all. It is not optional in a real deployment: `POST /incidents` reaches the
+  ZAP dependency through the playbook dependency graph.
+- Audit rows for business events carry the acting subsystem
+  (`asset-service`, `incident-service`) rather than the human; the human is
+  preserved in `requested_by` / `approver` / `Asset.deleted_by` and, for
+  request-level outcomes, in `operator`. Every row carries `trace_id`, but the
+  HTTP response's trace header is a 32-hex request id while audit `trace_id` is
+  stored as a UUID string, so the two do not currently join. Correlating an
+  action to a request therefore needs the request id, not the audit `trace_id`.
+
 ## Running the suite outside a certification environment
 
 The GA tier-2 ops suite (`test_phase_28_7_ga_tier2_ops.py`) is not a unit test:

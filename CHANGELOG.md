@@ -10,6 +10,18 @@ published release contents are immutable.
 
 ### Added
 
+- `CAP_ZAP_API_KEY` is now actually consumed. `.env.example` advertises it, but
+  `Settings` had no matching field and `model_config` uses `extra="ignore"`, so
+  the documented variable was silently discarded and `MemorySecretProvider` --
+  constructed empty in `create_app()` with no other writer -- could never hold
+  the `zap-api-key` reference that `get_zap_api_key` resolves. Every route
+  reaching `AssessmentService` therefore failed with `SECRET_NOT_FOUND`, and
+  because `POST /incidents` depends on `PlaybookService` which depends on
+  `AssessmentService`, **creating an incident was impossible on a fresh
+  deployment**. The startup path now seeds the provider with the configured
+  reference name.
+- Console test suite covering the operator flows the audit closed (27 tests,
+  including the platform's three error payload shapes).
 - Console acquisition run lifecycle: `POST /acquisitions/{run_id}/resume` (requeue
   at the persisted checkpoint) and `POST /acquisitions/{run_id}/cancel` existed
   and were covered by backend tests, but the console exposed neither, so an
@@ -19,6 +31,26 @@ published release contents are immutable.
 
 ### Fixed
 
+- Asset search crashed on PostgreSQL. `AssetRepository.search` applied
+  `statement.distinct()` unconditionally, so its count query became
+  `SELECT DISTINCT` over every asset column -- and PostgreSQL has no equality
+  operator for the `json` columns (`risk`, `capabilities`, `properties`), so
+  `GET /assets` answered 500 with `UndefinedFunctionError`. The tag filter is
+  now an id semi-join (which cannot duplicate rows: `asset_tags` has a unique
+  `(asset_id, name)` constraint, so the `DISTINCT` was never de-duplicating
+  anything) and the `DISTINCT` is gone. Found only by running the application
+  against a real PostgreSQL server; the SQLite-based unit suite cannot see it.
+- Test-suite reproducibility. `Settings` resolves `env_file=".env"` against the
+  working directory, so on any machine that had followed the documented
+  docker-compose step the test process inherited that file's proxy secret and
+  database URL, and three shipped API tests failed with a bare 401. `tests/conftest.py`
+  now pins the configuration before the app is imported.
+- Audit attribution for API callers. Rejected requests were recorded with
+  `operator="api-user"`, and `Asset.deleted_by` was written as the same literal,
+  so the trail that exists to answer "who did this" named a shared placeholder
+  for every caller even though the middleware had already verified the
+  principal. Request-level rejections now record the authenticated user and a
+  deletion records who deleted it.
 - CI image provenance: `.github/workflows/ci.yml` passed a hardcoded
   `build-args: VERSION=1.0.0-rc1` to both image builds, so every CI-built
   backend and frontend image embedded a version label five releases out of

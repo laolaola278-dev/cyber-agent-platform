@@ -145,6 +145,9 @@ async def delete_asset(
     await service.soft_delete(
         asset_id,
         trace_id=request.state.request_id,
-        actor="api-user",
+        # Attribution is the whole point of the audit row: the middleware has
+        # already verified this principal, so record it rather than a shared
+        # placeholder that makes every deletion look like the same caller.
+        actor=getattr(getattr(request.state, "user", None), "username", None) or "api-user",
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
