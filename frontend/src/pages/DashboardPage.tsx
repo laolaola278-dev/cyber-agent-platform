@@ -1,14 +1,42 @@
-import { Card, Col, Descriptions, Progress, Row, Space, Statistic, Typography } from "antd";
+import { Alert, Button, Card, Col, Descriptions, Progress, Row, Space, Spin, Statistic, Typography } from "antd";
 import type { Dashboard } from "../types";
 
 const { Text, Title, Paragraph } = Typography;
 
 interface DashboardPageProps {
   dashboard: Dashboard | null;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }
 
-export default function DashboardPage({ dashboard }: DashboardPageProps) {
-  if (!dashboard) return null;
+export default function DashboardPage({ dashboard, loading, error, onRetry }: DashboardPageProps) {
+  if (error) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="安全运营态势不可用"
+        description={error}
+        action={onRetry ? <Button size="small" onClick={onRetry}>重试</Button> : undefined}
+      />
+    );
+  }
+  if (!dashboard) {
+    return (
+      <Space direction="vertical" size={20} style={{ width: "100%" }}>
+        <div>
+          <Text className="eyebrow">CAP · PLATFORM OVERVIEW</Text>
+          <Title level={2}>安全运营态势</Title>
+        </div>
+        <Card>
+          <Space direction="vertical" align="center" style={{ width: "100%", padding: "32px 0" }}>
+            {loading ? <Spin /> : <Text type="secondary">暂无可聚合的数据。</Text>}
+          </Space>
+        </Card>
+      </Space>
+    );
+  }
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
       <div>

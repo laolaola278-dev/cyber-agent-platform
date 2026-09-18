@@ -130,7 +130,7 @@ function App() {
   useEffect(() => { void refresh(); }, [refresh]);
 
   const content: Record<PageKey, React.ReactNode> = {
-    dashboard: <DashboardPage dashboard={dashboard} />,
+    dashboard: <DashboardPage dashboard={dashboard} loading={loading} error={error} onRetry={() => void refresh()} />,
     investigations: <InvestigationsPage />,
     acquisitions: <AcquisitionsPage />,
     incidents: <IncidentsPage />,
@@ -144,8 +144,8 @@ function App() {
     approvals: <ApprovalsPage approvals={approvals} loading={loading} />,
     plugins: <PluginsPage plugins={plugins} loading={loading} />,
     audit: <AuditPage />,
-    access: <AccessPage roles={roles} users={users} />,
-    settings: <SettingsPage settings={settings} />,
+    access: <AccessPage roles={roles} users={users} loading={loading} error={error} onRetry={() => void refresh()} />,
+    settings: <SettingsPage settings={settings} loading={loading} error={error} onRetry={() => void refresh()} />,
   };
 
   return <Layout className="app-shell">

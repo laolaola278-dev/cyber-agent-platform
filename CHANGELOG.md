@@ -37,9 +37,19 @@ published release contents are immutable.
 - Console dead control: the Workers & Sandbox detail drawer set the selected row
   but never opened itself, so the sandbox execution detail feature was
   unreachable from the UI.
-- Stuck detail drawers (Assets, Response, Incidents showed "加载中…" forever
-  after a failed fetch; Detection, Assessment and Playbooks showed a blank
-  drawer) now render loading / error-with-retry / content.
+- Stuck detail drawers: Assets, Response and Incidents fetch the record on open
+  but guarded their body on "no record yet", so after a failed GET the drawer
+  showed "加载中…" forever and could leave a previously selected record rendered
+  under a new header. They now clear on open and render loading / error-with-retry
+  / content. (Detection, Assessment and Playbooks were checked and left alone:
+  their drawers display the row the table already holds and issue no second
+  fetch, so their empty body was not a stuck state.)
+- Console shell views had no loading or error surface: `DashboardPage` returned
+  `null` while the aggregate was in flight (a blank page that also hid failures
+  behind the global banner), `SettingsPage` rendered a bare `Empty` that
+  conflated loading, genuinely-empty and failed, and `AccessPage` rendered both
+  directory tables with no `loading` prop at all. The shell now passes its
+  `loading`/`error`/retry state down and each view renders all three states.
 - Console truthfulness: the sidebar badge and page eyebrows displayed a
   hardcoded product version while the real one was already being fetched from
   `/health`; the Investigation view posted fabricated fixture records
