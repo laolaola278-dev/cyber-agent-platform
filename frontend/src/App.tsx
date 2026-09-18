@@ -152,7 +152,7 @@ function App() {
     <Sider width={260} className="app-sider" breakpoint="lg" collapsedWidth="0">
       <div className="brand"><div className="brand-mark">CAP</div><div><strong>Cyber Agent</strong><span>Platform</span></div></div>
       <Menu theme="dark" mode="inline" selectedKeys={[page]} items={menuItems} onClick={({ key }) => setPage(key as PageKey)} />
-      <div className="phase-badge"><span>v2.0</span><small>Agentic Security</small></div>
+      <div className="phase-badge"><span>{health?.version ? `v${health.version}` : "—"}</span><small>Agentic Security</small></div>
     </Sider>
     <Layout><Header className="app-header"><div><Text strong>Security Operations Console</Text><Badge status={health?.status === "ok" ? "success" : "warning"} text={health?.status ?? "unknown"} /></div><Text type="secondary">RBAC · Audit · Metrics · Trace</Text></Header>
       <Content className="app-content">

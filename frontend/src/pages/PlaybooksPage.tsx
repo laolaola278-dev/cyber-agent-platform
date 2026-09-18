@@ -3,6 +3,7 @@ import { Button, Card, Descriptions, Drawer, Space, Table, Tabs, Tag, Typography
 import type { ColumnsType } from "antd/es/table";
 import { App } from "antd";
 import { usePageList } from "../hooks/usePageList";
+import { ListError } from "../components/ListError";
 import { getPlaybook, getPlaybookExecution, resumePlaybookExecution } from "../api/client";
 import type { Playbook, PlaybookExecution } from "../types";
 import { formatTime, statusTag } from "../api/constants";
@@ -11,7 +12,7 @@ import { errorMessage } from "../api/http";
 const { Text } = Typography;
 
 function PlaybooksTab({ message }: { message: { success: (m: string) => void; error: (m: string) => void } }) {
-  const { rows, loading, pagination, refresh } = usePageList<Playbook>("/playbooks");
+  const { rows, loading, error, pagination, refresh } = usePageList<Playbook>("/playbooks");
   const [detail, setDetail] = useState<Playbook | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
@@ -33,7 +34,8 @@ function PlaybooksTab({ message }: { message: { success: (m: string) => void; er
   return (
     <Space direction="vertical" size={12} style={{ width: "100%" }}>
       <Button onClick={refresh}>刷新</Button>
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} />
+      <ListError error={error} onRetry={refresh} />
+      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} locale={{ emptyText: error ? "加载失败" : "暂无数据" }} />
       <Drawer title={detail ? `Playbook · ${detail.name}` : "Playbook 详情"} width={640} open={detailOpen} onClose={() => setDetailOpen(false)}>
         {detail ? (
           <Space direction="vertical" size={12} style={{ width: "100%" }}>
@@ -55,7 +57,7 @@ function PlaybooksTab({ message }: { message: { success: (m: string) => void; er
 }
 
 function ExecutionsTab({ message }: { message: { success: (m: string) => void; error: (m: string) => void } }) {
-  const { rows, loading, pagination, refresh } = usePageList<PlaybookExecution>("/playbooks/executions");
+  const { rows, loading, error, pagination, refresh } = usePageList<PlaybookExecution>("/playbooks/executions");
   const [detail, setDetail] = useState<PlaybookExecution | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [acting, setActing] = useState(false);
@@ -99,7 +101,8 @@ function ExecutionsTab({ message }: { message: { success: (m: string) => void; e
   return (
     <Space direction="vertical" size={12} style={{ width: "100%" }}>
       <Button onClick={refresh}>刷新</Button>
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} />
+      <ListError error={error} onRetry={refresh} />
+      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} locale={{ emptyText: error ? "加载失败" : "暂无数据" }} />
       <Drawer title="执行详情" width={720} open={detailOpen} onClose={() => setDetailOpen(false)}>
         {detail ? (
           <Space direction="vertical" size={14} style={{ width: "100%" }}>

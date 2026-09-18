@@ -3,6 +3,7 @@ import { Button, Card, Descriptions, Drawer, Form, Input, Modal, Select, Space, 
 import type { ColumnsType } from "antd/es/table";
 import { App } from "antd";
 import { usePageList } from "../hooks/usePageList";
+import { ListError } from "../components/ListError";
 import { getFinding, transitionFinding } from "../api/client";
 import type { AssessmentTask, Finding } from "../types";
 import { FINDING_STATUSES, SEVERITIES, formatTime, severityTag, statusTag } from "../api/constants";
@@ -10,7 +11,7 @@ import { errorMessage } from "../api/http";
 
 function FindingsTab({ message }: { message: { success: (m: string) => void; error: (m: string) => void } }) {
   const [filters, setFilters] = useState<{ severity?: string; status?: string }>({});
-  const { rows, loading, pagination, refresh } = usePageList<Finding>("/assessment/findings", filters);
+  const { rows, loading, error, pagination, refresh } = usePageList<Finding>("/assessment/findings", filters);
   const [detail, setDetail] = useState<Finding | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [transitionTarget, setTransitionTarget] = useState<Finding | null>(null);
@@ -71,7 +72,8 @@ function FindingsTab({ message }: { message: { success: (m: string) => void; err
         />
         <Button onClick={refresh}>刷新</Button>
       </Space>
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} />
+      <ListError error={error} onRetry={refresh} />
+      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} locale={{ emptyText: error ? "加载失败" : "暂无数据" }} />
       <Drawer title={detail ? `Finding · ${detail.title}` : "Finding 详情"} width={640} open={detailOpen} onClose={() => setDetailOpen(false)}>
         {detail ? (
           <Space direction="vertical" size={14} style={{ width: "100%" }}>
@@ -113,7 +115,7 @@ function FindingsTab({ message }: { message: { success: (m: string) => void; err
 }
 
 function TasksTab() {
-  const { rows, loading, pagination, refresh } = usePageList<AssessmentTask>("/assessment/tasks");
+  const { rows, loading, error, pagination, refresh } = usePageList<AssessmentTask>("/assessment/tasks");
   const columns: ColumnsType<AssessmentTask> = [
     { title: "状态", dataIndex: "status", width: 110, render: statusTag },
     { title: "能力", dataIndex: "requested_capabilities", width: 260, render: (caps: string[]) => caps.map((c) => <Tag key={c} color="cyan">{c}</Tag>) },
@@ -125,7 +127,8 @@ function TasksTab() {
   return (
     <Space direction="vertical" size={12} style={{ width: "100%" }}>
       <Button onClick={refresh}>刷新</Button>
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} />
+      <ListError error={error} onRetry={refresh} />
+      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} locale={{ emptyText: error ? "加载失败" : "暂无数据" }} />
     </Space>
   );
 }

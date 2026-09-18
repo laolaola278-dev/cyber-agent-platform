@@ -1,6 +1,6 @@
 import { useState } from "react";
 import {
-  Button, Card, Col, Descriptions, Form, Input, List, Progress, Row, Space, Table, Tag, Typography,
+  Alert, Button, Card, Col, Descriptions, Form, Input, List, Progress, Row, Select, Space, Table, Tag, Typography,
 } from "antd";
 import { App } from "antd";
 import {
@@ -12,6 +12,9 @@ import {
   runTriage,
 } from "../api/client";
 import type { HybridTriageOutput, Investigation, TriageResult } from "../api/client";
+import { usePageList } from "../hooks/usePageList";
+import { ListError } from "../components/ListError";
+import type { Incident, SecurityEvent } from "../types";
 import { statusColor } from "../api/constants";
 import { errorMessage } from "../api/http";
 
@@ -39,6 +42,55 @@ export default function InvestigationsPage() {
   const [chain, setChain] = useState<Record<string, unknown> | null>(null);
   const [hybrid, setHybrid] = useState<HybridTriageOutput | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
+  const incidents = usePageList<Incident>("/incidents", {}, 50);
+  const events = usePageList<SecurityEvent>("/detection/events", {}, 20);
+  const selectedIncident = incidents.rows.find((row) => row.id === selectedIncidentId) ?? null;
+
+  /** Evidence lineage the incident record actually carries -- never invented. */
+  const incidentEvidenceRefs = (incident: Incident): string[] => {
+    const links = incident as Incident & { finding_ids?: string[]; event_ids?: string[] };
+    return [
+      ...(links.finding_ids ?? []).map((id) => `finding://${id}`),
+      ...(links.event_ids ?? []).map((id) => `event://${id}`),
+    ];
+  };
+
+  const incidentSource = (incident: Incident): Record<string, unknown> => {
+    const attributes = (incident.attributes ?? {}) as Record<string, unknown>;
+    return {
+      id: incident.id,
+      title: incident.title,
+      description: incident.description,
+      severity: incident.severity,
+      status: incident.status,
+      source: incident.source,
+      evidence_refs: incidentEvidenceRefs(incident),
+      entities: Array.isArray(attributes.entities) ? (attributes.entities as string[]) : [],
+      techniques: Array.isArray(attributes.techniques) ? (attributes.techniques as string[]) : [],
+    };
+  };
+
+  /** Attack-chain input derived from a stored detection event. */
+  const eventSource = (event: SecurityEvent): Record<string, unknown> => {
+    const attributes = (event.attributes ?? {}) as Record<string, unknown>;
+    return {
+      id: event.id,
+      title: event.event_type,
+      timestamp: event.timestamp,
+      severity: event.severity,
+      techniques: Array.isArray(attributes.techniques) ? (attributes.techniques as string[]) : [],
+      evidence_refs: event.references ?? [],
+      entities: Array.isArray(attributes.entities) ? (attributes.entities as string[]) : [],
+    };
+  };
+
+  const requireIncident = (): Incident | null => {
+    if (selectedIncident) return selectedIncident;
+    message.warning("请先选择一个真实事件（Incident）再运行分析");
+    return null;
+  };
 
   const runInvestigation = async (goal: string) => {
     setSubmitting(true);
@@ -48,7 +100,11 @@ export default function InvestigationsPage() {
       setEvaluation(await getEvaluations());
       try {
         setComparison(await getModelComparison());
-      } catch { /* model comparison unavailable */ }
+        setComparisonError(null);
+      } catch (requestError) {
+        setComparison(null);
+        setComparisonError(errorMessage(requestError, "模型对比数据不可用"));
+      }
     } catch (requestError) {
       message.error(errorMessage(requestError, "调查执行失败"));
     } finally {
@@ -56,13 +112,12 @@ export default function InvestigationsPage() {
     }
   };
 
-  const runTriageNow = async (title: string, severity: string) => {
+  const runTriageNow = async () => {
+    const incident = requireIncident();
+    if (!incident) return;
     setSubmitting(true);
     try {
-      const output = await runTriage(
-        { id: "console-1", title, severity, status: "OPEN", evidence_refs: ["evidence:1"], entities: [] },
-        {},
-      );
+      const output = await runTriage(incidentSource(incident));
       setTriage(output.triage);
       setChain(null);
     } catch (requestError) {
@@ -73,12 +128,14 @@ export default function InvestigationsPage() {
   };
 
   const runChainNow = async () => {
+    const recent = events.rows.slice(0, 10);
+    if (recent.length < 2) {
+      message.warning("近期检测事件不足 2 条，无法构建攻击链；请先在 Detection 中采集事件");
+      return;
+    }
     setSubmitting(true);
     try {
-      const output = await runAttackChain([
-        { id: "evt-1", title: "initial access observed", timestamp: "2026-08-08T00:00:00+00:00", severity: "HIGH", techniques: ["T1566"], evidence_refs: ["evidence:1"], entities: ["10.0.0.5"] },
-        { id: "evt-2", title: "lateral movement observed", timestamp: "2026-08-08T00:15:00+00:00", severity: "HIGH", techniques: ["T1021"], evidence_refs: ["evidence:2"], entities: ["10.0.0.5"] },
-      ]);
+      const output = await runAttackChain(recent.map(eventSource));
       setChain(output);
       setTriage(null);
     } catch (requestError) {
@@ -88,14 +145,14 @@ export default function InvestigationsPage() {
     }
   };
 
-  const runHybridNow = async (title: string, severity: string, preferReal: boolean) => {
+  const runHybridNow = async (preferReal: boolean) => {
+    const incident = requireIncident();
+    if (!incident) return;
     setSubmitting(true);
     try {
-      const output = await runHybridTriage(
-        { id: "console-1", title, severity, status: "OPEN", evidence_refs: ["evidence:1"], entities: ["10.0.0.5"], techniques: [] },
-        { cvss: 7.5, in_kev: severity === "CRITICAL", exposed: true },
-        preferReal,
-      );
+      // Empty context on purpose: severity grounding and knowledge lookups are
+      // derived from the real incident rather than a supplied synthetic fixture.
+      const output = await runHybridTriage(incidentSource(incident), {}, preferReal);
       setHybrid(output);
     } catch (requestError) {
       message.error(errorMessage(requestError, "Hybrid Triage 执行失败"));
@@ -107,7 +164,7 @@ export default function InvestigationsPage() {
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
       <div>
-        <Text className="eyebrow">CAP / V2.0 AGENTIC SECURITY</Text>
+        <Text className="eyebrow">CAP · AGENTIC SECURITY</Text>
         <Title level={2}>Investigation</Title>
         <Paragraph type="secondary">Agent 仅生成受约束调查计划并执行只读能力；高风险动作转为人工审批，绝不自动执行。</Paragraph>
       </div>
@@ -189,10 +246,42 @@ export default function InvestigationsPage() {
         </Card>
       )}
       <Card title="Triage Agent（建议性 · 不改变平台状态）">
-        <Space wrap>
-          <Button type="primary" loading={submitting} onClick={() => void runTriageNow("suspicious process behavior", "HIGH")}>Triage: HIGH 告警</Button>
-          <Button loading={submitting} onClick={() => void runTriageNow("benign scanner noise", "LOW")}>Triage: LOW 噪声</Button>
-          <Button loading={submitting} onClick={() => void runChainNow()}>Attack Chain 推理</Button>
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <ListError error={incidents.error} onRetry={incidents.refresh} description="事件列表" />
+          <Select
+            style={{ width: "100%", maxWidth: 520 }}
+            placeholder="选择平台中的真实事件（Incident）"
+            showSearch
+            optionFilterProp="label"
+            loading={incidents.loading}
+            value={selectedIncidentId ?? undefined}
+            onChange={(value: string) => setSelectedIncidentId(value)}
+            notFoundContent={incidents.loading ? "加载中…" : incidents.error ? "加载失败" : "暂无事件"}
+            options={incidents.rows.map((row) => ({
+              value: row.id,
+              label: `[${row.severity}/${row.status}] ${row.title}`,
+            }))}
+          />
+          <Space wrap>
+            <Button
+              type="primary"
+              loading={submitting}
+              disabled={!selectedIncident}
+              onClick={() => void runTriageNow()}
+            >
+              Triage 选中事件
+            </Button>
+            <Button
+              loading={submitting}
+              disabled={events.rows.length < 2}
+              onClick={() => void runChainNow()}
+            >
+              Attack Chain 推理（最近 {Math.min(events.rows.length, 10)} 条真实检测事件）
+            </Button>
+          </Space>
+          <Text type="secondary">
+            分析输入取自平台真实记录；未选中事件或检测事件不足两条时不会执行，也不会使用示例数据。
+          </Text>
         </Space>
         {triage && (
           <Card size="small" style={{ marginTop: 16 }} title="Triage Result">
@@ -219,8 +308,11 @@ export default function InvestigationsPage() {
           </Card>
         )}
       </Card>
+      {comparisonError && (
+        <Alert type="warning" showIcon message="模型对比不可用" description={comparisonError} />
+      )}
       {comparison && (
-        <Card title="Model Comparison（Fake vs Real · 164 场景）" extra={<Text type="secondary">{comparison.real_provider_note}</Text>}>
+        <Card title={`Model Comparison（Fake vs Real · ${comparison.scenario_count} 场景）`} extra={<Text type="secondary">{comparison.real_provider_note}</Text>}>
           <Table rowKey="metric" size="small" pagination={false} dataSource={[
             "injection_resistance_rate", "high_risk_action_block_rate", "unknown_capability_rejection_rate",
             "triage_accuracy", "severity_accuracy", "false_positive_accuracy", "attackck_mapping_recall",
@@ -237,21 +329,30 @@ export default function InvestigationsPage() {
           <Paragraph type="secondary" style={{ marginTop: 8 }}>共 {comparison.scenario_count} 场景 · 高风险拦截与未知能力拒绝双 100% 为硬门禁</Paragraph>
         </Card>
       )}
-      <Card title="Hybrid Security Intelligence（Phase 27 · 确定性引擎 + 知识检索 + LLM 排序/解释）">
-        <Space style={{ marginBottom: 12 }}>
-          <Input.Search
-            placeholder="例如：phishing campaign with credential dumping"
-            enterButton="Hybrid Triage"
-            loading={submitting}
-            onSearch={(value) => void runHybridNow(value || "suspicious activity", "HIGH", false)}
-            style={{ width: 380 }}
-          />
-          <Button
-            loading={submitting}
-            onClick={() => void runHybridNow("suspicious activity", "HIGH", true)}
-          >
-            真实模型优先（若可用）
-          </Button>
+      <Card title="Hybrid Security Intelligence（确定性引擎 + 知识检索 + LLM 排序/解释）">
+        <Space direction="vertical" size={12} style={{ width: "100%", marginBottom: 12 }}>
+          <Text type="secondary">
+            {selectedIncident
+              ? `输入：已选事件「${selectedIncident.title}」（${selectedIncident.severity}）`
+              : "请先在上方 Triage 卡片中选择一个真实事件（Incident）"}
+          </Text>
+          <Space wrap>
+            <Button
+              type="primary"
+              loading={submitting}
+              disabled={!selectedIncident}
+              onClick={() => void runHybridNow(false)}
+            >
+              Hybrid Triage
+            </Button>
+            <Button
+              loading={submitting}
+              disabled={!selectedIncident}
+              onClick={() => void runHybridNow(true)}
+            >
+              真实模型优先（若可用）
+            </Button>
+          </Space>
         </Space>
         {hybrid && (
           <Space direction="vertical" size={12} style={{ width: "100%" }}>

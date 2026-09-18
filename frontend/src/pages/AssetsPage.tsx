@@ -5,6 +5,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import { App } from "antd";
 import { usePageList } from "../hooks/usePageList";
+import { ListError } from "../components/ListError";
 import { createAsset, getAsset } from "../api/client";
 import type { Asset } from "../types";
 import { ASSET_TYPES, formatTime } from "../api/constants";
@@ -15,17 +16,23 @@ const { Text } = Typography;
 export default function AssetsPage() {
   const { message } = App.useApp();
   const [filters, setFilters] = useState<{ name?: string; asset_type?: string; environment?: string }>({});
-  const { rows, loading, pagination, refresh } = usePageList<Asset>("/assets", filters);
+  const { rows, loading, error, pagination, refresh } = usePageList<Asset>("/assets", filters);
   const [detail, setDetail] = useState<Asset | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [acting, setActing] = useState(false);
   const [form] = Form.useForm();
 
   const openDetail = async (id: string) => {
     setDetailOpen(true);
+    setDetailId(id);
+    // Clear first: a stale record must never render under a new header.
+    setDetail(null);
+    setDetailError(null);
     try { setDetail(await getAsset(id)); }
-    catch (error) { message.error(errorMessage(error, "加载资产详情失败")); }
+    catch (error) { setDetailError(errorMessage(error, "加载资产详情失败")); }
   };
 
   const submitCreate = async (values: {
@@ -81,7 +88,8 @@ export default function AssetsPage() {
         </Space>
       </Card>
       <Card title="资产清单">
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} />
+        <ListError error={error} onRetry={refresh} />
+        <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} locale={{ emptyText: error ? "加载失败" : "暂无数据" }} />
       </Card>
 
       <Drawer title={detail ? `资产 · ${detail.name}` : "资产详情"} width={640} open={detailOpen} onClose={() => setDetailOpen(false)}>
@@ -100,7 +108,11 @@ export default function AssetsPage() {
             <Descriptions.Item label="能力">{detail.capabilities.length ? detail.capabilities.map((c) => <Tag key={c} color="cyan">{c}</Tag>) : "—"}</Descriptions.Item>
             <Descriptions.Item label="创建时间">{formatTime(detail.created_at)}</Descriptions.Item>
           </Descriptions>
-        ) : <Text type="secondary">加载中…</Text>}
+        ) : detailError ? (
+          <ListError error={detailError} onRetry={() => detailId && void openDetail(detailId)} />
+        ) : (
+          <Text type="secondary">加载中…</Text>
+        )}
       </Drawer>
 
       <Modal

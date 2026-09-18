@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PaginationProps } from "antd";
-import api from "../api/http";
+import { App, type PaginationProps } from "antd";
+import api, { errorMessage } from "../api/http";
 
 export interface PageListOptions<Row, Filters extends object> {
   /** 路由前缀已含的 API 路径，如 /incidents */
@@ -38,6 +38,7 @@ export function usePageList<Row, Filters extends object = object>(
   filters?: Filters,
   pageSize = 20,
 ) {
+  const { message } = App.useApp();
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -61,14 +62,17 @@ export function usePageList<Row, Filters extends object = object>(
         setPage(targetPage);
       } catch (requestError) {
         if (current !== requestId.current) return;
-        const { errorMessage } = await import("../api/http");
-        setError(errorMessage(requestError, "数据加载失败"));
+        const text = errorMessage(requestError, "数据加载失败");
+        setError(text);
+        // Never silent: a failed load must not read as an empty dataset, even
+        // on a page that has not opted into the inline ListError alert.
+        message.error(`加载 ${path} 失败：${text}`);
       } finally {
         if (current === requestId.current) setLoading(false);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [path, filterKey, pageSize],
+    [path, filterKey, pageSize, message],
   );
 
   useEffect(() => { void load(1); }, [load]);

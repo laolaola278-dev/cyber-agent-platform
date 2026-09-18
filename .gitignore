@@ -66,3 +66,14 @@ _cert_tmp/
 _ci_logs/
 outputs/
 backend/outputs/
+
+# Emitted TypeScript artifacts (never authored sources)
+frontend/vite.config.js
+frontend/vite.config.d.ts
+*.tsbuildinfo
+
+# Local scratch / diagnostics
+_audit/
+_tmp/
+backend/.pytest-phase*/
+backend/pytest-cache-files-*/

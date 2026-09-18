@@ -4,6 +4,153 @@ All notable changes follow Keep a Changelog categories and Semantic Versioning 2
 
 ## [Unreleased]
 
+Post-1.0.5 delivery audit. These are unreleased fixes on top of the `1.0.5`
+anchor; under the version policy they require a new RC (`1.0.6-rc1`) because
+published release contents are immutable.
+
+### Fixed
+
+- CI image provenance: `.github/workflows/ci.yml` passed a hardcoded
+  `build-args: VERSION=1.0.0-rc1` to both image builds, so every CI-built
+  backend and frontend image embedded a version label five releases out of
+  date, corrupting the OCI `org.opencontainers.image.version` annotation and
+  any SBOM/upgrade attribution derived from it. The workflow now resolves the
+  canonical `VERSION` file into a step output.
+- Release-gate blind spot: the version-consistency gate enumerated 16 declared
+  carriers but never looked at CI or Compose, which is why the literal above
+  survived five releases. Adds a fail-closed guard rejecting any
+  `VERSION=<literal>` build-arg in a layer that must derive the version,
+  verified by a negative control (reintroducing the literal fails the gate).
+- Console build configuration: `frontend/vite.config.js` was a stale compiled
+  artifact committed alongside `vite.config.ts`. Vite resolves `.js` before
+  `.ts`, so `npm run dev` loaded the stale file and silently discarded every
+  build setting in the source config (route-splitting chunk hints and the
+  size-warning limit). The artifact, its `.d.ts`, and the committed
+  `*.tsbuildinfo` files are removed and now ignored.
+- `make lint` ran `black --check .`, a formatter no gate enforces that fails on
+  42 files, so the documented lint entry point was broken. It now runs exactly
+  the gates CI runs (Ruff + ESLint), and every target resolves through
+  `uv run --project backend` instead of assuming an activated virtualenv.
+- Console list pages could not fail loudly: `usePageList` computed an `error`
+  that none of its 19 call sites rendered, so a 500 or an unreachable backend
+  rendered an empty table indistinguishable from a genuinely empty dataset.
+- Console dead control: the Workers & Sandbox detail drawer set the selected row
+  but never opened itself, so the sandbox execution detail feature was
+  unreachable from the UI.
+- Stuck detail drawers (Assets, Response, Incidents showed "加载中…" forever
+  after a failed fetch; Detection, Assessment and Playbooks showed a blank
+  drawer) now render loading / error-with-retry / content.
+- Console truthfulness: the sidebar badge and page eyebrows displayed a
+  hardcoded product version while the real one was already being fetched from
+  `/health`; the Investigation view posted fabricated fixture records
+  (invented event IDs, evidence references and fixed timestamps) to the live
+  API as if they were operational data, and hardcoded a scenario count that the
+  fetched result already provides.
+
+## [1.0.5] - 2026-09-07
+
+GA promotion of 1.0.5-rc1: identical artifacts, promoted version metadata only
+(pure version bump; certification inherited from anchor `901013a` per the
+fail-closed diff classifier).
+
+### Fixed
+
+- Worker lease-heartbeat teardown is now cooperative: a stop event plus an
+  interruptible wait replaces the bare `heartbeat_task.cancel()`. The old cancel
+  could land while a TTL renewal `UPDATE` was in flight, and the abandoned
+  statement held the SQLite write lock in a zombie transaction until GC
+  finalised it -- observed as a 22-33s "database is locked" stall in the release
+  `UPDATE`. Release latency 22.27s -> ~62ms.
+- Frontend image: `apk upgrade --no-cache libuuid` clears 7 HIGH util-linux CVEs
+  from the base-layer drift.
+
+### Added
+
+- CI governance: coverage-matrix accountability gate (stdlib-only assertion plus
+  backend job fail-closed); every unverified matrix cell must carry an
+  accountability anchor.
+- Real outbound probes for notification webhook/ticket delivery against a local
+  asyncio acceptance server, clearing two coverage-matrix cells.
+
+### Changed
+
+- Frontend route-level code splitting: 15 pages behind `React.lazy` with the
+  antd `manualChunks` pin removed. The 1213 kB monolith is gone and first-paint
+  gzip drops 437 -> 243 kB (-44%).
+- Tests: per-test file-backed SQLite (NullPool + WAL + timeout) isolates the 28.2
+  worker-path/claim-loop suites from the shared StaticPool session.
+
+Certified at anchor `901013a`: 7200s soak (480/480 healthy ticks, 0 HTTP errors,
+0 downtime, 48 pod-kill recoveries) and strict GA 40/40 gates PASS,
+`full_ga_certified=true`.
+
+## [1.0.5-rc1] - 2026-09-07
+
+Release candidate cut to re-earn runtime certification for the worker
+lease-heartbeat race fix, the CI accountability gate, the frontend code
+splitting and the util-linux CVE remediation.
+
+## [1.0.4] - 2026-09-05
+
+GA promotion of 1.0.4-rc1: identical artifacts, promoted version metadata only
+(pure version bump; certification inherited from anchor `87d2409`).
+
+### Added
+
+- Console completion: the remaining 7 inline views (Dashboard, Investigations,
+  Acquisitions, Approvals, Plugins, Access, Settings) are extracted into
+  `pages/`, so `App.tsx` is a pure shell and all 16 views are components.
+  Navigation semantics are unchanged.
+- Docs: `docs/quality/coverage-matrix.md` governance matrix (20 capability rows
+  x 5 verification layers with explicit known-limitation marking) and an
+  expanded roadmap After-1.0.0 section.
+
+### Changed
+
+- CI: actions moved to Node 24 majors (checkout v6, setup-python v6, setup-node
+  v6) across 6 workflows, clearing the Node 20 deprecation warnings.
+
+Certified at anchor `87d2409`: full re-certification, 7200s soak, strict GA
+40/40 gates PASS, `full_ga_certified=true`.
+
+## [1.0.4-rc1] - 2026-09-05
+
+Release candidate cut to re-earn runtime certification for the console view
+extraction (frontend paths classify as `production_runtime`, so the v1.0.3
+certification could not be inherited).
+
+## [1.0.3] - 2026-09-04
+
+GA promotion of 1.0.3-rc1. The shipped delta over rc1 is two
+certification-infrastructure commits only (`2e4d0b1` GA wiring and report
+fidelity, `4bc5169` heartbeat test fixtures), classified
+`runtime_affecting=false` / `release_metadata_only=true`, so the certification
+earned at `4bc5169` carries forward.
+
+### Changed
+
+- Frontend console refactor: `App.tsx` had grown to ~1500 lines holding every
+  view and is now shell + navigation, with nine views extracted verbatim into
+  `pages/` (Incidents, Assets, Assessment, Detection, Response, Playbooks,
+  Knowledge, Workers, Audit). No backend, API, schema, migration or deployment
+  change; the console calls the same `api/client.ts` surface as before.
+- Three shared layers replace copy-pasted logic: `api/http.ts` (single axios
+  instance plus an `errorMessage()` helper surfacing the backend `detail`
+  field), `api/constants.tsx` (status/severity tags, `formatTime`) and
+  `hooks/usePageList.ts` (server-side pagination). `types.ts` gains the typed
+  API models, and `Finding` gains `created_at` / `updated_at` to match the
+  backend `FindingRead` schema.
+
+Certified at anchor `06b74b8` with the heartbeat invariant suite executing inside
+CI: `ci.yml`, Linux and K8s certification green, strict GA 40/40 gates PASS,
+`full_ga_certified=true`.
+
+## [1.0.3-rc1] - 2026-09-03
+
+Release candidate cut to re-earn runtime certification for the console refactor
+(`frontend/src/**` classifies as `production_runtime`, so the v1.0.2
+certification could not be inherited).
+
 ## [1.0.2] - 2026-09-01
 
 GA promotion of 1.0.2-rc1: identical artifacts, promoted version metadata only

@@ -5,6 +5,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import { App } from "antd";
 import { usePageList } from "../hooks/usePageList";
+import { ListError } from "../components/ListError";
 import {
   approveResponsePlan, executeResponsePlan, getResponsePlan, listResponsePlugins,
   rejectResponsePlan, rollbackResponsePlan,
@@ -19,9 +20,11 @@ const { Text } = Typography;
 export default function ResponsePage() {
   const { message } = App.useApp();
   const [filters, setFilters] = useState<{ approval_state?: string; execution_state?: string }>({});
-  const { rows, loading, pagination, refresh } = usePageList<ResponsePlan>("/response/plans", filters);
+  const { rows, loading, error, pagination, refresh } = usePageList<ResponsePlan>("/response/plans", filters);
   const [detail, setDetail] = useState<ResponsePlan | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [plugins, setPlugins] = useState<{ name: string }[]>([]);
   const [decisionTarget, setDecisionTarget] = useState<ResponsePlan | null>(null);
   const [decisionMode, setDecisionMode] = useState<"approve" | "reject">("approve");
@@ -38,8 +41,11 @@ export default function ResponsePage() {
 
   const openDetail = async (id: string) => {
     setDetailOpen(true);
+    setDetailId(id);
+    setDetail(null);
+    setDetailError(null);
     try { setDetail(await getResponsePlan(id)); }
-    catch (error) { message.error(errorMessage(error, "加载响应计划失败")); }
+    catch (error) { setDetailError(errorMessage(error, "加载响应计划失败")); }
   };
 
   const doExecute = async (plan: ResponsePlan) => {
@@ -140,7 +146,8 @@ export default function ResponsePage() {
         )}
       </Card>
       <Card title="响应计划">
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} />
+        <ListError error={error} onRetry={refresh} />
+        <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} locale={{ emptyText: error ? "加载失败" : "暂无数据" }} />
       </Card>
 
       <Drawer title={detail ? `响应计划 · ${detail.target_capability}` : "响应计划详情"} width={720} open={detailOpen} onClose={() => setDetailOpen(false)}>
@@ -180,7 +187,11 @@ export default function ResponsePage() {
               </Card>
             )}
           </Space>
-        ) : <Text type="secondary">加载中…</Text>}
+        ) : detailError ? (
+          <ListError error={detailError} onRetry={() => detailId && void openDetail(detailId)} />
+        ) : (
+          <Text type="secondary">加载中…</Text>
+        )}
       </Drawer>
 
       <Modal

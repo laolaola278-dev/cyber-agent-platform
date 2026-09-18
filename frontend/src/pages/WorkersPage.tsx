@@ -3,6 +3,7 @@ import { Badge, Button, Card, Descriptions, Drawer, Space, Statistic, Table, Tab
 import type { ColumnsType } from "antd/es/table";
 import { App } from "antd";
 import { usePageList } from "../hooks/usePageList";
+import { ListError } from "../components/ListError";
 import { listWorkers } from "../api/client";
 import type { SandboxExecution, Worker } from "../types";
 import { formatTime, statusTag } from "../api/constants";
@@ -44,9 +45,14 @@ function WorkersTab({ message }: { message: { error: (m: string) => void } }) {
 }
 
 function SandboxTab() {
-  const { rows, loading, pagination, refresh } = usePageList<SandboxExecution>("/sandbox");
+  const { rows, loading, error, pagination, refresh } = usePageList<SandboxExecution>("/sandbox");
   const [detail, setDetail] = useState<SandboxExecution | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+
+  const openDetail = (row: SandboxExecution) => {
+    setDetail(row);
+    setDetailOpen(true);
+  };
 
   const columns: ColumnsType<SandboxExecution> = [
     { title: "插件", dataIndex: "plugin_name", width: 160, render: (v, row) => <Space direction="vertical" size={0}><span>{v}</span><Tag>{row.plugin_version}</Tag></Space> },
@@ -61,9 +67,23 @@ function SandboxTab() {
   return (
     <Space direction="vertical" size={12} style={{ width: "100%" }}>
       <Button onClick={refresh}>刷新</Button>
+      <ListError error={error} onRetry={refresh} description="沙箱执行记录" />
       <Table
         rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination}
-        onRow={(row) => ({ onClick: () => setDetail(row) })}
+        scroll={{ x: "max-content" }}
+        locale={{ emptyText: error ? "加载失败" : "暂无沙箱执行记录" }}
+        onRow={(row) => ({
+          tabIndex: 0,
+          "aria-label": `查看沙箱执行详情：${row.plugin_name} ${row.operation}`,
+          style: { cursor: "pointer" },
+          onClick: () => openDetail(row),
+          onKeyDown: (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              openDetail(row);
+            }
+          },
+        })}
       />
       <Drawer title={detail ? `沙箱执行 · ${detail.plugin_name}` : ""} width={640} open={detailOpen} onClose={() => setDetailOpen(false)}>
         {detail ? (

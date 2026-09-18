@@ -1,12 +1,20 @@
-# Cyber Agent Platform (CAP) 1.0.0-rc1
+# Cyber Agent Platform (CAP) 1.0.5
 
 Cyber Agent Platform is an enterprise security-orchestration control plane that governs Asset, Knowledge, Assessment, Detection, Incident, Response, Notification, Worker, Sandbox, Telemetry, Plugin, and Playbook capabilities through stable interfaces, RBAC, approval, audit, and observability.
 
 ## Release status
 
-`1.0.0-rc1` is feature- and API-frozen for Architect Review. Phase 23 permits only bug fixes, release engineering, production certification, documentation, packaging, and deployment. The RC is not an unconditional production certification: Phase 22 high-concurrency API latency and target-environment tests remain open Production Entry Gates.
+`1.0.5` is the current release on the 1.0 line. The public API surface has been
+frozen since `1.0.0`; the 1.0.1-1.0.5 patches carry bug fixes, security and
+provenance remediation, certification work and console refactoring only. Each
+line was certified fail-closed at its own release-candidate anchor, and each GA
+commit is a pure version-metadata bump classified as inheriting that
+certification.
 
-- Release notes: [`docs/releases/v1.0.0-rc1.md`](docs/releases/v1.0.0-rc1.md)
+The GA certification is scoped: it does not extend to production EDR/WAF/firewall
+device integration, which remains mock-only by design (see Known issues).
+
+- Release notes: [`docs/releases/v1.0.5.md`](docs/releases/v1.0.5.md)
 - Changelog: [`CHANGELOG.md`](CHANGELOG.md)
 - Known issues: [`docs/known-issues.md`](docs/known-issues.md)
 - Roadmap: [`docs/roadmap.md`](docs/roadmap.md)
@@ -33,8 +41,11 @@ Production startup rejects repository placeholder secrets and debug mode. API do
 ## Single-node evaluation
 
 ```bash
-copy .env.example .env
-# Replace every placeholder with independent random values.
+# POSIX shells
+cp .env.example .env
+# Windows PowerShell:  Copy-Item .env.example .env
+# Replace every placeholder with independent random values. Production startup
+# rejects the repository placeholder secrets and debug mode.
 docker compose config --quiet
 docker compose up --build -d
 ```
@@ -61,6 +72,10 @@ helm upgrade --install cap deployment/helm/cap \
 Deployment index: [`deployment/README.md`](deployment/README.md).
 
 ## Quality gates
+
+`make install` then `make check` runs the full gate set (Ruff + ESLint, the
+backend suite, and the console typecheck + production build). The underlying
+commands, which are what `.github/workflows/ci.yml` enforces:
 
 ```bash
 uv sync --project backend --extra dev --frozen

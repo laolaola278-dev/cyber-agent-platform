@@ -1,49 +1,53 @@
-# Known Issues for 1.0.1-rc1
+# Known Issues for 1.0.5
 
-> Supersedes the `1.0.0` (GA) known-issues set, which stays published with the
-> v1.0.0 release assets and is not rewritten here. Items closed by Phase 28.6
-> (docker.sock elimination) and the Phase 28.7 D1 fact-check are removed.
->
-> This patch adds **capability disclosure** that the GA set omitted: the
-> Response Plane provider status, the Zeek input-format boundary, and the
-> reserved interfaces. Those are not new defects -- they describe behaviour
-> that shipped in v1.0.0 but was only recorded in design documents, never in
-> the operator-facing known-issues list.
+> Supersedes the `1.0.1-rc1` set. Items closed by later releases are removed
+> here and recorded in [`CHANGELOG.md`](../CHANGELOG.md) and
+> [`docs/releases/`](releases/). Capability disclosure (Response Plane
+> provider status, the Zeek input-format boundary, reserved interfaces) is
+> carried forward unchanged -- it describes shipped behaviour, not defects.
 
 ## Release blockers
 
 None carried from v1.0.0: Phase 28.7 GA Reliability Certification passed 40/40
 gates under `CAP_GA_STRICT=1` at certified commit
-`b22b7be57f89cd0ef0cf9df8b289ec1f5e74b2b3` (v1.0.0-rc4 — the security
-re-certification anchor carrying the CVE-2026-14456 openssl fix). The GA commit
-`0240fbe` is a pure release-metadata bump classified `release_metadata_only=true`
-by the fail-closed diff classifier, so that runtime certification is inherited.
+`b22b7be57f89cd0ef0cf9df8b289ec1f5e74b2b3` (v1.0.0-rc4).
 
-**1.0.1-rc1 certification status (final, 2026-08-29).** This patch changes
-sandbox/egress startup validation, which is a runtime-affecting security
-change, so the rc was put through the full remote certification path. At
-commit `c6793a8`: all four push-triggered workflows green (General CI
-33246170456; Linux Certification 33246170455 incl. GA-GATE 33 security
-re-certification; K8s Certification 33246170461; GA Certification
-33246170487 — strict kind-cluster run, 35 gates PASS, 0 failed, 0 skipped,
-GA-GATE 39 green under the egress-as-readiness-dependency contract), plus
-the dispatched reliability soak 33249070537 (5/5 soak gates PASS: 2h soak,
-availability 1.0, 11 worker kills with zero lost work, no memory leak, no
-orphans, upgrade and rollback under load clean). The final strict artifact
-(`CAP_GA_STRICT=1`) records **40/40 gates PASS, `full_ga_certified: true`**
-at anchor `c6793a8`. A 1.0.1 GA release requires a pure release-metadata
-bump from this anchor (certification inherited via the fail-closed diff
-classifier) plus explicit release authorisation. v1.0.0 remains the only
-released version.
+**Current release.** `1.0.5` is the released version (tag `v1.0.5`), certified at
+anchor `901013a`: strict GA 40/40 gates PASS with `full_ga_certified: true`, plus
+a 7200s reliability soak (run `34116570119`, 480/480 healthy ticks, 0 HTTP
+errors, 0 downtime, 48 pod-kill recoveries). Released versions on this line are
+v1.0.0, v1.0.1, v1.0.2, v1.0.3, v1.0.4 and v1.0.5.
+
+**Unreleased work.** The `## [Unreleased]` section of the changelog lists
+post-1.0.5 fixes (CI image provenance, a stale committed `vite.config.js` that
+shadowed the console build config, the broken `make lint` target, and several
+Console error-state and dead-control defects). Under the version policy these
+require a new RC (`1.0.6-rc1`) and a fresh runtime certification before release;
+they are not part of the shipped v1.0.5 assets.
 
 ## Operational limitations
 
 - Identity is supplied by a trusted reverse proxy; CAP does not provide an OIDC login implementation. Production gateways must overwrite identity headers.
+- **Audit attribution is client-supplied.** Transition/assign/decision endpoints take
+  an `actor` (or `approver`) in the request body, and the Web Console submits the
+  fixed string `console-operator`. Nothing binds that value to the authenticated
+  principal, so audit rows record the console, not a person. The trusted-proxy
+  header (`X-CAP-User`) is the only real identity control; a deployment that
+  needs attributable actions must derive the actor server-side from that header.
+  Changing the request contract is an API-freeze break and needs an ADR.
 - User/Role/Permission directories are immutable in v1; there is no user-management write API.
+- **The Web Console has no router.** Navigation is a state switch in `App.tsx`, so
+  per-page state (investigation and acquisition results, filters, selections) is
+  discarded on every menu click.
+- **The Web Console has no automated test suite.** Its CI gate is TypeScript
+  typecheck + ESLint + production build; API contracts are covered by the backend
+  suite, but no test drives a console user flow.
 - OpenTelemetry spans are not exported when `OTEL_EXPORTER_ENDPOINT` is empty.
 - Metrics and API docs are public application paths; production networks must restrict metrics, while API docs default to disabled.
 - The Web Console defaults to `read-only` for local Compose. It is not a production identity solution.
-- Frontend bundles still produce size warnings; this is not a correctness defect.
+- The console entry chunk is ~578 kB (183 kB gzipped) after route-level code
+  splitting and still trips the 550 kB warning. This is the antd core shared by
+  most views; it is a size warning, not a correctness defect.
 
 ## Response Plane — production provider status
 

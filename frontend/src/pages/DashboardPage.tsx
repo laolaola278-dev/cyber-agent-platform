@@ -12,7 +12,7 @@ export default function DashboardPage({ dashboard }: DashboardPageProps) {
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
       <div>
-        <Text className="eyebrow">CAP / V1.0 PRODUCTIZATION</Text>
+        <Text className="eyebrow">CAP · PLATFORM OVERVIEW</Text>
         <Title level={2}>安全运营态势</Title>
         <Paragraph type="secondary">统一聚合既有领域数据；管理台不直接访问数据库，不引入新的安全能力。</Paragraph>
       </div>

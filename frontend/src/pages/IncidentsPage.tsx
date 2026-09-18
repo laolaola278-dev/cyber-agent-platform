@@ -5,6 +5,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import { App } from "antd";
 import { usePageList } from "../hooks/usePageList";
+import { ListError } from "../components/ListError";
 import { assignIncident, createIncident, getIncident, transitionIncident } from "../api/client";
 import type { Incident } from "../types";
 import { INCIDENT_STATUSES, PRIORITIES, SEVERITIES, formatTime, severityTag, statusTag } from "../api/constants";
@@ -15,9 +16,11 @@ const { Text } = Typography;
 export default function IncidentsPage() {
   const { message } = App.useApp();
   const [filters, setFilters] = useState<{ severity?: string; status?: string; priority?: string }>({});
-  const { rows, loading, pagination, refresh } = usePageList<Incident>("/incidents", filters);
+  const { rows, loading, error, pagination, refresh } = usePageList<Incident>("/incidents", filters);
   const [detail, setDetail] = useState<Incident | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [transitionTarget, setTransitionTarget] = useState<Incident | null>(null);
@@ -29,9 +32,12 @@ export default function IncidentsPage() {
 
   const openDetail = async (id: string) => {
     setDetailOpen(true);
+    setDetailId(id);
+    setDetail(null);
+    setDetailError(null);
     setDetailLoading(true);
     try { setDetail(await getIncident(id)); }
-    catch (error) { message.error(errorMessage(error, "加载事件详情失败")); }
+    catch (error) { setDetailError(errorMessage(error, "加载事件详情失败")); }
     finally { setDetailLoading(false); }
   };
 
@@ -127,14 +133,19 @@ export default function IncidentsPage() {
         </Space>
       </Card>
       <Card title="事件列表">
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} />
+        <ListError error={error} onRetry={refresh} />
+        <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} locale={{ emptyText: error ? "加载失败" : "暂无数据" }} />
       </Card>
 
       <Drawer
         title={detail ? `事件 · ${detail.title}` : "事件详情"}
         width={720} open={detailOpen} onClose={() => setDetailOpen(false)}
       >
-        {detailLoading || !detail ? <Text type="secondary">加载中…</Text> : (
+        {detailError ? (
+          <ListError error={detailError} onRetry={() => detailId && void openDetail(detailId)} />
+        ) : detailLoading || !detail ? (
+          <Text type="secondary">加载中…</Text>
+        ) : (
           <Space direction="vertical" size={16} style={{ width: "100%" }}>
             <Descriptions bordered column={2} size="small">
               <Descriptions.Item label="状态">{statusTag(detail.status)}</Descriptions.Item>

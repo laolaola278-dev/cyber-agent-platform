@@ -164,3 +164,60 @@ def test_helm_values_has_exactly_three_image_tags() -> None:
     """Guard: the values.yaml contract is backend-api + backend-worker + frontend."""
     tags = _helm_values_image_tags(_read("deployment/helm/cap/values.yaml"))
     assert len(tags) == 3, f"expected 3 image tags, found {len(tags)}: {tags}"
+
+
+# -- guard: the build/packaging layer must not carry its own version ----------
+
+#: The 16 carriers above are declared explicitly, so they are checked for
+#: *equality*. This guard covers the opposite failure mode: a version literal
+#: in a layer that is supposed to resolve the version at build time. `.github/
+#: workflows/ci.yml` shipped `build-args: VERSION=1.0.0-rc1` and survived five
+#: releases because no carrier check looked at CI, mislabelling every CI-built
+#: image and the provenance/SBOM attribution derived from it.
+#: Matches `VERSION=<semver literal>` anywhere on a line (e.g. `build-args:
+#: VERSION=1.0.0-rc1`, `- VERSION=1.0.0`), anchored to end-of-line. Substitutions
+#: such as `VERSION=${{ steps.version.outputs.version }}` or `VERSION=$VERSION`
+#: are intentionally not matched: their value does not start with a digit.
+_VERSION_LITERAL = re.compile(
+    r"""VERSION=(?P<quote>['\"]?)(?P<value>\d+\.\d+\.\d+[0-9A-Za-z.+-]*)"""
+    r"""(?P=quote)\s*$"""
+)
+
+
+def _deriving_sources() -> list[Path]:
+    """Build/packaging files that must derive the version rather than state it.
+
+    Resolved from PROJECT_ROOT (never the CWD) so the scan cannot silently
+    collect an empty set when pytest runs from `backend/`.
+    """
+    workflows = sorted((PROJECT_ROOT / ".github" / "workflows").glob("*.yml"))
+    compose = PROJECT_ROOT / "docker-compose.yml"
+    return [*workflows, *([compose] if compose.exists() else [])]
+
+
+def test_no_hardcoded_version_literal_in_build_or_packaging() -> None:
+    """Build/packaging layers resolve VERSION from the canonical file, never a literal.
+
+    A `VERSION=<literal>` build-arg is a latent provenance defect: it is correct
+    only on the day it is written. Acceptable forms are a context reference
+    (`VERSION=` with no value, resolved from an env/step output) or an explicit
+    `${{ ... }}` / `${VAR}` substitution.
+    """
+    sources = _deriving_sources()
+    assert sources, (
+        f"no build/packaging files found under {PROJECT_ROOT / '.github' / 'workflows'} "
+        "-- the version-literal guard would pass vacuously"
+    )
+
+    offenders: list[str] = []
+    for path in sources:
+        rel = path.relative_to(PROJECT_ROOT).as_posix()
+        for lineno, line in enumerate(path.read_text("utf-8").splitlines(), start=1):
+            if _VERSION_LITERAL.search(line):
+                offenders.append(f"{rel}:{lineno}: {line.strip()}")
+
+    assert not offenders, (
+        "hardcoded VERSION literal(s) in a layer that must derive the canonical "
+        "version (read it from the VERSION file / a step output instead):\n  "
+        + "\n  ".join(offenders)
+    )

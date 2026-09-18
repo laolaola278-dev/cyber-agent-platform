@@ -3,6 +3,7 @@ import { Button, Card, DatePicker, Input, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { usePageList } from "../hooks/usePageList";
+import { ListError } from "../components/ListError";
 import type { AuditEvent } from "../types";
 import { formatTime } from "../api/constants";
 
@@ -13,7 +14,7 @@ export default function AuditPage() {
     operator?: string; event_type?: string; resource?: string;
     start?: string; end?: string;
   }>({});
-  const { rows, loading, pagination, refresh } = usePageList<AuditEvent>("/audit", filters, 50);
+  const { rows, loading, error, pagination, refresh } = usePageList<AuditEvent>("/audit", filters, 50);
 
   const applyRange = (_: unknown, range: [string, string] | null) => {
     setFilters((f) => ({
@@ -53,7 +54,8 @@ export default function AuditPage() {
         </Space>
       </Card>
       <Card title="审计事件（不可变）" extra={<Tag color="blue">audit.read</Tag>}>
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} />
+        <ListError error={error} onRetry={refresh} />
+        <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} locale={{ emptyText: error ? "加载失败" : "暂无数据" }} />
       </Card>
     </Space>
   );

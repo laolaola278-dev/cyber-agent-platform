@@ -174,6 +174,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v3
+      - name: Resolve release version
+        # The canonical version source is the root VERSION file. Never hardcode
+        # it here: a literal would silently mislabel every CI-built image after
+        # the next release and corrupt SBOM/upgrade attribution.
+        id: version
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
       - name: Build backend image
         uses: docker/build-push-action@v6
         with:
@@ -181,7 +187,7 @@ jobs:
           push: false
           load: true
           tags: cap-backend:ci
-          build-args: VERSION=1.0.0-rc1
+          build-args: VERSION=${{ steps.version.outputs.version }}
       - name: Build frontend image
         uses: docker/build-push-action@v6
         with:
@@ -189,7 +195,7 @@ jobs:
           push: false
           load: true
           tags: cap-frontend:ci
-          build-args: VERSION=1.0.0-rc1
+          build-args: VERSION=${{ steps.version.outputs.version }}
       - name: Scan repository filesystem
         # trivy-action v0.36.0 (pinned by commit SHA for supply-chain integrity)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25

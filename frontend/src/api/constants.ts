@@ -1,5 +1,9 @@
-import type { ReactNode } from "react";
-import { Tag } from "antd";
+// Pure status/severity data and formatting helpers. The two JSX renderers live
+// in `tags.tsx` and are re-exported here under their original names, so a page
+// can keep importing everything from `../api/constants` while each file exports
+// a single kind of thing (react-refresh fast-refresh boundary).
+
+export { severityTag, statusTag } from "./tags";
 
 export const SEVERITIES = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 export const PRIORITIES = ["P1", "P2", "P3", "P4"] as const;
@@ -48,29 +52,6 @@ export type TicketStatus = (typeof TICKET_STATUSES)[number];
 export type TicketPriority = (typeof TICKET_PRIORITIES)[number];
 export type RiskLevel = (typeof RISK_LEVELS)[number];
 export type Priority = (typeof PRIORITIES)[number];
-
-const SEVERITY_COLOR: Record<string, string> = {
-  INFO: "default", LOW: "blue", MEDIUM: "gold", HIGH: "orange", CRITICAL: "red",
-};
-const STATUS_COLOR: Record<string, string> = {
-  NEW: "blue", TRIAGED: "geekblue", CONFIRMED: "orange", INVESTIGATING: "processing",
-  CONTAINED: "purple", RESOLVED: "green", CLOSED: "default", REOPENED: "volcano",
-  FALSE_POSITIVE: "default", ACCEPTED_RISK: "default", FIXED: "green",
-  CORRELATED: "geekblue", IGNORED: "default", ARCHIVED: "default",
-  DRAFT: "default", PENDING_APPROVAL: "gold", APPROVED: "green", REJECTED: "red",
-  EXPIRED: "default", EXECUTED: "green", ROLLED_BACK: "purple",
-  PLANNED: "default", BLOCKED: "red", READY: "cyan", RUNNING: "processing",
-  SUCCEEDED: "green", FAILED: "red", VERIFIED: "green",
-  NOT_SUPPORTED: "default", AVAILABLE: "cyan",
-  OPEN: "blue", IN_PROGRESS: "processing", SENT: "green", SUPPRESSED: "default",
-  ON_HOLD: "orange", ACTIVE: "processing", COMPLETED: "green",
-};
-
-export const severityTag = (value?: string): ReactNode =>
-  <Tag color={SEVERITY_COLOR[value ?? ""] ?? "default"}>{value ?? "—"}</Tag>;
-
-export const statusTag = (value?: string): ReactNode =>
-  <Tag color={STATUS_COLOR[value ?? ""] ?? "default"}>{value ?? "—"}</Tag>;
 
 export const statusColor = (value?: string): string => {
   const status = value?.toUpperCase() ?? "UNKNOWN";

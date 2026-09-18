@@ -68,7 +68,7 @@ export default function AcquisitionsPage() {
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
       <div>
-        <Text className="eyebrow">CAP / V2.0 AGENTIC SECURITY</Text>
+        <Text className="eyebrow">CAP · DATA ACQUISITION</Text>
         <Title level={2}>Data Acquisition（Phase 28 · Adaptive Data Acquisition Agent）</Title>
         <Paragraph type="secondary">
           仅公开数据采集：SSRF 防护、robots.txt 合规、401/403/验证码/付费墙一律 STOP（不绕过）。
