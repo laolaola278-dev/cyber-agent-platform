@@ -30,7 +30,14 @@ flowchart LR
 - StartNode：初始化执行起点；
 - AgentNode：提交 Capability 任务到 Dispatcher/Runtime；
 - ConditionNode：支持受限的 `path == literal` 条件语言；
-- ApprovalNode：Phase 3 空实现，将实例持久化为 WAITING；
+- ApprovalNode：人工审批门。实例在此持久化为 WAITING，直到审批人通过
+  `POST /workflow/run/{instance_id}/decision`（body：`decision` = `APPROVED` /
+  `REJECTED`、`actor`、可选 `node_id` 与 `reason`）记录决定并恢复执行。决定以
+  `{state, actor, reason, decided_at}` 保存在实例 context 的 `approvals` 中，
+  即“谁放行了这道门”的持久证据；APPROVED 让 DAG 继续，REJECTED 让运行以审批人
+  的理由失败（人被拒绝不是可重试的基础设施故障）。同一个门只能回答一次，运行未
+  停在审批节点时提交决定返回 409。该路由需要 `approval.decide` 权限，与响应计划
+  审批使用同一权限，避免“能启动运行的人就能放行自己的审批”。
 - EndNode：标记 DAG 正常结束。
 
 NodeRegistry 是插件边界。新增节点类型必须实现统一异步 Handler，并通过稳定 `WorkflowNodeType` 注册。
@@ -61,6 +68,9 @@ stateDiagram-v2
 - Timeout：`asyncio.wait_for`，每节点 1–3600 秒；
 - Cancel：设置持久化 cancel flag，并将未完成 Step 标为 CANCELLED；
 - Resume：重新读取 Definition 与 Step checkpoint，从最后一个未完成节点继续；
+- Approval：对停在审批门的运行，普通 `resume` 不能放行——节点仍返回 WAITING；
+  只有经 `POST /workflow/run/{instance_id}/decision` 记录的决定才会让该门继续，
+  因此 resume 不是绕过人工审批的后门；
 - Failure：保存错误、Attempt、耗时和实例 FAILED 状态。
 
 ## 安全边界
