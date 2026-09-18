@@ -265,6 +265,27 @@ export const getAcquisitionEvidence = async (id: string): Promise<{ run_id: stri
 export const getAcquisitionCompleteness = async (id: string): Promise<Record<string, unknown>> =>
   (await api.get(`/acquisitions/${id}/completeness`)).data;
 
+/** 202: re-enqueues the SAME run at its persisted checkpoint (never page 1). */
+export interface AcquisitionResumeResult {
+  id: string;
+  status: string;
+  resumed: boolean;
+}
+
+/** 202: CANCEL_REQUESTED -> terminate -> CANCELLED; the worker finalizes it. */
+export interface AcquisitionCancelResult {
+  id: string;
+  status: string;
+  cancelled: boolean;
+  cancel_requested: boolean;
+}
+
+export const resumeAcquisition = async (id: string): Promise<AcquisitionResumeResult> =>
+  (await api.post(`/acquisitions/${id}/resume`)).data;
+
+export const cancelAcquisition = async (id: string): Promise<AcquisitionCancelResult> =>
+  (await api.post(`/acquisitions/${id}/cancel`)).data;
+
 // ---- Console v1.1: 域列表（带过滤/分页）与操作端点 ---------------------------
 
 export interface IncidentFilters {

@@ -8,6 +8,15 @@ Post-1.0.5 delivery audit. These are unreleased fixes on top of the `1.0.5`
 anchor; under the version policy they require a new RC (`1.0.6-rc1`) because
 published release contents are immutable.
 
+### Added
+
+- Console acquisition run lifecycle: `POST /acquisitions/{run_id}/resume` (requeue
+  at the persisted checkpoint) and `POST /acquisitions/{run_id}/cancel` existed
+  and were covered by backend tests, but the console exposed neither, so an
+  operator could start a run and could not stop or resume one from the UI. Both
+  are now wired with a confirmation step and status-gating that mirrors the
+  backend's terminal-state rule (resume on a terminal run is a 409).
+
 ### Fixed
 
 - CI image provenance: `.github/workflows/ci.yml` passed a hardcoded
@@ -44,6 +53,14 @@ published release contents are immutable.
   / content. (Detection, Assessment and Playbooks were checked and left alone:
   their drawers display the row the table already holds and issue no second
   fetch, so their empty body was not a stuck state.)
+- Acquisition detail fan-out selected a run and then awaited its evidence and
+  completeness in sequence without clearing the dependent state first, so a
+  failed evidence request left the previous run's evidence rendered under the
+  new run's header, and a slow response for an abandoned selection could land on
+  top of a newer one. The regions now clear before fetching, only commit on
+  success, and are guarded by a selection sequence number. The acquisition list
+  and the Knowledge/notification/ticket tables gained the same error, loading and
+  empty distinction as the other regions.
 - Console shell views had no loading or error surface: `DashboardPage` returned
   `null` while the aggregate was in flight (a blank page that also hid failures
   behind the global banner), `SettingsPage` rendered a bare `Empty` that

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button, Card, Input, Segmented, Space, Table, Tabs, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { usePageList } from "../hooks/usePageList";
+import { ListError } from "../components/ListError";
 import type { KnowledgeEntry, NotificationRecord, Ticket } from "../types";
 import { formatTime, severityTag, statusTag } from "../api/constants";
 
@@ -43,13 +44,28 @@ function KnowledgeTab() {
         )}
         <Button onClick={list.refresh}>刷新</Button>
       </Space>
-      <Table rowKey="id" loading={list.loading} columns={columns} dataSource={list.rows} pagination={list.pagination} />
+      <ListError error={list.error} onRetry={list.refresh} description="知识库" />
+      <Table
+        rowKey="id"
+        loading={list.loading}
+        columns={columns}
+        dataSource={list.rows}
+        pagination={list.pagination}
+        scroll={{ x: "max-content" }}
+        locale={{
+          emptyText: list.error
+            ? "加载失败"
+            : mode === "search" && !query
+              ? "输入关键词后检索"
+              : "暂无知识条目",
+        }}
+      />
     </Space>
   );
 }
 
 function NotificationsTab() {
-  const { rows, loading, pagination, refresh } = usePageList<NotificationRecord>("/notifications");
+  const { rows, loading, error, pagination, refresh } = usePageList<NotificationRecord>("/notifications");
   const columns: ColumnsType<NotificationRecord> = [
     { title: "能力", dataIndex: "capability", width: 160, render: (v: string) => <Tag color="cyan">{v}</Tag> },
     { title: "严重度", dataIndex: "severity", width: 100, render: severityTag },
@@ -63,14 +79,15 @@ function NotificationsTab() {
   return (
     <Space direction="vertical" size={12} style={{ width: "100%" }}>
       <Button onClick={refresh}>刷新</Button>
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} />
+      <ListError error={error} onRetry={refresh} />
+      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} locale={{ emptyText: error ? "加载失败" : "暂无数据" }} />
     </Space>
   );
 }
 
 function TicketsTab() {
   const [status, setStatus] = useState<string | undefined>(undefined);
-  const { rows, loading, pagination, refresh } = usePageList<Ticket>("/tickets", status ? { status } : {});
+  const { rows, loading, error, pagination, refresh } = usePageList<Ticket>("/tickets", status ? { status } : {});
   const columns: ColumnsType<Ticket> = [
     { title: "标题", dataIndex: "title", ellipsis: true },
     { title: "优先级", dataIndex: "priority", width: 100, render: (v: string) => <Tag color={v === "CRITICAL" ? "red" : v === "HIGH" ? "orange" : "blue"}>{v}</Tag> },
@@ -88,7 +105,8 @@ function TicketsTab() {
         ))}
         <Button onClick={refresh}>刷新</Button>
       </Space>
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} />
+      <ListError error={error} onRetry={refresh} />
+      <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={pagination} locale={{ emptyText: error ? "加载失败" : "暂无数据" }} />
     </Space>
   );
 }
