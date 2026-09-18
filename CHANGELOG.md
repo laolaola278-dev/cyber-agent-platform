@@ -37,6 +37,18 @@ published release contents are immutable.
   tamper an object, truncate the pg dump, append an object after the manifest
   was written (how a stale evidence directory drifts), and delete the manifest
   or the dump -- each refused before any restore step runs.
+- The workflow engine's APPROVAL node is a real gate now. It had been the Phase 3
+  placeholder that always returned WAITING, so any playbook containing a human
+  gate could be started but never finished, and `POST /workflow/run/{id}/resume`
+  simply parked it again. The node now reads the reviewer's decision recorded on
+  the run: approved continues, refused fails the run with the reviewer's reason
+  (a human saying no is not a transient error to retry). `WorkflowService.decide`
+  and `POST /workflow/run/{instance_id}/decision` record it, that route requires
+  `approval.decide` -- the same permission as a response-plan approval -- and the
+  trail (state, actor, reason, timestamp) persists on the run context. Covered by
+  seven tests: parking, resume-cannot-pass, approve, refuse, answer-once,
+  answering a run that never asked, naming the wrong gate, and the permission
+  mapping.
 
 ### Fixed
 

@@ -82,6 +82,20 @@ class WorkflowRunCreate(BaseModel):
     execute: bool = True
 
 
+class WorkflowDecisionRequest(BaseModel):
+    """A reviewer's answer to a workflow APPROVAL node.
+
+    ``node_id`` is optional because a run parks on at most one approval gate at
+    a time; naming it pins the decision to that gate, so a stale submission
+    cannot answer a different step.
+    """
+
+    decision: Literal["APPROVED", "REJECTED"]
+    actor: str = Field(min_length=1, max_length=128)
+    node_id: str | None = Field(default=None, max_length=128)
+    reason: str | None = Field(default=None, max_length=512)
+
+
 class WorkflowPlanRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=512)
 

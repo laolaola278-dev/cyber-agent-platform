@@ -60,15 +60,61 @@ class EndNodeHandler:
 
 
 class ApprovalNodeHandler:
-    """Phase 3 placeholder: persist a wait checkpoint without approval business logic."""
+    """Hold the run at this node until a reviewer records a decision.
+
+    The decision arrives through ``WorkflowService.decide`` --
+    ``POST /workflow/run/{instance_id}/decision`` -- which writes it into the
+    instance context under ``approvals[<node id>]`` and resumes the runtime; the
+    runtime hands that context to every node as ``state``. Until a decision
+    exists the step stays WAITING, which is also what keeps the run out of the
+    retry loop.
+
+    A refusal fails the step: a human who said no did not hit a transient
+    error, so the run must terminate with their reason rather than be retried or
+    reported as success.
+    """
 
     node_type = WorkflowNodeType.APPROVAL
 
-    async def execute(self, definition: WorkflowNodeDefinition, context: NodeContext) -> NodeResult:
-        return NodeResult(
-            WorkflowStepStatus.WAITING,
-            {"reason": "Approval provider is not implemented in Phase 3"},
-        )
+    async def execute(
+        self, definition: WorkflowNodeDefinition, context: NodeContext
+    ) -> NodeResult:
+        recorded = context.state.get("approvals")
+        decision = recorded.get(definition.id) if isinstance(recorded, dict) else None
+        if not isinstance(decision, dict) or decision.get("state") not in {
+            "APPROVED",
+            "REJECTED",
+        }:
+            return NodeResult(
+                WorkflowStepStatus.WAITING,
+                {
+                    "reason": "awaiting reviewer decision",
+                    "node_id": definition.id,
+                    "decide_with": (
+                        f'POST /workflow/run/<instance_id>/decision '
+                        f'{{"node_id": "{definition.id}", "decision": "APPROVED", '
+                        '"actor": "<reviewer>", "reason": "<why>"}'
+                    ),
+                },
+            )
+        outcome = {
+            "approval": decision,
+            "approved_by": decision.get("actor"),
+            "decision": decision["state"],
+        }
+        if decision["state"] == "REJECTED":
+            reason = decision.get("reason") or "no reason recorded"
+            return NodeResult(
+                WorkflowStepStatus.FAILED,
+                {
+                    **outcome,
+                    "error": (
+                        f"Approval for {definition.id} refused by "
+                        f"{decision.get('actor')}: {reason}"
+                    ),
+                },
+            )
+        return NodeResult(WorkflowStepStatus.SUCCESS, outcome)
 
 
 class ConditionNodeHandler:

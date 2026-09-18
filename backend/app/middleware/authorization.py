@@ -60,6 +60,10 @@ def _permission_for(method: str, path: str) -> str:
         return "audit.read"
     if path == "/settings":
         return "settings.read"
+    if path.startswith("/workflow") and path.endswith("/decision"):
+        # Answering an approval gate takes the approval permission, not the
+        # right to manage the platform: same gate, same rule as response plans.
+        return "approval.decide"
     if path in {"/roles", "/permissions", "/users"}:
         return "rbac.read"
     return "platform.manage"

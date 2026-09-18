@@ -1,9 +1,12 @@
 """Workflow application service coordinating definitions, plans, and durable runs."""
 
+from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.enums import WorkflowNodeType, WorkflowStepStatus
 from app.events import EventPublisher, EventType, PlatformEvent
 from app.exceptions import (
     AssetNotFound,
@@ -137,6 +140,56 @@ class WorkflowService:
 
     async def resume(self, instance_id: UUID) -> WorkflowInstance:
         instance = await self.get_run(instance_id)
+        await self._runtime.execute(instance)
+        return await self.get_run(instance_id)
+
+    async def decide(
+        self,
+        instance_id: UUID,
+        *,
+        decision: Literal["APPROVED", "REJECTED"],
+        actor: str,
+        node_id: str | None = None,
+        reason: str | None = None,
+    ) -> WorkflowInstance:
+        """Answer the run's parked approval gate and resume execution.
+
+        The decision is recorded on the instance itself -- ``approvals`` in the
+        run context, with actor and timestamp -- because that context is what
+        the runtime hands every node, and it is the durable trail of who let the
+        run through. A gate that already carries a decision is refused rather
+        than overwritten, so a second reviewer cannot rewrite the first answer.
+        """
+        instance = await self.get_run(instance_id)
+        waiting = [
+            step
+            for step in instance.steps
+            if step.node_type == WorkflowNodeType.APPROVAL.value
+            and step.status == WorkflowStepStatus.WAITING.value
+        ]
+        if node_id is not None:
+            waiting = [step for step in waiting if step.node_id == node_id]
+        if not waiting:
+            raise WorkflowConflict(
+                f"Workflow run {instance_id} is not waiting for an approval decision"
+                + (f" on node {node_id}" if node_id is not None else "")
+            )
+        step = waiting[0]
+        recorded = dict(instance.context.get("approvals") or {})
+        if step.node_id in recorded:
+            raise WorkflowConflict(
+                f"Approval gate {step.node_id} already has a recorded decision"
+            )
+        recorded[step.node_id] = {
+            "state": decision,
+            "actor": actor,
+            "reason": reason,
+            "decided_at": datetime.now(UTC).isoformat(),
+        }
+        # Reassigned, not mutated in place: SQLAlchemy persists a JSON column
+        # only when the attribute itself is set again.
+        instance.context = {**instance.context, "approvals": recorded}
+        await self._session.commit()
         await self._runtime.execute(instance)
         return await self.get_run(instance_id)
 

@@ -14,6 +14,7 @@ from app.schemas import (
     WorkflowRunCreate,
 )
 from app.schemas.common import PageResponse
+from app.schemas.workflow import WorkflowDecisionRequest
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
 
@@ -72,6 +73,28 @@ async def resume_workflow(
     instance_id: UUID, service: WorkflowServiceDependency
 ) -> WorkflowInstanceRead:
     return WorkflowInstanceRead.model_validate(await service.resume(instance_id))
+
+
+@router.post("/run/{instance_id}/decision", response_model=WorkflowInstanceRead)
+async def decide_workflow_run(
+    instance_id: UUID,
+    payload: WorkflowDecisionRequest,
+    service: WorkflowServiceDependency,
+) -> WorkflowInstanceRead:
+    """Answer a parked approval gate and resume the run.
+
+    The authorization middleware maps this path to ``approval.decide``, the same
+    permission that governs response-plan approvals, so a workflow gate cannot be
+    opened by whoever is able to start a run.
+    """
+    instance = await service.decide(
+        instance_id,
+        decision=payload.decision,
+        actor=payload.actor,
+        node_id=payload.node_id,
+        reason=payload.reason,
+    )
+    return WorkflowInstanceRead.model_validate(instance)
 
 
 @router.get("/run/{instance_id}", response_model=WorkflowInstanceRead)
