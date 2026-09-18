@@ -50,6 +50,12 @@ docker compose config --quiet
 docker compose up --build -d
 ```
 
+`CAP_ZAP_API_KEY` is not optional if you intend to use the incident or
+assessment planes. `.env.example` ships a placeholder for it, the platform
+resolves it through the secret provider at request time, and `POST /incidents`
+reaches it through the playbook dependency graph -- leaving the placeholder in
+place makes every incident creation fail with `SECRET_NOT_FOUND`.
+
 - Console: http://localhost:8080
 - Backend health: http://localhost:8000/health
 - Backend readiness: http://localhost:8000/ready
