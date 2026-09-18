@@ -11,8 +11,9 @@ help:
 	@echo "install          Backend (uv, frozen) + Console (npm ci) dependencies"
 	@echo "lint             Ruff + ESLint -- exactly the CI lint gates"
 	@echo "test             Backend test suite"
+	@echo "frontend-test    Console unit and core-flow tests (Vitest)"
 	@echo "frontend-build   Console typecheck + production build"
-	@echo "check            lint + test + frontend-build (pre-delivery gate)"
+	@echo "check            lint + test + frontend-test + frontend-build (pre-delivery gate)"
 	@echo "up / down / logs docker compose lifecycle (single-node evaluation)"
 	@echo "migrate          alembic upgrade head"
 
@@ -22,7 +23,7 @@ install:
 
 lint:
 	$(UV) run --project backend ruff check backend/app backend/tests benchmarks/phase22
-	npm run lint --prefix frontend
+	npm run lint --prefix frontend -- --max-warnings=0
 
 test:
 	$(UV) run --project backend pytest backend/tests -p no:cacheprovider
@@ -31,12 +32,15 @@ frontend-install:
 	npm ci --prefix frontend
 
 frontend-lint:
-	npm run lint --prefix frontend
+	npm run lint --prefix frontend -- --max-warnings=0
+
+frontend-test:
+	npm test --prefix frontend
 
 frontend-build:
 	npm run build --prefix frontend
 
-check: lint test frontend-build
+check: lint test frontend-test frontend-build
 
 migrate:
 	$(UV) run --project backend alembic -c backend/alembic.ini upgrade head

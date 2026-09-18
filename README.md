@@ -73,20 +73,26 @@ Deployment index: [`deployment/README.md`](deployment/README.md).
 
 ## Quality gates
 
-`make install` then `make check` runs the full gate set (Ruff + ESLint, the
-backend suite, and the console typecheck + production build). The underlying
-commands, which are what `.github/workflows/ci.yml` enforces:
+`make install` then `make check` runs the full gate set (Ruff + ESLint at a zero
+warning budget, the backend suite, the console test suite, and the console
+typecheck + production build). The underlying commands, which are what
+`.github/workflows/ci.yml` enforces:
 
 ```bash
 uv sync --project backend --extra dev --frozen
 uv run --project backend ruff check backend/app backend/tests benchmarks/phase22
 uv run --project backend pytest backend/tests -p no:cacheprovider
 npm ci --prefix frontend
-npm run lint --prefix frontend
+npm run lint --prefix frontend -- --max-warnings=0
+npm test --prefix frontend
 npm run build --prefix frontend
 ```
 
-CI additionally enforces 95% Backend coverage, Compose/Helm validation, Docker builds, npm production dependency audit, and baseline Trivy scanning.
+CI additionally enforces 90% backend coverage in the infra-less backend job (the
+95% target assumes the container and PostgreSQL certification tests, which
+contribute coverage only in the certification workflows), Compose/Helm
+validation, Docker builds, npm production dependency audit, and baseline Trivy
+scanning.
 
 ## Operations
 

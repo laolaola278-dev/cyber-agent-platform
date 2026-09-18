@@ -41,9 +41,9 @@ services:
     build:
       context: ./backend
       args:
-        VERSION: ${APP_VERSION:-1.0.0-rc1}
+        VERSION: ${APP_VERSION:?APP_VERSION is required; see .env.example}
     environment:
-      APP_VERSION: ${APP_VERSION:-1.0.0-rc1}
+      APP_VERSION: ${APP_VERSION:?APP_VERSION is required; see .env.example}
       # v1.0.1 PATCH-GATE 7: this stack builds images locally and runs
       # MinIO with development credentials, so its honest default is
       # development. Setting APP_ENVIRONMENT=production opts into the
@@ -125,9 +125,9 @@ services:
     build:
       context: ./backend
       args:
-        VERSION: ${APP_VERSION:-1.0.0-rc1}
+        VERSION: ${APP_VERSION:?APP_VERSION is required; see .env.example}
     environment:
-      APP_VERSION: ${APP_VERSION:-1.0.0-rc1}
+      APP_VERSION: ${APP_VERSION:?APP_VERSION is required; see .env.example}
       # v1.0.1 PATCH-GATE 7: this stack builds images locally and runs
       # MinIO with development credentials, so its honest default is
       # development. Setting APP_ENVIRONMENT=production opts into the
@@ -189,7 +189,7 @@ services:
     build:
       context: ./frontend
       args:
-        VERSION: ${APP_VERSION:-1.0.0-rc1}
+        VERSION: ${APP_VERSION:?APP_VERSION is required; see .env.example}
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
     environment:
       BACKEND_UPSTREAM: backend

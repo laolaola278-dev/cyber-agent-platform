@@ -110,6 +110,12 @@ def test_all_version_sources_match_canonical() -> None:
     frontend = json.loads(_read("frontend/package.json"))
     check("frontend/package.json", frontend.get("version", ""))
 
+    # Deployment env template. APP_VERSION overrides settings.py's app_version at
+    # runtime, so a stale value makes a whole deployment self-report the wrong
+    # version through /health -- which is what the console now displays.
+    env_match = re.search(r"^APP_VERSION=(\S+)", _read(".env.example"), re.MULTILINE)
+    check(".env.example APP_VERSION", env_match.group(1) if env_match else "")
+
     # Helm chart
     chart = _read("deployment/helm/cap/Chart.yaml")
     chart_version = re.search(r'^version:\s*(\S+)', chart, re.MULTILINE)
@@ -174,13 +180,16 @@ def test_helm_values_has_exactly_three_image_tags() -> None:
 #: workflows/ci.yml` shipped `build-args: VERSION=1.0.0-rc1` and survived five
 #: releases because no carrier check looked at CI, mislabelling every CI-built
 #: image and the provenance/SBOM attribution derived from it.
-#: Matches `VERSION=<semver literal>` anywhere on a line (e.g. `build-args:
-#: VERSION=1.0.0-rc1`, `- VERSION=1.0.0`), anchored to end-of-line. Substitutions
-#: such as `VERSION=${{ steps.version.outputs.version }}` or `VERSION=$VERSION`
-#: are intentionally not matched: their value does not start with a digit.
+#: Any line whose variable name ends in VERSION and which resolves to a bare
+#: semantic-version literal -- assigned directly (`build-args: VERSION=1.0.0-rc1`)
+#: or as a Compose interpolation default (`APP_VERSION: ${APP_VERSION:-1.0.0-rc1}`,
+#: optionally closed by `}`). The Compose form matters because APP_VERSION
+#: overrides `settings.app_version` at runtime, so a stale default makes a
+#: deployment self-report the wrong version. Substitutions without a literal
+#: (`${APP_VERSION}`, `${APP_VERSION:?required}`) are not matched.
 _VERSION_LITERAL = re.compile(
-    r"""VERSION=(?P<quote>['\"]?)(?P<value>\d+\.\d+\.\d+[0-9A-Za-z.+-]*)"""
-    r"""(?P=quote)\s*$"""
+    r"""VERSION\S*\s*[:=]\s*(?:\$\{[A-Z_]+:-)?(?P<quote>['\"]?)"""
+    r"""(?P<value>\d+\.\d+\.\d+[0-9A-Za-z.+-]*)(?P=quote)\}?\s*$"""
 )
 
 
