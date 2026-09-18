@@ -42,7 +42,7 @@ import type {
 // loads on first navigation, so the initial bundle carries only the
 // shell + antd vendor chunk. Home (dashboard) keeps prefetch priority
 // via eager import below.
-import DashboardPage from "./pages/DashboardPage";
+const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 
 const InvestigationsPage = lazy(() => import("./pages/InvestigationsPage"));
 const AcquisitionsPage = lazy(() => import("./pages/AcquisitionsPage"));
