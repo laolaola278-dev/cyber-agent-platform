@@ -25,7 +25,18 @@ export function ListError({
       showIcon
       message="数据加载失败"
       description={description ? `${error} · ${description}` : error}
-      action={onRetry ? <Button size="small" onClick={onRetry}>重试</Button> : undefined}
+      action={
+        onRetry ? (
+          // antd's Button inserts a typographic space between two CJK
+          // characters, so the rendered label is "重 试" and that stray space
+          // would otherwise leak into the control's accessible name. Pinning
+          // aria-label keeps the retry action announced — and reachable — as
+          // one word.
+          <Button size="small" aria-label="重试" onClick={onRetry}>
+            重试
+          </Button>
+        ) : undefined
+      }
       style={{ marginBottom: 12 }}
     />
   );

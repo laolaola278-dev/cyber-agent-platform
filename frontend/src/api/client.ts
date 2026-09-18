@@ -1,4 +1,3 @@
-import axios from "axios";
 import type {
   ApprovalItem,
   AssessmentTask,
@@ -27,12 +26,7 @@ import type {
   Worker,
 } from "../types";
 import type { ApprovalState, ExecutionState } from "./constants";
-
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL ?? "/api",
-  timeout: 10000,
-  withCredentials: true,
-});
+import api from "./http";
 
 export const getHealth = async (): Promise<Health> => (await api.get<Health>("/health")).data;
 export const getDashboard = async (): Promise<Dashboard> =>
