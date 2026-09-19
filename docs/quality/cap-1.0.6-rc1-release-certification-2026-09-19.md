@@ -157,7 +157,9 @@ the set grows and fail if an entry disappears un-fixed.
 
 New job `postgres-version-matrix` (Linux certification workflow, release/main layers) runs the
 chain on `postgres:15-alpine`, `16-alpine`, `17-alpine` with `fail-fast: false`:
-**all three cells PASS** at `0b4e207`, recording the exact servers certified
+**all three cells PASS** at `0b4e207` and re-executed **all three PASS on the certified
+`c52dcb9`** (run `35439343387`, legs `postgres-version-matrix (15/16/17-alpine)`), recording the
+exact servers certified
 (`outputs/cert-final/linux-0b4e207/pg-matrix-*/pg-matrix-server.txt`):
 PostgreSQL **15.19** (`150019`), **16.15** (`160015`), **17.11** (`170011`), each with
 junit evidence (`junit-pg-matrix-<v>.xml`). CI also gates the chain on every push
