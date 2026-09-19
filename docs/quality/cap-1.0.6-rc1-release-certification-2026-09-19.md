@@ -778,6 +778,12 @@ its documentation and a home that collects it.
   ("recipient allowlisting is mandatory", "a production adapter must translate…"), which this pass
   did not treat as enforcement claims — several are the requirements the §12/§13 tests do enforce,
   and the rest are labelled as future or out-of-scope work in their own text.
+  **The part of the gate that has not been exercised:** its step body has run for real (above) and
+  its YAML parses, but the job itself has never executed on a runner, because `release.yml` triggers
+  only on a `v*` tag and §28 forbids pushing one — so its `upload-artifact` step, its `needs` edges
+  and the `actions: read` scope are verified by the contract test's reading of the workflow, not by a
+  live release. The first tag push is where that half gets its proof, and the job fails closed if the
+  scope or the graph is wrong.
 
 **MEDIUM — found and resolved during this pass**
 
