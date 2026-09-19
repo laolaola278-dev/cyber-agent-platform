@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Phase 28.5-CI -- machine-readable certification result + human report.
 
 Consumes:
@@ -253,12 +252,16 @@ def commit_id() -> str:
     if from_ci:
         return from_ci
     try:
-        proc = subprocess.run(  # noqa: S603 -- fixed argv, no shell
+        proc = subprocess.run(
+            # check=False deliberately: a missing git or a non-zero rev-parse is
+            # a provenance gap to report, not an exception to propagate -- the
+            # artifact must still be written with "unknown".
             ["git", "rev-parse", "HEAD"],
             cwd=ROOT,
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return "unknown"

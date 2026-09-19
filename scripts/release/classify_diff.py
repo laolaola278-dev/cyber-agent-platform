@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Release diff classifier -- certification inheritance gate.
 
 Compares a runtime-certified SHA against a release-candidate SHA and

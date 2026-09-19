@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Phase 28.7 -- generate the machine-readable backup manifest.
 
 The manifest is tamper-evident: ``object_manifest_digest`` is the SHA-256 of

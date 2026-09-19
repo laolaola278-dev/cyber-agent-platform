@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Phase 28.7 -- verify a backup against its manifest (fail-closed).
 
 Recomputes the pg dump digest and the object manifest digest and compares

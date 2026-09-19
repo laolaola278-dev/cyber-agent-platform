@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Assert the coverage-matrix discipline: no unaccounted verification gap.
 
 CI gate for the blind-spot governance rollout

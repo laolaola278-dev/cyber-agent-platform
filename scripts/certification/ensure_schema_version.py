@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Ensure the alembic_version table exists on the HA certification database.
 
 Phase 28.5-CI -- GATE 15 readiness. The production AcquisitionWorker's

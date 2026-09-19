@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Scan the tracked tree for credentials that must never be committed.
 
 Part of the release certification contract (§20 of the readiness checklist): the
