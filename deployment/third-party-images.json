@@ -1,0 +1,93 @@
+{
+  "schema": "cap.third-party-images/v1",
+  "updated": "2026-09-19",
+  "purpose": "Machine-readable record of every third-party container image and binary the product, the local audit, and the certification workflows depend on. backend/tests/test_third_party_image_lock.py fails the build if a reference site and this file disagree.",
+  "policy": {
+    "minio_object_store": {
+      "form": "repository@digest",
+      "why": "The upstream vendor archived the open-source MinIO Server, Client and KES and stopped serving community release files (see the note in docs/known-issues.md). A tag is a mutable pointer into a registry whose retention policy we do not control, and this image stores certified evidence, so the release line pins content by digest and re-derives the digest from the vendor's signed release tag before changing it.",
+      "upgrade_procedure": "1) resolve the new tag at https://quay.io/v2/minio/minio/manifests/<tag> with an Accept header for the docker/oci manifest LIST (a bare request returns a legacy schema1 conversion whose digest differs); 2) confirm the image config labels carry release=<tag> and vendor=MinIO Inc; 3) confirm the matching PGP-signed tag in github.com/minio/minio was created minutes before the image build timestamp; 4) update this file, then run the object-store certification (pytest -m object_store + the Linux/GA workflows) before any release."
+    },
+    "postgres": {
+      "form": "tag",
+      "why": "postgres:16-alpine remains a Docker Hub official-library image, so the tag is maintained upstream; the version matrix certification (§6 of the release checklist) runs the migration chain against pinned Debian-suffix variants instead. Recorded here so a future archive event is visible in one place.",
+      "upgrade_procedure": "Resolve and record the digest here, then re-run the PostgreSQL version matrix."
+    }
+  },
+  "images": [
+    {
+      "name": "minio-object-store",
+      "role": "S3-compatible durable evidence store (docker-compose deployment, kind certification clusters, GitHub service containers, scripts/certification/setup.sh)",
+      "registry": "quay.io",
+      "repository": "minio/minio",
+      "tag": "RELEASE.2025-04-22T22-12-26Z",
+      "digest": "sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
+      "digest_kind": "manifest-list (multi-arch); the linux/amd64 platform manifest is sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb",
+      "image_ref": "quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
+      "previous_ref": "docker.io/minio/minio:RELEASE.2025-04-22T22-12-26Z",
+      "previous_ref_status": "Unusable. Pulled successfully from GitHub runners as late as 2026-08-22 (outputs evidence: _ci_logs/cert_run8_full.log, 'deployment \"minio\" successfully rolled out'), then every certification job from 2026-09-13 on failed at container initialisation with 'Error response from daemon: pull access denied for minio/minio, repository does not exist or may require docker login'.",
+      "provenance": {
+        "verified_on": "2026-09-19",
+        "repository_namespace": "quay.io organisation 'minio' (is_organization=true, description 'Multi-Cloud Object Storage'), whose ~500 tags follow the vendor's full community release cadence including hotfix builds",
+        "image_config_labels": {
+          "release": "RELEASE.2025-04-22T22-12-26Z",
+          "version": "RELEASE.2025-04-22T22-12-26Z",
+          "vendor": "MinIO Inc <dev@min.io>",
+          "maintainer": "MinIO Inc <dev@min.io>",
+          "com.redhat.component": "ubi9-micro-container",
+          "vcs-type": "git",
+          "vcs-ref": "519a52b1bc2ef31e2633c20f34a0df840e159172"
+        },
+        "image_config_created": "2025-04-22T22:35:01.339428192Z",
+        "vendor_signed_tag": "github.com/minio/minio tag RELEASE.2025-04-22T22-12-26Z, annotated object f19c534b9f457773dcd043d977433e1a71525c3b, PGP-signed by 'Minio Trusted <trusted@minio.io>' at 2025-04-22T22:34:02Z, peeling to commit 0d7408fc9969caf07de6a8c3a84f9fbb10a6739e",
+        "open_gap": "The vcs-ref above is not resolvable in the public minio/minio or minio/docker-minio repositories (GitHub returns 422/404), and docker.io was unreachable from the audit host, so byte-for-byte equality with the image previously certified from Docker Hub could not be proven offline. It is proven behaviourally instead: the object_store certification and the Linux/GA jobs run this image and exercise real S3 signatures, multipart evidence upload, versioning and the DR restore path against it."
+      },
+      "referenced_by": [
+        "docker-compose.yml",
+        ".github/workflows/cap-linux-certification.yml",
+        ".github/workflows/cap-k8s-certification.yml",
+        ".github/workflows/cap-ga-certification.yml",
+        ".github/workflows/cap-ga-reliability.yml",
+        "scripts/certification/setup.sh"
+      ],
+      "derived_by": [
+        "backend/tests/test_phase_28_7_ga_certification.py"
+      ]
+    },
+    {
+      "name": "postgres",
+      "role": "Primary metadata store (docker-compose, kind clusters, GitHub service containers)",
+      "registry": "docker.io",
+      "repository": "library/postgres",
+      "tag": "16-alpine",
+      "digest": null,
+      "image_ref": "postgres:16-alpine",
+      "referenced_by": [
+        "docker-compose.yml",
+        ".github/workflows/cap-linux-certification.yml",
+        ".github/workflows/cap-k8s-certification.yml",
+        ".github/workflows/cap-ga-certification.yml",
+        ".github/workflows/cap-ga-reliability.yml",
+        "scripts/certification/setup.sh"
+      ]
+    }
+  ],
+  "binaries": [
+    {
+      "name": "mc",
+      "role": "MinIO client used by the DR/backup gates in the GA certification and soak workflows",
+      "source": "https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z",
+      "checksum_source": "https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z.sha256sum",
+      "sha256": "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891",
+      "install_contract": "curl -fSsL (fails on an HTTP error page) + sha256sum --check against the published .sha256sum, exit 1 on mismatch",
+      "why_not_dl_min_io": "dl.min.io returns HTTP 410 Gone for every community release asset after the archive; the bootstrap that read from it installed an HTML error page as /usr/local/bin/mc because curl lacked -f, which is how the GA and soak jobs failed from 2026-09-13."
+    },
+    {
+      "name": "kind",
+      "role": "Kubernetes-in-Docker cluster used by the K8s and GA certification workflows",
+      "source": "https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64",
+      "version": "v0.27.0",
+      "install_contract": "curl -fSsL --retry 3 (a non-fatal curl would install an error page)"
+    }
+  ]
+}

@@ -40,7 +40,11 @@ if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
     --network cap-network \
     -e MINIO_ROOT_USER=capadmin -e MINIO_ROOT_PASSWORD=capadmin123 \
     -p 9000:9000 -p 9001:9001 \
-    minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address :9001 >/dev/null
+    # MinIO server: the vendor archived the open-source build and its community images
+    # are gone from Docker Hub, so this is digest-pinned and pulled from the official
+    # MinIO org on Quay. Why + how to upgrade: deployment/third-party-images.json,
+    # locked by backend/tests/test_third_party_image_lock.py.
+    quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e server /data --console-address :9001 >/dev/null
 fi
 
 # egress proxy (the sandbox's ONLY route out). It sits on the isolated

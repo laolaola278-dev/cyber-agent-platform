@@ -343,6 +343,17 @@ def _pg_pod() -> str:
     ).stdout.strip()
 
 
+# The MinIO coordinate is read from deployment/third-party-images.json rather than
+# repeated here: this manifest is applied to a real cluster, and when the image was
+# retired upstream the copy in this file was one of nine sites that had to change.
+_MINIO_IMAGE = next(
+    entry["image_ref"]
+    for entry in json.loads(
+        (REPO_ROOT / "deployment" / "third-party-images.json").read_text("utf-8")
+    )["images"]
+    if entry["name"] == "minio-object-store"
+)
+
 _INFRA_YAML = """
 apiVersion: v1
 kind: Namespace
@@ -391,13 +402,16 @@ spec:
     spec:
       containers:
         - name: minio
-          image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+          # coordinate resolved from deployment/third-party-images.json
+          image: __MINIO_IMAGE__
           command: ["minio", "server", "/data", "--console-address", ":9001"]
           env:
             - {name: MINIO_ROOT_USER, value: capadmin}
             - {name: MINIO_ROOT_PASSWORD, value: capadmin123}
           ports: [{containerPort: 9000}]
 """
+_INFRA_YAML = _INFRA_YAML.replace("__MINIO_IMAGE__", _MINIO_IMAGE)
+
 
 
 # -- the DR sequence (module-scoped, executed once) ---------------------------

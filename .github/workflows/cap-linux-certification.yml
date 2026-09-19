@@ -71,8 +71,12 @@ jobs:
         ports: ["55432:5432"]
         options: >-
           --health-cmd "pg_isready -U cap" --health-interval 5s --health-retries 12
+      # MinIO server: the vendor archived the open-source build and its community images
+      # are gone from Docker Hub, so this is digest-pinned and pulled from the official
+      # MinIO org on Quay. Why + how to upgrade: deployment/third-party-images.json,
+      # locked by backend/tests/test_third_party_image_lock.py.
       minio:
-        image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        image: quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
         env: { MINIO_ROOT_USER: capadmin, MINIO_ROOT_PASSWORD: capadmin123 }
         command: server /data --console-address :9001
         ports: ["9000:9000"]
@@ -149,8 +153,12 @@ jobs:
         ports: ["55432:5432"]
         options: >-
           --health-cmd "pg_isready -U cap" --health-interval 5s --health-retries 12
+      # MinIO server: the vendor archived the open-source build and its community images
+      # are gone from Docker Hub, so this is digest-pinned and pulled from the official
+      # MinIO org on Quay. Why + how to upgrade: deployment/third-party-images.json,
+      # locked by backend/tests/test_third_party_image_lock.py.
       minio:
-        image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        image: quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
         env: { MINIO_ROOT_USER: capadmin, MINIO_ROOT_PASSWORD: capadmin123 }
         command: server /data --console-address :9001
         ports: ["9000:9000"]
@@ -232,8 +240,12 @@ jobs:
         ports: ["55432:5432"]
         options: >-
           --health-cmd "pg_isready -U cap" --health-interval 5s --health-retries 12
+      # MinIO server: the vendor archived the open-source build and its community images
+      # are gone from Docker Hub, so this is digest-pinned and pulled from the official
+      # MinIO org on Quay. Why + how to upgrade: deployment/third-party-images.json,
+      # locked by backend/tests/test_third_party_image_lock.py.
       minio:
-        image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        image: quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
         env: { MINIO_ROOT_USER: capadmin, MINIO_ROOT_PASSWORD: capadmin123 }
         command: server /data --console-address :9001
         ports: ["9000:9000"]
