@@ -1,14 +1,19 @@
 # CAP 1.0.6-rc1 — Final Release Certification Report
 
-Candidate: `becbad4` (branch `release/1.0.6-rc1`), the tree that includes every fix found during
-this certification pass.
+Certified SHA: `c52dcb9` (branch `release/1.0.6-rc1`) — the commit CI, the Linux release layer and
+the K8s certification all ran green on. Tip at the time of writing: `b9b7f03`, one audit-tool
+commit later; `classify_diff c52dcb9 b9b7f03` reports **INHERITED** (one `repo_tooling` file, one
+`test_harness` file), and `outputs/cert-becbad4/diff-b84a13e-to-becbad4.json` /
+`outputs/cert-c52dcb9/` hold the machine-readable proofs.
 Superseded by runtime changes during this pass, in order: `154f5b6` → `71dad6e` → `0b4e207` →
 `2b65368` → `ad91e0e` → `1fc1c98` → `c8c170f` (console authorization, F-13) → `8ffd7bd` (the
 report generator's PyYAML dependency, §13) → `7e1f0e2` → `0bc8efa` (approval-gate assertions) →
-`d9a2e01` (execution-lease heartbeat, F-14 — certified green on Linux and K8s) → `a5d7379` /
-`3ebca44` / `b84a13e` (the renewal cadence contract behind the same defect, plus the lint and
-classifier corrections it required). Each step is classified in §2, and every gate bound to an
-earlier SHA is labelled as such rather than silently reused.
+`d9a2e01` (execution-lease heartbeat isolation + transient-renewal retry, F-14) → `a5d7379` /
+`3ebca44` (the renewal cadence contract behind the same defect, plus the lint corrections it
+required) → `b84a13e` (`repo_tooling` classification, enforced by a test) → `becbad4` (release
+audit tool) → `93d360c` (cadence boundary tests) → **`c52dcb9`** (the single-connection guard that
+CI's unit job caught at `becbad4`, F-18) → `b9b7f03`. Each step is classified in §2, and every gate
+bound to an earlier SHA is labelled as such rather than silently reused.
 Prepared: 2026-09-19, from a Windows audit host plus GitHub-hosted Linux runners.
 Publication: **none performed** — no `v*` tag, no GitHub Release, no image pushed, no existing tag or image overwritten.
 
@@ -38,10 +43,11 @@ the frozen candidate. Machine-readable output in `outputs/cert-becbad4/diff-*.js
 
 | Range | Verdict | Runtime-affecting files |
 | --- | --- | --- |
-| `v1.0.5 → becbad4` | **RECERTIFICATION REQUIRED** | 51 `production_runtime` + 1 `database` + 2 `dependency` + 3 `deployment` (116 files total) |
-| `a5ce0c4` (last audited tree) `→ becbad4` | **RECERTIFICATION REQUIRED** | 6 `production_runtime` + 3 `deployment` (65 files: 21 `test_harness`, 10 `version_bump`, 9 `certification_generator`, 7 `docs`, 5 `ci_workflow`, 3 `repo_tooling`, 1 `release_metadata`) |
-| `c8c170f → becbad4` | **RECERTIFICATION REQUIRED** | 3 `production_runtime` (`auth/rbac.py`, `middleware/authorization.py`, `worker/runtime.py`) |
-| `d9a2e01 → becbad4` | **RECERTIFICATION REQUIRED** | 2 `production_runtime` — only the renewal-cadence function behind F-14, and it is why the round below re-runs Linux, K8s, the soak and GA rather than inheriting `d9a2e01`'s green |
+| `v1.0.5 → c52dcb9` | **RECERTIFICATION REQUIRED** | 51 `production_runtime` + 1 `database` + 2 `dependency` + 3 `deployment` (116 files total) |
+| `a5ce0c4` (last audited tree) `→ c52dcb9` | **RECERTIFICATION REQUIRED** | 6 `production_runtime` + 3 `deployment` (65 files: 21 `test_harness`, 10 `version_bump`, 9 `certification_generator`, 7 `docs`, 5 `ci_workflow`, 3 `repo_tooling`, 1 `release_metadata`) |
+| `c8c170f → c52dcb9` | **RECERTIFICATION REQUIRED** | 3 `production_runtime` (`auth/rbac.py`, `middleware/authorization.py`, `worker/runtime.py`) |
+| `d9a2e01 → c52dcb9` | **RECERTIFICATION REQUIRED** | 4 `production_runtime` — `worker/runtime.py` and `acquisition/worker_path.py` twice: the renewal cadence (`3ebca44`) and the single-connection guard (`c52dcb9`, F-18). `d9a2e01` itself was certified green on Linux and K8s, and this is the round that replaces it |
+| `c52dcb9 → b9b7f03` (audit-tool file rows) | **INHERITED** | none: one `repo_tooling`, one `test_harness` |
 
 Two properties of the classifier are worth naming because they shaped this line's cost:
 `.env.example` and any unlisted path fall to `production_runtime` — the fail-closed default,
@@ -66,20 +72,38 @@ Artifacts: `outputs/cert-becbad4/diff-*.json` plus the earlier
 
 ## 3. Local audit, re-executed, machine-readable
 
-Full backend suite at `8a8711f` (same product code as the candidate; the delta since is
-workflows, changelog and appended contract tests):
-**1304 passed, 132 skipped, 1 deselected, 0 failed** in 23m40s, coverage **91.83%** against a
-90% gate (`--cov-fail-under=90`), exit 0.
+Two runs, both at the certified candidate `c52dcb9`, both green, neither a proxy for the other:
 
-Artifacts (all machine-readable): `outputs/cert-8a8711f/backend-junit.xml` (per-test outcomes,
-skip reasons), `outputs/cert-8a8711f/coverage.xml`, `outputs/cert-8a8711f/backend-pytest.log`,
-`outputs/cert-71dad6e/*` for the identical run one commit earlier,
-`outputs/cert-8a8711f/migration-catalogue-junit.xml`, `outputs/cert-1fc1c98/…`.
+| Run | Result | Coverage |
+| --- | --- | --- |
+| CI `backend` job (Linux, the gate that blocks merges): `pytest backend/tests` with the five container-coupled suites ignored and the SQLite 500-run benchmark deselected | **1386 passed, 132 skipped, 1 deselected, 0 failed** in 19m31s | **91.72%**, gate `--cov-fail-under=90` reached |
+| Local superset on the Windows audit host: the same tests *plus* the five ignored suites, which skip without containers | **1389 passed, 147 skipped, 1 deselected, 0 failed** in 25m19s, exit 0 | **91.9%** on 24 361 statements |
 
-Console: `npm run test` 29 passed (4 files), `npm run lint` clean with `--max-warnings=0`,
-`npm run build` = `tsc -p tsconfig.app.json && tsc -p tsconfig.node.json && vite build` clean;
-largest entry chunk 487.11 kB (156.66 kB gzip) under the 550 kB threshold.
-Python lint: `ruff check backend/app backend/tests benchmarks/phase22` clean.
+The 18-test difference is the container-coupled files CI excludes, skipping locally; §22 accounts
+for every skip. The single deselected node in both runs is
+`test_phase_28_2_500_benchmark.py::test_500_runs_durable_no_loss_no_duplicate` — the SQLite 500-run
+durability benchmark, which serialises past 20 minutes on a contended runner (§22 states where it
+does run and what was verified here instead).
+
+Artifacts, all machine-readable and regenerated from the same junit by the committed tool
+`python scripts/quality/audit_junit.py <junit> --coverage <coverage.xml>`:
+
+| File | Content |
+| --- | --- |
+| `outputs/cert-c52dcb9/backend-junit.xml` | every test's outcome and skip reason (local run) |
+| `outputs/cert-c52dcb9/coverage.xml` | line data behind the 91.9% |
+| `outputs/cert-c52dcb9/skip-audit.json` | 147 skips grouped by reason family (§22) |
+| `outputs/cert-c52dcb9/coverage-low-modules.json` | modules and worst files below the threshold (§21) |
+| `outputs/cert-c52dcb9/audit-tables.log` | the generated tables as printed |
+| `outputs/cert-c52dcb9/linux-artifacts/`, `…/k8s-artifacts/` | the certification jobs' own artifacts, downloaded (13–14) |
+| `outputs/cert-becbad4/secret-scan.json`, `diff-*.json` | §20 scan and §2 classifications |
+
+Console: the CI `frontend` job is green at the candidate — `npm run lint -- --max-warnings=0`,
+the 29-test Vitest suite, and `npm run build` (`tsc -p tsconfig.app.json && tsc -p
+tsconfig.node.json && vite build`) with the largest entry chunk under the 550 kB gate.
+Python lint: `ruff check backend/app backend/tests benchmarks/phase22 scripts` clean — `scripts/`
+joined the gate in this pass (§23 F-16), and `test_quality_gate_parity.py` now binds the Makefile
+targets to the CI steps so the two cannot drift again.
 
 Error-log audit of the local run: 0 `ERROR`, 0 `Traceback`, 0 warning lines
 (`filterwarnings = ["error", …]` makes any warning a failure, so this is structural, not lucky).
@@ -262,8 +286,11 @@ defined permission, the `platform.manage` fallback is an explicit reviewed list
 (`POST /heartbeat`), and a negative control proves an unruled route still falls through — so the
 next console endpoint cannot silently inherit the platform again.
 
-**PASS on the candidate**: K8S-GATE 33 is green — run `35429507835` at `c8c170f`, 33/33 gates,
-`outputs/cert-8ffd7bd/k8s-artifacts/`. Reaching that took four dispatches to get here, each
+**PASS on the certified candidate.** K8S-GATE 33 green and 33/33 overall at `c52dcb9` (run
+`35439344924`; artifact `outputs/cert-c52dcb9/k8s-artifacts/cap-28.6-k8s-certification.json`,
+`commit: c52dcb98c270…`, `gate_summary: {total: 33, passed: 33, failed: 0, not_run: 0}`). Earlier
+rounds on the same line: 33/33 at `c8c170f` (run `35429507835`) and again at `d9a2e01` (run
+`35434491797`) after the heartbeat fix. Reaching that took four dispatches in the first leg, each
 fixing the *gate* (assumed container port 8080 where the Service publishes 80; called
 `.strip()` on a `CompletedProcess`), which is worth recording: the routing behaviour itself has
 not been contradicted.
@@ -295,6 +322,23 @@ after that baseline, and each failure was a real finding rather than noise:
 
 The artifact's `worker_control_plane_isolation` field is discussed in §23 (F-1): it was a
 substring grep and is now a structural, per-path fact.
+
+**Green on the certified candidate.** Run `35439343387` at `c52dcb9`, layer `release`:
+`full-certification`, `cap-production-certification` and all three `postgres-version-matrix` legs
+**success**. The downloaded release-layer artifact
+(`outputs/cert-c52dcb9/linux-artifacts/cap-28.5-linux-certification.json`) records:
+
+| Field | Value |
+| --- | --- |
+| gates | 12/12 **PASS** — container_isolation, filesystem, memory, cpu, pids, network_enforcement, ssrf_defense_in_depth, hard_cancellation, reaper, browser, secrets, real_integration |
+| tests | 197 — 193 passed, **0 failed**, 4 skipped |
+| `sandbox_workload_isolation` | **PASS** |
+| `worker_control_plane_isolation` | **PARTIAL**, with `production_chart_worker_mounts_runtime_socket: false` and `compose_worker_mounts_runtime_socket: true` — the per-path report §23 F-15 requires, and the gate derived it from the generator rather than pinning the word |
+| `commit` | `c52dcb98c270…`, compared by the gate against the SHA its own job checked out (§23 F-10) |
+
+Environment captured alongside: `uname.txt`, `os-release.txt`, `docker-version.txt`,
+`docker-info.txt`, `resources.txt`, `cgroup.txt`, `ip-route.txt`, `iptables-save.txt`,
+`nft-ruleset.txt`, `sandbox-images.json`, `network-inspect.json`, `infra.txt`.
 Critical skips: `CAP_CERTIFICATION_STRICT=1` turns an availability skip into a failure in the
 certification-critical set, and the release layer's `GA-GATE 40 evidence: critical skip report`
 step is the machine-readable check that the count is zero.
@@ -311,29 +355,38 @@ data survives restart), HPA/PDB capacity (22), SLI/SLO metrics (23), alerting co
 baseline regression (28), RTO (29), resource limits (30), security baseline (31), overall health
 no-stale (32), plus the long-run lease renewal pre-gate. The candidate adds GATE 33 → **33 gates**;
 `generate_report_28_6.py`'s `ALL_GATES` is the authority and any report saying "1..32" predates it.
-Status: **33/33 PASS twice on this line** — at `c8c170f` (run `35429507835`) and again at `d9a2e01`,
-after the execution-lease heartbeat fix (run `35434491797`, 14m). The final round at the candidate
-`becbad4` is **IN FLIGHT** (run `35436798236`) because the cadence change in `3ebca44` is
-production-runtime code and cannot inherit.
+Status: **33/33 PASS three times on this line** — at `c8c170f` (run `35429507835`), at `d9a2e01`
+after the execution-lease heartbeat fix (run `35434491797`), and at the certified `c52dcb9`
+(run `35439344924`, §14 above).
 
 ## 15. Gates inherited vs gates re-run
 
-**Re-run on the candidate** (because the classifier says runtime-affecting since the last
-certification of each): Linux full+production, K8s 1..33 (**33/33 PASS at `c8c170f`**, inherited to `8ffd7bd` because the delta is
-`test_harness` + `docs` + `certification_generator`, classified INHERITED), the PostgreSQL matrix
-(**15/16/17 green at `c8c170f`**'s predecessor run set), CI's unit/coverage/
-console/packaging/image jobs, the 500-run OCI benchmark, the local suite + migration catalogue +
-secret scan + console flows, and the 2-hour soak.
-Reason: `v1.0.5 → candidate` carries 49 production-runtime files; and `ad91e0e` re-classified as
-runtime-affecting on two config files, which invalidated the runs before it.
+**Re-run and green at the certified `c52dcb9`**
 
-**Inherited, with the classifier as the reason** — `8a8711f → 1fc1c98` and `2b65368 → ad91e0e`'s
-docs/test halves:
-| Evidence | Bound to | Why inheritance is legitimate |
+| Gate | Run | Result |
 | --- | --- | --- |
-| K8s 32 gates + DR + soak-dependent tier2 ops | `154f5b6` | superseded: re-executing at `8a8711f`; the `154f5b6` result is kept as history, not as this candidate's certificate |
-| Linux full/production + PG matrix | `0b4e207` | delta to `1fc1c98` is `.github/workflows`, `CHANGELOG.md`, `docs/*`, one test file → **INHERITED** (`outputs/cert-final/diff-0b4e207-to-final.json`) |
-| soak GA-GATE 24/25/26 | `ad91e0e` | delta to `1fc1c98` is ci_workflow/docs/test → **INHERITED**; the soak is 2h of the same product code, and the alternative is destroying evidence for no information (§23 F-8 explains why a push no longer cancels it) |
+| CI: backend unit+coverage, frontend, migration (PostgreSQL 16), packaging, image-and-security | `35439324779` | all five jobs **success** |
+| Linux `full-certification` + `cap-production-certification` (12 gates each, incl. the 500-run OCI correctness benchmark, the 100-run kill-9 HA gate, the adversarial security suite and the 28.1–28.5 regression) | `35439343387` | **success**, artifacts in §13 |
+| PostgreSQL version matrix 15 / 16 / 17 | same run | **success** ×3 (§6) |
+| K8s certification, GATE 1..33 | `35439344924` | **33/33**, 0 not_run (§14) |
+| Local authoritative suite + migration catalogue + secret scan + skip/coverage audit tables | this host | §3, §5, §20, §21, §22 |
+
+**In flight when this was written:** the 2-hour GA reliability soak (`35439341789`, dispatched at
+`c52dcb9`) and the strict GA certification that consumes its artifact. §25 states what is not yet
+closed because of them.
+
+**Why the earlier green rounds are history, not this candidate's certificate**
+
+| Round | Superseded by | Because |
+| --- | --- | --- |
+| Linux + K8s green at `d9a2e01` (runs `35434486047`, `35434491797`) | `3ebca44` | the renewal-cadence contract fix is `production_runtime` (F-14's third cause) |
+| CI green at `0bc8efa`, K8s green at `c8c170f` | `d9a2e01` | the heartbeat session-isolation and transient-retry fix is `production_runtime` (F-14) |
+| Linux full+production+matrix green at `0b4e207` | the whole chain | `v1.0.5 → c52dcb9` carries 51 production-runtime files, 1 database, 2 dependency, 3 deployment (§2) |
+| K8s 32-gate round at `154f5b6` | GATE 33 added | kept as history: the gate set grew and the console-reads defect (F-13) was found by it |
+| soak at `ad91e0e` | cancelled deliberately | a 2 h soak of a superseded commit produces evidence nobody may cite; the run was cancelled rather than allowed to finish and be reinterpreted (§23 F-8 explains why pushes no longer cancel runs like this) |
+
+`c52dcb9 → b9b7f03` (audit-tool file rows) is the only delta after the certified SHA and it
+classifies **INHERITED** — one `repo_tooling` file, one `test_harness` file, no product code.
 
 ## 16. Migration re-verification for the release-critical path
 
@@ -407,38 +460,68 @@ committed (and §4 makes the test suite immune to it).
 ## 21. Coverage, read honestly
 
 `91.83%` line coverage on **24 306 statements**, CI-gated at 90%
-(`outputs/cert-8a8711f/coverage.xml`). It is the *unit job's* number: no certification workflow
-passes `--cov`, so infra-coupled lines are in no denominator anywhere — the comment in `ci.yml`
-that claimed otherwise is corrected, and `outputs/cert-154f5b6/coverage-low-modules.json` lists
-the 17 modules with ≥30 statements below 80%: `acquisition/reconcile_cli.py` (0%, exercised by
-GA-K8s DR gates 24/25 and the soak, not by any coverage-collecting run), `sandboxed_browser`
-(17%), `worker_main` (21%), `acquisition/gc` (23%), `sandboxed_fetch` (51%), `notification/service`
-(52%), `assessment/service` (53%), `detection/service` (56%), `acquisition/store` (58%),
-`api/routes/acquisition` (60%), `sandbox/oci_shim` (64%), `incident/service` (66%),
-`api/routes/health` (68%), `acquisition/claim_loop` (71%), `runtime/service` (74%),
-`sandbox/oci_reaper` (75%), `telemetry/service` (76%). No test was added to flatter the number;
-this pass added tests that found three real defects (§4, §10, §23) and one whose correct answer was
-to refuse a test (§9).
+## 21. Coverage, read honestly
+
+**91.9%** line coverage on **24 361 statements** in the local run at the candidate
+(`outputs/cert-c52dcb9/coverage.xml`; CI gates the same suite at 90%). It is the *unit job's*
+number: no certification workflow passes `--cov`, so lines that only execute inside a container are
+in no denominator anywhere. `outputs/cert-c52dcb9/coverage-low-modules.json` — generated by
+`scripts/quality/audit_junit.py`, not assembled by hand — reports 3 module directories below 80%
+(`database` 75.9%, `assessment` 76.0%, `incident` 77.4%) and 14 below 90%. The directory numbers
+average away the real gaps, so the file table is the part to read:
+
+| File | Local coverage | Executed by |
+| --- | --- | --- |
+| `acquisition/reconcile_cli.py` | 0% (0/34) | GA reconciliation gates; no unit run touches it |
+| `acquisition/metrics_server.py` | 0% (0/27) | the scrape endpoint the K8s SLI gate (23) queries |
+| `core/protocols.py` | 0% (0/7) | protocol-only declarations |
+| `acquisition/sandboxed_browser.py` | 17% (11/64) | Linux certification browser gate |
+| `acquisition/worker_main.py` | 21% (39/190) | the worker process the Linux/K8s/GA runs start |
+| `acquisition/gc.py` | 23% (23/102) | GA DR + orphan-gc certification gates |
+| `sandbox/oci_shim.py` | 32% (54/168) | the OCI sandbox provider, Linux layer only |
+| `database/session.py` | 50% (7/14) | engine construction paths |
+
+That is the honest shape of the number: the product's unit-tested core is well covered, and what
+sits below the line is almost entirely code that only runs *inside the infrastructure* the
+certification jobs provide — which is why those jobs exist and why §13–§14, not §21, is the
+evidence that they work. No test was added to flatter this figure; the tests added in this pass
+found four real defects (§4, §10, §23 F-14/F-15/F-17) and one whose correct answer was to refuse a
+test (§9).
 
 ## 22. Skipped tests, by category, and where each actually runs
 
-132 skips in the local run (`outputs/cert-8a8711f/skip-audit.json`; 11 distinct reasons, every one
-an availability gate — no skip is a parked failure):
+147 skips in the candidate's local run, grouped by what each skip message *says*
+(`outputs/cert-c52dcb9/skip-audit.json`, produced by `scripts/quality/audit_junit.py`; every family
+is an availability gate, no skip is a parked failure):
 
-| Category | Count | Where it executes for real |
+| Family | Count | Where it executes for real |
 | --- | --- | --- |
-| kind cluster unavailable | 55 | K8s certification + GA certification (Linux runners) |
-| real PostgreSQL required | 29 | CI `migration` job, Linux certification, PG matrix; plus the 6 catalogue tests run locally (pgserver 16.2) |
-| real S3 object store required | 12 | Linux certification (Quay-pinned MinIO), GA certification DR |
-| browser (Playwright/Chromium) | 10 | Linux certification sandbox-image layer |
-| OCI container runtime | 6 | Linux certification |
-| gate24 soak not run in this session | 4 | GA Reliability soak workflow |
-| supply-chain toolchain (syft/trivy) | 4 | GA certification supply-chain job |
-| certification DR evidence | 2 | produced by the K8s certification run |
-| promtool not installed | 1 | Linux/GA certification install it |
+| kubernetes (no kind cluster) | 56 | K8s certification (33/33, §14) and GA certification |
+| postgres (needs a real server) | 35 | CI `migration` job on PostgreSQL 16, the PG matrix on 15/16/17 (§6), the GA job with `CAP_PG_TEST_DSN` (§23 F-17) — plus the catalogue and this pass's round-trip checks run locally against pgserver 16.2 (§5) |
+| OCI / container runtime | 21 | Linux certification (§13) |
+| object store (S3/MinIO) | 12 | Linux and GA certification against the digest-pinned Quay MinIO (§10) |
+| browser / Playwright | 10 | Linux certification's browser gate (§13) |
+| other | 13 | individually listed with reasons in the JSON |
 
-Under `CAP_CERTIFICATION_STRICT=1` the certification-critical ones become **failures** rather than
-skips, which is the point of that switch.
+The same file names the **security-relevant tests that did not run locally** (process isolation,
+browser isolation, fault injection, `test_phase_28_5_linux_secrets`) — decided by the test's own
+module name, not by the infrastructure excuse in its skip message, because a security test that
+skipped for want of a container is still a security test that did not run. All of them execute in
+the Linux certification layer, which is green at the candidate under
+`CAP_CERTIFICATION_STRICT=1`, where an availability skip in the critical set is a **failure**
+rather than a skip — the release layer's `GA-GATE 40 evidence: critical skip report` step is the
+machine-readable check that the count is zero (§13).
+
+**The one deselected node** (release-audit §12 asks where a deselected test runs):
+`test_phase_28_2_500_benchmark.py::test_500_runs_durable_no_loss_no_duplicate` — 500 durable
+acquisitions against SQLite. It is deselected in CI's unit job and in both Linux certification layers
+because SQLite's single writer serialises it past 20 minutes there. Its homes are `make test` and the
+per-release local audit; on this box it exceeded the file's own 1200 s marker under no concurrent
+load, so this pass reports it as **not executed** rather than passing it off as covered, and relies
+on the durability evidence that *is* release-blocking and *did* run on the candidate: the 500-run
+**OCI/PostgreSQL** correctness benchmark in the Linux release layer (§13), plus the 100-run kill-9 HA
+gate. `test_quality_gate_parity.py` now fails CI if an ignored suite or a deselected node loses both
+its documentation and a home that collects it.
 
 ## 23. Findings, by severity
 
@@ -517,6 +600,26 @@ skips, which is the point of that switch.
   server read pattern across `tests/` with a positive control. Verified both ways against a real
   PostgreSQL 16.2 on this machine: the variant passes, and removing the DSN produces the
   actionable failure instead of a wrong-backend mystery.
+
+- F-18 **The F-14 fix introduced a regression, and CI caught it.** Deriving a renewal-only
+  session factory from the runtime's bind (acb170d) is correct wherever the bind can hand out a
+  second connection, and wrong where it cannot: conftest's in-memory engine uses `StaticPool`
+  precisely so one connection survives checkouts, so the "dedicated" session was the *same*
+  connection the crawl was writing on, and its `COMMIT` landed mid-transaction. CI run
+  `35436793797` failed
+  `test_phase_28_2_legacy_architecture.py::test_worker_path_executes_claimed_run` with
+  `WorkerExecutionError: (sqlite3.OperationalError) cannot commit transaction - SQL statements in
+  progress`. Fixed at `c52dcb9` by asking one question in one helper
+  (`bind_serves_one_connection`) used by both places that used to fork a second session — the
+  runtime's heartbeat and the acquisition poll/renewal — and on a one-connection bind renewing
+  through the operation's own session / reading through it instead, because there is no second
+  connection to hold a durable renewal on. The same commit anchored the acquisition heartbeat's
+  first renewal on the loop clock: `last_renew` started at `0.0` while `loop.time()` is a monotonic
+  system clock, so the very first poll iteration always renewed, which is what opened the window.
+  Multi-connection behaviour — every deployment, plus the certification harnesses that build
+  NullPool file engines — is untouched. This one did not reproduce on the audit host in five
+  attempts (it needs the exact microsecond where the crawl holds a statement open), so the fix is
+  verified by the green CI unit job at `c52dcb9`, not by a local pass.
 
 **MEDIUM — open, recorded, not papered over**
 - F-4 Migration/schema naming drift: constraints and indexes renamed relative to what the revisions
