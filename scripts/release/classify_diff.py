@@ -46,10 +46,26 @@ from dataclasses import dataclass, field
 # ---------------------------------------------------------------------------
 
 RULES: list[tuple[str, tuple[str, ...]]] = [
+    # A needle beginning with "=" must match from the START of the (normalised)
+    # path. Substring-only matching would let `backend/scripts/quality/x.py` --
+    # which lives inside the backend image's build context -- borrow the root
+    # tooling categories, so anything naming a repository-root directory is
+    # anchored.
     # -- docs / reports -----------------------------------------------------
     ("docs", ("docs/", "README", "CHANGELOG", "LICENSE", ".md")),
     # -- certification report generator + release scripts -------------------
-    ("certification_generator", ("scripts/certification/", "scripts/release/")),
+    ("certification_generator", ("=scripts/certification/", "=scripts/release/")),
+    # -- repository-side quality tooling ------------------------------------
+    # scripts/quality/* runs in CI and on a developer machine; it is never part
+    # of what a deployment executes. The criterion is NOT asserted here -- it is
+    # checked continuously by
+    # backend/tests/test_release_diff_classifier.py::test_repo_tooling_reaches_no
+    # _shipped_artifact, which fails if a Dockerfile COPY, a compose mount or a
+    # chart manifest ever starts carrying scripts/ into a running container.
+    # Until then, classifying these paths as runtime-affecting would demand a
+    # 2-hour re-soak to change a lint finding, and a rule that is periodically
+    # ignored is a rule nobody trusts.
+    ("repo_tooling", ("=scripts/quality/",)),
     # -- CI workflows -------------------------------------------------------
     ("ci_workflow", (".github/workflows/", ".github/")),
     # -- test harness -------------------------------------------------------
@@ -74,7 +90,7 @@ RUNTIME_CATEGORIES = {"production_runtime", "database", "deployment", "dependenc
 
 # Categories that are always safe for inheritance (never runtime-affecting).
 INHERITABLE_CATEGORIES = {
-    "docs", "certification_generator", "ci_workflow", "test_harness",
+    "docs", "certification_generator", "repo_tooling", "ci_workflow", "test_harness",
     "release_metadata", "version_bump",
 }
 
@@ -260,7 +276,11 @@ def classify_path(path: str) -> str:
     lowered = path.lower()
     for category, needles in RULES:
         for needle in needles:
-            if needle.lower() in lowered:
+            needle = needle.lower()
+            if needle.startswith("="):
+                if lowered.startswith(needle[1:]):
+                    return category
+            elif needle in lowered:
                 return category
     # Default: unknown files are treated as runtime-affecting (fail-closed).
     return "production_runtime"

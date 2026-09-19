@@ -74,6 +74,7 @@ def test_db_deployment_dependency_are_runtime_affecting(path: str) -> None:
         ("backend/tests/test_phase_28_7_ga_certification.py", "test_harness"),
         (".github/workflows/cap-ga-certification.yml", "ci_workflow"),
         ("scripts/certification/generate_report_28_7.py", "certification_generator"),
+        ("scripts/quality/scan_secrets.py", "repo_tooling"),
         ("VERSION", "release_metadata"),
     ],
 )
@@ -84,6 +85,138 @@ def test_non_runtime_categories(path: str, expected: str) -> None:
 def test_unknown_file_fails_closed() -> None:
     # an unrecognized path must NOT be silently treated as docs
     assert classify_path("mystery/blob.bin") in RUNTIME_CATEGORIES
+
+
+# -- the criterion behind `repo_tooling` --------------------------------------
+
+REPO_ROOT = _HERE
+WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
+
+
+def _scripts_reaches_a_container(
+    root: Path,
+    builds: list[str],
+    contexts: dict[str, list[str]],
+    dockerfiles: dict[str, str],
+    compose: str,
+    manifests: dict[str, str],
+) -> list[str]:
+    """Every way ``scripts/`` could end up inside a running container.
+
+    ``builds`` are the docker build command lines CI actually runs, ``contexts``
+    maps each build context to its top-level entries, ``dockerfiles``/``compose``
+    /``manifests`` are file contents keyed for reporting.
+    """
+    problems: list[str] = []
+    root_scripts = (root / "scripts").resolve()
+    for command in builds:
+        context = command.split()[-1].rstrip("\\").rstrip("/") or "."
+        for entry in contexts.get(context, ()):
+            # identity, not name: backend/scripts is its own tree and belongs
+            # inside that image context
+            if (root / context / entry).resolve() == root_scripts:
+                problems.append(f"build context {context!r} contains the root scripts/")
+    for name, text in dockerfiles.items():
+        for line in text.splitlines():
+            parts = line.split()
+            if parts and parts[0] in ("COPY", "ADD") and any(
+                token.removeprefix("./").startswith("scripts") for token in parts[1:]
+            ):
+                problems.append(f"{name}: {line.strip()}")
+    for line in compose.splitlines():
+        if "scripts" in line and not line.lstrip().startswith("#"):
+            problems.append(f"docker-compose: {line.strip()}")
+    for name, text in manifests.items():
+        for line in text.splitlines():
+            if "scripts" in line and not line.lstrip().startswith("#"):
+                problems.append(f"{name}: {line.strip()}")
+    return problems
+
+
+def test_repo_tooling_reaches_no_shipped_artifact() -> None:
+    """Why a scripts/quality change may inherit certification.
+
+    ``scripts/quality/*`` is repository-side tooling: the secret scanner and the
+    coverage-matrix asserter run in CI and on a developer machine, and no
+    deployment ever executes them. That is the whole justification for the
+    ``repo_tooling`` category -- and a category justified by a comment is a
+    category that goes stale, so the claim is checked here against the files that
+    would actually carry it into a container. The moment this reports anything,
+    ``scripts/quality/`` must go back to the classifier's fail-closed default:
+    a tooling change that runs inside the product is a product change.
+    """
+    builds = [
+        line.strip()
+        for path in sorted(WORKFLOW_DIR.glob("*.yml"))
+        for line in path.read_text("utf-8").splitlines()
+        if line.strip().startswith("docker build")
+    ]
+    assert builds, "no docker build commands found -- scanner is reading nothing"
+    contexts: dict[str, list[str]] = {}
+    for command in builds:
+        context = command.split()[-1].rstrip("/")
+        directory = REPO_ROOT / context
+        assert directory.is_dir(), f"build context {context} does not exist"
+        contexts[context] = [entry.name for entry in directory.iterdir()]
+    dockerfiles = {
+        "backend/Dockerfile": (REPO_ROOT / "backend" / "Dockerfile").read_text("utf-8"),
+        "backend/docker/egress-proxy/Dockerfile": (
+            REPO_ROOT / "backend" / "docker" / "egress-proxy" / "Dockerfile"
+        ).read_text("utf-8"),
+    }
+    compose = (REPO_ROOT / "docker-compose.yml").read_text("utf-8")
+    manifests = {
+        str(path.relative_to(REPO_ROOT)): path.read_text("utf-8")
+        for path in (REPO_ROOT / "deployment" / "helm" / "cap").rglob("*.yaml")
+    }
+    assert manifests, "no chart manifests found -- scanner is reading nothing"
+
+    problems = _scripts_reaches_a_container(
+        REPO_ROOT, builds, contexts, dockerfiles, compose, manifests
+    )
+    assert not problems, f"scripts/ reaches a container, repo_tooling must fail closed: {problems}"
+
+
+def test_the_container_reach_scan_is_not_vacuous() -> None:
+    """Planted evidence: each route into a container must be reported."""
+    builds = ["docker build -t x -f backend/Dockerfile backend/"]
+    base_kwargs = {
+        "root": REPO_ROOT,
+        "builds": builds,
+        "contexts": {"backend": ["app", "Dockerfile"]},
+        "dockerfiles": {"backend/Dockerfile": "COPY app ./app\n"},
+        "compose": "  volumes:\n    - ./data:/data\n",
+        "manifests": {"worker.yaml": "  - name: data\n"},
+    }
+    assert not _scripts_reaches_a_container(**base_kwargs), "clean repo must report nothing"
+
+    by_context = _scripts_reaches_a_container(
+        **{
+            **base_kwargs,
+            "builds": ["docker build -t x -f Dockerfile ."],
+            "contexts": {".": ["app", "scripts"]},
+        }
+    )
+    assert by_context and "build context" in by_context[0]
+    # a context's OWN scripts tree is a different directory and stays clean
+    assert not _scripts_reaches_a_container(
+        **{**base_kwargs, "contexts": {"backend": ["app", "scripts"]}}
+    )
+
+    by_copy = _scripts_reaches_a_container(
+        **{**base_kwargs, "dockerfiles": {"backend/Dockerfile": "COPY scripts /s\n"}}
+    )
+    assert by_copy and "backend/Dockerfile" in by_copy[0]
+
+    by_compose = _scripts_reaches_a_container(
+        **{**base_kwargs, "compose": "    - ./scripts:/opt/scripts\n"}
+    )
+    assert by_compose and "docker-compose" in by_compose[0]
+
+    by_manifest = _scripts_reaches_a_container(
+        **{**base_kwargs, "manifests": {"worker.yaml": "    path: /repo/scripts\n"}}
+    )
+    assert by_manifest and "worker.yaml" in by_manifest[0]
 
 
 # -- report aggregation ------------------------------------------------------
