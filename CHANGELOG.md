@@ -68,6 +68,34 @@ published release contents are immutable.
   the API, the chart mounts it through the `cap-runtime` Secret, and a placeholder
   value is rejected in production.
 
+- `scripts/quality/scan_secrets.py` is an executed credential gate, not a promise:
+  stdlib-only (so it cannot be broken by a retired vendor download, which is how
+  this line's tooling has failed before), scanning every git-tracked file for
+  provider-shaped tokens, PEM material with a body, JWTs, credentials embedded in
+  URLs, high-entropy values assigned to secret-shaped names, and a tracked `.env`.
+  It reports **1029 files scanned, 0 findings**. `test_secret_scan.py` drives it in
+  both directions -- five planted credentials must be found, eleven
+  reference-shaped values must not be, and a provider token must still be a finding
+  inside `tests/`, `docs/` and `scripts/`, because the exceptions are scoped to the
+  weak rules and each states its reason.
+- `backend/tests/test_migration_catalogue.py`, run by two new CI jobs: `migration`
+  in `ci.yml` (fresh install, catalogue, downgrade-to-base rebuild against a real
+  PostgreSQL 16 service, every push) and `postgres-version-matrix` in the Linux
+  certification workflow (the same chain on 15/16/17, `fail-fast: false` so one
+  broken version does not hide the state of the others). Until now the only Alembic
+  step in CI was `alembic heads`, which never opens a connection.
+- `backend/tests/test_certification_workflow_contract.py` asserts the invariants
+  that only surfaced as red jobs: no identifier handed to Docker may embed a git
+  ref, every dispatchable workflow must have a job that can actually run and every
+  declared input must be read somewhere, and no download that becomes an executable
+  may use `curl` without `-f`.
+- K8S-GATE 33 certifies the console's routing through the shipped nginx image: the
+  built bundle is served, a deep link rewrites to `index.html`, `/api/` proxies to
+  the application with no identity headers from the client (which is what proves
+  `envsubst` filled `X-CAP-User` and `X-CAP-Proxy-Secret`), and an unknown `/api/`
+  path returns the application's 404 rather than the SPA fallback. Previously the
+  console's nginx config was certified only by "the pod became ready".
+
 ### Fixed
 
 - `npm run build` was broken by this audit's own new fixture. The build
@@ -190,6 +218,15 @@ published release contents are immutable.
   `packaging` job supplied the other eight required variables but not that one, so
   `docker compose config --quiet` failed on the candidate. It now resolves the value
   from the canonical `VERSION` file instead of hardcoding one.
+
+- The release layer of the Linux certification could not start its infrastructure
+  on a candidate branch: `CAP_CERT_PREFIX` was derived from `github.ref_name`, and a
+  branch named `release/1.0.6-rc1` puts a slash into every container and network
+  alias built from it, so `setup.sh` failed with `Invalid container name
+  (capcert-rel-release/1.0.6-rc1-egress)` four minutes into the job -- after the
+  images had built. The prefix now comes from `github.run_id`, and `setup.sh`
+  sanitises whatever it is handed, so a manual run that exports a branch name is
+  covered by the same rule.
 
 ## [1.0.5] - 2026-09-07
 

@@ -69,6 +69,27 @@ The readiness verdict and the exact candidate SHA are recorded in
   that remains, and the upgrade procedure are in
   `deployment/third-party-images.json`.
 
+- **The ORM models and the migrated schema disagree in naming, and have since
+  1.0.x.** Enforcement is intact -- `backend/tests/test_migration_catalogue.py`
+  proves every model-declared index and constraint is actually backed by something
+  in the database -- but the *names* diverge in three documented ways: revision
+  `20260729_0003` creates `ck_agents_status` / `ck_tasks_status` /
+  `ck_task_executions_status` and the head schema carries `ck_agents_ck_agents_status`
+  and friends (the metadata `NAMING_CONVENTION` doubled them when a later revision
+  rebuilt the constraint); `agents.runtime_image` is a nullable column only the
+  schema has; and `ix_playbook_executions_idempotency_key` / `ix_tools_tool_type`
+  exist as a unique constraint and as `ix_tools_type`. Consequence: `alembic
+  check`/autogenerate reports ~60 operations on every run and is therefore **not**
+  a CI gate here -- a gate that is red from the day it is added gets deleted, so the
+  divergence is pinned in that test's `SCHEMA_ONLY_COLUMNS`, `SCHEMA_ONLY_INDEXES`
+  and `MODEL_INDEXES_UNDER_OTHER_NAMES` lists, which fail if the drift grows and
+  fail if an entry disappears without being deleted. Fixing it for real needs a
+  revision that renames constraints to the conventional names, which is
+  runtime-affecting and cannot land in a release candidate.
+- **Kubernetes certification is 33 gates, not 32.** Reports and runbooks that say
+  `K8S-GATE 1..32` predate the console-routing gate; `generate_report_28_6.py`'s
+  `ALL_GATES` is the authority.
+
 ## Response Plane — production provider status
 
 **The Response Plane ships with simulation/test providers only. It is not
