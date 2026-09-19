@@ -363,17 +363,38 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --project backend --frozen --extra dev
       - name: Record the server under test
+        # The identity of the server this matrix cell certified is part of the
+        # evidence: "the migration chain works on PostgreSQL" has to say on which.
         run: |
           set -euo pipefail
           mkdir -p outputs/cap-cert
-          uv run --project backend python - <<'PY' > outputs/cap-cert/pg-matrix-server.txt
+          {
+            echo "matrix_image=postgres:${MATRIX_POSTGRES}"
+            uv run --project backend python - <<'PY'
+          import asyncio
           import os
-          from sqlalchemy import create_engine, text
-          with create_engine(os.environ["DATABASE_URL"]).connect() as conn:
-              print(os.environ.get("MATRIX_POSTGRES", ""))
-              print(conn.execute(text("SELECT version()")).scalar())
-              print("server_version_num", conn.execute(text("SHOW server_version_num")).scalar())
+
+          from sqlalchemy import text
+          from sqlalchemy.ext.asyncio import create_async_engine
+
+
+          async def main() -> None:
+              engine = create_async_engine(os.environ["DATABASE_URL"])
+              async with engine.connect() as conn:
+                  version = await conn.run_sync(
+                      lambda sync: sync.execute(text("SELECT version()")).scalar()
+                  )
+                  number = await conn.run_sync(
+                      lambda sync: sync.execute(text("SHOW server_version_num")).scalar()
+                  )
+              await engine.dispose()
+              print(f"version={version}")
+              print(f"server_version_num={number}")
+
+
+          asyncio.run(main())
           PY
+          } > outputs/cap-cert/pg-matrix-server.txt
           cat outputs/cap-cert/pg-matrix-server.txt
         env:
           MATRIX_POSTGRES: ${{ matrix.postgres }}
