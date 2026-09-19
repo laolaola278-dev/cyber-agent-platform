@@ -31,6 +31,15 @@ The readiness verdict and the exact candidate SHA are recorded in
 
 ## Operational limitations
 
+- **The compose worker holds the container-runtime control socket.**
+  `docker-compose.yml` mounts `/var/run/docker.sock` into `acquisition-worker`
+  because `SANDBOX_PROVIDER=oci-sandbox` starts sandbox containers through the
+  docker CLI. Consequence, stated plainly: on a compose deployment the worker is
+  host-root-equivalent, so a compromise of the process that fetches untrusted
+  content is a compromise of the host. Sandbox containers themselves never see the
+  socket, and the chart path has no such mount. This is why Compose is the
+  evaluation/single-node path; a production install that needs container
+  sandboxes must use `SANDBOX_PROVIDER=kubernetes-sandbox` on Kubernetes.
 - **Redis is configured but unused.** `settings.redis_url` has a default, `docker-compose.yml`
   runs a `redis` service, and `GET /readiness` reports `redis_configured` -- which is
   `bool(settings.redis_url)`, i.e. proof that a string exists, not that anything connects.
@@ -284,9 +293,12 @@ that invariant.
 
 ## Closed items (do NOT re-list)
 
-- **docker.sock mounted in worker** — CLOSED in Phase 28.6. The worker never
-  mounts a container-runtime socket; sandbox execution uses the Kubernetes API
-  with namespaced RBAC to short-lived Pods in `cap-sandbox`.
+- **docker.sock mounted in the production (Kubernetes) worker** — CLOSED in Phase
+  28.6 and re-verified per release: `deployment/helm/cap/templates/worker.yaml`
+  mounts no container-runtime socket, sandbox Pods are created through the
+  Kubernetes API with namespaced RBAC into `cap-sandbox`, and K8S-GATE 3 asserts
+  the absence on a live cluster. The compose path is the other story and is
+  listed above as a standing limitation, not closed.
 - **D1 "per-run lease lacks renewal"** — RESOLVED FALSE by the Phase 28.7
   fact-check. The production K8s path renews the acquisition run-claim lease
   every `lease_ttl/3` on a dedicated session with fencing. See

@@ -177,8 +177,13 @@ services:
       SANDBOX_PIDS_LIMIT: ${SANDBOX_PIDS_LIMIT:-256}
       EGRESS_PROXY_URL: ${EGRESS_PROXY_URL:-http://egress-proxy:8080}
       SANDBOX_REAPER_INTERVAL_SECONDS: ${SANDBOX_REAPER_INTERVAL_SECONDS:-60}
-    # The worker manages sandbox containers through the docker CLI (the
-    # SANDBOX containers never mount the socket -- only the worker does).
+    # SECURITY: this is the oci-sandbox provider's control channel. The worker
+    # starts sandbox containers through the docker CLI, so it holds the runtime
+    # socket and is host-root-equivalent -- anything that can make the worker run
+    # a container owns the host. Sandbox containers themselves never see the
+    # socket. This is why compose is the evaluation/single-node path: production
+    # uses the chart with SANDBOX_PROVIDER=kubernetes-sandbox, where the worker
+    # mounts no runtime socket at all (K8S-GATE 3 proves it on a real cluster).
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: ["python", "-m", "app.acquisition.worker_main"]

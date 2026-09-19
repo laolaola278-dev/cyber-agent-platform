@@ -120,33 +120,80 @@ def secret_canary_scan() -> list[str]:
     return leaks
 
 
-def _worker_mounts_control_socket() -> bool:
-    """Truthfully detect whether the production worker mounts a container
-    runtime control socket, by inspecting the real deployment config (NOT an
-    optional env var). A docker/podman/containerd control socket gives the
-    worker host-level container management -- worker-to-host control-plane
-    access, which is a documented limitation, not a blanket "isolated".
-    """
-    patterns = ("docker.sock", "podman.sock", "containerd.sock")
-    for candidate in (ROOT / "docker-compose.yml", ROOT / ".env.example"):
-        if not candidate.exists():
-            continue
-        try:
-            text = candidate.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for pattern in patterns:
-            if pattern in text:
-                return True
+#: A container-runtime control socket in a worker's mounts means the worker can
+#: create, inspect and delete containers on the host -- host root, in practice.
+RUNTIME_SOCKETS = ("docker.sock", "podman.sock", "containerd.sock", "crio.sock")
+
+#: The worker service name in docker-compose.yml and the chart template that must
+#: not mount one.
+COMPOSE_WORKER_SERVICE = "acquisition-worker"
+CHART_WORKER_TEMPLATE = Path("deployment/helm/cap/templates/worker.yaml")
+
+
+def _mounts_socket(mounts: object) -> bool:
+    """True if any entry in a volume/volumeMount list names a runtime socket."""
+    if not mounts:
+        return False
+    for entry in mounts if isinstance(mounts, list) else [mounts]:
+        rendered = entry if isinstance(entry, str) else repr(entry)
+        if any(socket in rendered for socket in RUNTIME_SOCKETS):
+            return True
     return False
 
 
+def compose_worker_mounts_control_socket() -> bool:
+    """Read the compose definition structurally; a comment is not a mount.
+
+    The oci-sandbox provider starts sandbox containers through the docker CLI, so
+    the compose worker legitimately holds ``/var/run/docker.sock``. That is a
+    property of the evaluation path, not something to hide in a report: it makes
+    that worker host-root-equivalent.
+    """
+    import yaml
+
+    path = ROOT / "docker-compose.yml"
+    if not path.exists():
+        return False
+    document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    service = (document.get("services") or {}).get(COMPOSE_WORKER_SERVICE) or {}
+    return _mounts_socket(service.get("volumes"))
+
+
+def chart_worker_mounts_control_socket() -> bool:
+    """The production chart's worker template must mount no runtime socket."""
+    path = ROOT / CHART_WORKER_TEMPLATE
+    if not path.exists():
+        # Absent template: say so rather than claim isolation.
+        return True
+    # Comment lines are prose about the mount, not mounts -- the previous detector
+    # matched them, which is how a docstring could change a security verdict.
+    mount_lines = [
+        line for line in path.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("#")
+        and any(token in line for token in ("mountPath", "hostPath", "persistentVolumeClaim", "volumeMounts"))
+    ]
+    return _mounts_socket(mount_lines)
+
+
 def docker_socket_control_plane() -> dict[str, object]:
-    """Report the worker control-plane isolation fact (multi-state, not bool)."""
-    mounted = _worker_mounts_control_socket()
+    """Per-path control-socket facts, so the artifact cannot be read as a blanket claim."""
+    compose = compose_worker_mounts_control_socket()
+    chart = chart_worker_mounts_control_socket()
     return {
-        "worker_control_plane_isolation": "NOT_CERTIFIED" if mounted else "PASS",
-        "unrestricted_docker_socket_mounted": mounted,
+        # The production deployment path decides the headline.
+        "worker_control_plane_isolation": "NOT_CERTIFIED" if chart else "PASS",
+        "unrestricted_docker_socket_mounted": chart,
+        "production_chart_worker_mounts_runtime_socket": chart,
+        "compose_worker_mounts_runtime_socket": compose,
+        "compose_control_socket_scope": (
+            "docker-compose runs SANDBOX_PROVIDER=oci-sandbox, which drives the docker CLI, so "
+            "the worker mounts /var/run/docker.sock and is host-root-equivalent; sandbox "
+            "containers themselves do not see it. Compose is the evaluation/single-node path -- "
+            "documented in docs/known-issues.md and in docker-compose.yml at the mount."
+            if compose
+            else "the compose worker no longer mounts a runtime socket; update the docs and this "
+                 "message, because they currently state that it does"
+        ),
     }
 
 
@@ -235,7 +282,10 @@ def main() -> int:
         "",
         "## Control plane",
         f"- sandbox_workload_isolation: {payload['sandbox_workload_isolation']}",
-        f"- worker_control_plane_isolation: {payload['worker_control_plane_isolation']}",
+        f"- worker_control_plane_isolation (production chart): "
+        f"{payload['worker_control_plane_isolation']}",
+        f"- compose worker mounts a runtime control socket (evaluation path): "
+        f"{payload['compose_worker_mounts_runtime_socket']}",
         f"- unrestricted_docker_socket_mounted: {payload['unrestricted_docker_socket_mounted']}",
         "",
     ]

@@ -96,6 +96,12 @@ published release contents are immutable.
   path returns the application's 404 rather than the SPA fallback. Previously the
   console's nginx config was certified only by "the pod became ready".
 
+- `backend/tests/test_sandbox_socket_boundary.py` binds the socket boundary to its
+  documentation in both directions: no chart template may mount a runtime control
+  socket, and while compose does mount one, the warning has to exist in the compose
+  file, in `.env.example` and in known-issues -- and if the mount is ever removed,
+  the sentences that promise it fail the test, so prose cannot outlive the code.
+
 ### Fixed
 
 - `npm run build` was broken by this audit's own new fixture. The build
@@ -227,6 +233,29 @@ published release contents are immutable.
   images had built. The prefix now comes from `github.run_id`, and `setup.sh`
   sanitises whatever it is handed, so a manual run that exports a branch name is
   covered by the same rule.
+
+- The documentation, `.env.example` and the compose file disagreed about a security
+  boundary. `docs/known-issues.md` listed "docker.sock mounted in worker" as CLOSED
+  in Phase 28.6 and said the worker never mounts a container-runtime socket;
+  `.env.example` repeated that directly above `SANDBOX_PROVIDER=oci-sandbox`; and
+  `docker-compose.yml` mounts `/var/run/docker.sock` into `acquisition-worker`,
+  because that provider starts sandbox containers through the docker CLI. Both halves
+  are now stated where each applies: the production chart worker mounts no control
+  socket (asserted against every chart template, and on a live cluster by K8S-GATE 3),
+  while the compose worker is host-root-equivalent by construction and compose is
+  therefore the evaluation/single-node path -- said in the compose file at the mount,
+  in `.env.example`, and in known-issues as a standing limitation.
+- The Linux certification artifact derived `worker_control_plane_isolation` by
+  substring-grepping compose and `.env.example`, so a comment about the socket could
+  set a security verdict -- and it did. It now reads the compose service's volumes and
+  the chart's mount lines, and reports the production and compose paths as separate
+  facts instead of one PASS/NOT_CERTIFIED word.
+- `.env.example` and the production checklist no longer describe Redis as a dependency
+  of the request path. Nothing in `backend/app` imports a Redis client;
+  `redis_configured` is `bool(settings.redis_url)`, and the telemetry coordinator
+  documents that it has no broker dependency -- yet the checklist asked operators to
+  support, secure, monitor and capacity-test Redis 7. The documents state what is true
+  rather than the certification inventing a test for behaviour that does not exist.
 
 ## [1.0.5] - 2026-09-07
 
