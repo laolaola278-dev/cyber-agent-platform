@@ -457,7 +457,7 @@ wheels = [
 
 [[package]]
 name = "cyber-agent-platform-backend"
-version = "1.0.5"
+version = "1.0.6rc1"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
