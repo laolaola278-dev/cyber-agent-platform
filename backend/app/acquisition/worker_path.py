@@ -80,11 +80,13 @@ class AcquisitionWorkerPath:
         self._coordinator = coordinator
         self._lease_ttl_seconds = lease_ttl_seconds
         self._metrics = metrics
-        # Execution-time lease heartbeat: renew every lease_ttl / 3 seconds
-        # (bounded well below the expiry margin, per Phase 28.3). An explicit
-        # value overrides; 0 disables renewal entirely.
+        # Execution-time lease heartbeat: the production default honours the
+        # shared Phase 28.3 cadence contract (see renewal_interval_seconds). An
+        # explicit value overrides; 0 disables renewal entirely.
+        from app.worker.runtime import renewal_interval_seconds
+
         if lease_renew_interval is None:
-            lease_renew_interval = max(1.0, lease_ttl_seconds / 3.0)
+            lease_renew_interval = renewal_interval_seconds(lease_ttl_seconds)
         self._lease_renew_interval = float(lease_renew_interval)
         # Test-only deterministic fault-injection barriers (asyncio.Event).
         # None in production. Tests set these to pause the runner at a precise

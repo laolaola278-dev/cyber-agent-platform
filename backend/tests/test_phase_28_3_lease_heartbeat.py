@@ -153,14 +153,24 @@ async def _noop_runner(executed: list[UUID]):
 
 
 async def test_long_operation_survives_lease_ttl(session, tmp_path) -> None:
+    """The property: an operation that OUTLIVES its lease TTL still completes.
+
+    The numbers are chosen for margin, not for speed. Renewal runs at ttl/3, so
+    a stall of up to ttl - ttl/3 between two renewals is survivable; with the
+    previous 2s TTL / 3.5s operation that budget was 1.33s, and one loaded
+    runner (the production certification layer runs a 500-execution benchmark
+    immediately before this suite) spent it and cancelled a healthy acquisition
+    -- run 35430453285. 6s TTL and a 9s operation keep the same relation
+    (operation > lease TTL) with a 4s stall budget.
+    """
     service = await _make_service(session, tmp_path)
     run, _ = await service.create(goal="g", url="http://example.com/static")
     await session.commit()
     worker_id = uuid4()
     await _register_worker(session, worker_id)
 
-    service.run_agent_operation = _sleep_payload(3.5)  # type: ignore[method-assign]
-    wp = await _make_worker_path(session, service, lease_ttl=2, renew_interval=0.3)
+    service.run_agent_operation = _sleep_payload(9.0)  # type: ignore[method-assign]
+    wp = await _make_worker_path(session, service, lease_ttl=6, renew_interval=2.0)
 
     token = uuid4()
     coordinator = wp._ensure_coordinator()

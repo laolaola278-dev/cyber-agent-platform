@@ -34,6 +34,26 @@ PluginOperation = Callable[[], Awaitable[dict[str, Any]]]
 
 logger = logging.getLogger("cap.worker.runtime")
 
+#: Absolute floor for the renewal cadence, in seconds. Below this the loop would
+#: spend more time writing renewals than the lease spends alive.
+_MIN_RENEWAL_INTERVAL = 0.05
+
+
+def renewal_interval_seconds(lease_ttl_seconds: float) -> float:
+    """The lease-renewal cadence that honours the Phase 28.3 contract.
+
+    CONTRACT: a live lease is renewed at least three times before it expires, so
+    the interval is ``ttl / 3`` and NEVER LONGER. The two call sites used to
+    write ``max(1.0, ttl / 3)``, whose 1s floor silently outran the contract for
+    any TTL under ~3s: the gap between renewals became most of the expiry margin,
+    and one multi-second runner stall cost a healthy acquisition its lease and
+    then its fenced commit (run 35430453285, ``assert 'CANCELLED' ==
+    'COMPLETE'``). At the production TTL of 120s both formulas give the same 40s,
+    so no deployed behaviour changes; short leases simply stop being
+    under-renewed.
+    """
+    return max(_MIN_RENEWAL_INTERVAL, lease_ttl_seconds / 3.0)
+
 # Phase 28.6 (GATE 14 fix): concurrent worker Pods share ONE registry row
 # (same name -> same row -> same state_version). Every registry heartbeat in
 # the execution path is therefore an optimistic-concurrency CAS that can lose
@@ -381,7 +401,7 @@ class WorkerRuntime:
         defect behind run 35430453285, where a healthy 3.5s acquisition outlived
         its 2s lease, lost the fenced commit, and the run landed CANCELLED.
         """
-        interval = max(1.0, self._lease_ttl_seconds / 3.0)
+        interval = renewal_interval_seconds(self._lease_ttl_seconds)
         transient_failures = 0
         try:
             while True:
