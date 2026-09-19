@@ -1834,3 +1834,97 @@ def test_ga_pregate_e_k8s_long_run_lease_renewal(api_port: int) -> None:
             check=False,
             timeout=300,
         )
+
+
+# ---------------------------------------------------------------------------
+# K8S-GATE 33 -- the console's own routing, through the shipped nginx image
+# ---------------------------------------------------------------------------
+
+_CONSOLE_PF: subprocess.Popen | None = None
+
+
+@pytest.fixture(scope="module")
+def console_port() -> int:
+    """kubectl port-forward to the console Service, i.e. the real nginx image.
+
+    Every other gate that touches HTTP goes straight to
+    ``svc/cap-cap-backend``. Nothing asked the *frontend* to route a request, so
+    ``frontend/nginx.conf`` -- the SPA fallback, the ``/api/`` proxy, and the
+    ``envsubst``-injected identity headers -- was certified by nothing stronger
+    than "the pod became ready", which proves the process started.
+    """
+    global _CONSOLE_PF
+    _require_cluster()
+    port = 18081
+    _CONSOLE_PF = subprocess.Popen(
+        ["kubectl", "port-forward", "-n", NAMESPACE, "svc/cap-cap-frontend", f"{port}:8080"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        try:
+            if httpx.get(f"http://127.0.0.1:{port}/", timeout=3).status_code == 200:
+                try:
+                    yield port
+                finally:
+                    if _CONSOLE_PF is not None:
+                        _CONSOLE_PF.terminate()
+                        _CONSOLE_PF.wait(timeout=10)
+                return
+        except Exception:  # noqa: BLE001 -- tunnel not up yet
+            time.sleep(0.5)
+    if _CONSOLE_PF is not None:
+        _CONSOLE_PF.terminate()
+    pytest.fail("console nginx not reachable via port-forward")
+
+
+def _script_sources(html: str) -> list[str]:
+    """Every ``<script src=...>`` in a document, without pulling in a parser."""
+    found: list[str] = []
+    for chunk in html.split("<script")[1:]:
+        head = chunk.split(">", 1)[0]
+        if 'src="' in head:
+            found.append(head.split('src="', 1)[1].split('"', 1)[0])
+    return found
+
+
+def test_gate33_console_serves_the_built_app_through_real_nginx(console_port: int) -> None:
+    """The built console, the SPA fallback and the API proxy, as nginx serves them."""
+    base = f"http://127.0.0.1:{console_port}"
+
+    index = httpx.get(f"{base}/", timeout=30)
+    assert index.status_code == 200, index.text[:200]
+    assert "text/html" in index.headers.get("content-type", ""), index.headers
+    bundles = _script_sources(index.text)
+    assert bundles, "index.html references no bundle: /usr/share/nginx/html is empty?"
+
+    bundle = httpx.get(f"{base}{bundles[0]}", timeout=30)
+    assert bundle.status_code == 200, bundles[0]
+    assert "javascript" in bundle.headers.get("content-type", ""), bundle.headers
+
+    # A console deep link must reach the SPA, not a 404: this is the one routing
+    # rule a static server cannot fake, because the path exists only client-side.
+    deep = httpx.get(f"{base}/acquisitions", timeout=30)
+    assert deep.status_code == 200, deep.text[:200]
+    assert "text/html" in deep.headers.get("content-type", ""), deep.headers
+
+    # /api/ reaches the application, and the client sent no identity headers at
+    # all: an unset RBAC_TRUSTED_PROXY_SECRET or CAP_DEFAULT_USER leaves the
+    # substituted header empty, and the middleware then denies the request.
+    health = httpx.get(f"{base}/api/health", timeout=30)
+    assert health.status_code == 200, health.text[:200]
+    assert health.json()["status"] == "ok"
+
+    listing = httpx.get(f"{base}/api/acquisitions?page=1&page_size=5", timeout=30)
+    assert listing.status_code == 200, (listing.status_code, listing.text[:200])
+    assert listing.json() is not None
+
+    # And the proxy really is in front of the API for unknown paths: the response
+    # must be the application's 404, not the SPA fallback swallowing it.
+    missing = httpx.get(f"{base}/api/acquisitions/does-not-exist", timeout=30)
+    assert missing.status_code == 404, (missing.status_code, missing.text[:200])
+    assert "text/html" not in missing.headers.get("content-type", ""), (
+        "an unknown /api/ path was answered with index.html -- the proxy location "
+        "is not matching, and the browser would see a JSON parse error"
+    )
