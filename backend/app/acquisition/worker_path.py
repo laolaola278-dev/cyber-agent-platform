@@ -15,6 +15,7 @@ commits results ONLY while the worker still holds fencing ownership
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
@@ -32,6 +33,8 @@ from app.exceptions import (
     WorkerLeaseNotFound,
 )
 from app.repositories.worker import WorkerLeaseRepository
+
+logger = logging.getLogger("cap.acquisition.worker_path")
 
 TERMINAL = ("COMPLETE", "BLOCKED", "CANCELLED", "FAILED")
 
@@ -188,21 +191,50 @@ class AcquisitionWorkerPath:
             """
             from sqlalchemy.ext.asyncio import async_sessionmaker
 
+            from app.worker.runtime import bind_serves_one_connection
+
             # A dedicated session-per-poll factory. Each poll opens a brand
             # new connection + transaction, so it always observes the LATEST
             # committed snapshot -- the API's durable CANCEL_REQUESTED is
             # visible across the process boundary (this is the production
             # cancel channel: DB flag + worker polling).
-            poll_factory = async_sessionmaker(self._service.session.bind, expire_on_commit=False)
+            #
+            # That requires the bind to actually HAVE a second connection. On a
+            # single-connection bind -- StaticPool, which is how an in-memory
+            # SQLite engine survives checkouts -- a "separate" session is the
+            # same connection the operation is writing on: its COMMIT fails
+            # mid-crawl (sqlite: "cannot commit transaction - SQL statements in
+            # progress", CI run 35436793797) and its rollback would undo the
+            # operation's flushed work. There the poll reads through the service
+            # session and the concurrent renewal is skipped below, because a
+            # durable renewal needs a connection the operation is not holding.
+            bind = self._service.session.bind
+            single_connection = bind_serves_one_connection(bind)
+            poll_factory = (
+                None
+                if single_connection
+                else async_sessionmaker(bind, expire_on_commit=False)
+            )
+
+            async def poll_run() -> AcquisitionRun | None:
+                if poll_factory is not None:
+                    async with poll_factory() as poll_session:
+                        return await poll_session.get(AcquisitionRun, run_id)
+                # Same session, same transaction: no cross-connection snapshot,
+                # and none exists to be seen on a one-connection bind.
+                return await self._service.session.get(AcquisitionRun, run_id)
+
             operation_task = asyncio.create_task(self._service.run_agent_operation(run, checkpoint))
             import time as _t
 
             _op_start = _t.monotonic()
-            last_renew: float = 0.0
+            # Anchor the cadence on the loop clock: ``0.0`` made the first poll
+            # iteration renew immediately, since loop.time() is a monotonic
+            # system clock and is never near zero.
+            last_renew: float = asyncio.get_running_loop().time()
             while not operation_task.done():
                 try:
-                    async with poll_factory() as poll_session:
-                        polled = await poll_session.get(AcquisitionRun, run_id)
+                    polled = await poll_run()
                     poll_status = polled.status if polled is not None else None
                     poll_cancel_at = polled.cancel_requested_at if polled is not None else None
                     if poll_status == "CANCEL_REQUESTED" or poll_cancel_at is not None:
@@ -222,6 +254,19 @@ class AcquisitionWorkerPath:
                     if self._lease_renew_interval > 0 and (
                         now - last_renew >= self._lease_renew_interval
                     ):
+                        # Advance first, so a renewal that fails transiently is
+                        # retried on the next interval instead of hammering the
+                        # writer from a 50 ms poll loop.
+                        last_renew = now
+                        if poll_factory is None:
+                            logger.debug(
+                                "acquisition:%s lease renewal skipped -- the bind "
+                                "serves one shared connection, so there is no "
+                                "connection to renew on that the operation is not "
+                                "writing on",
+                                run_id,
+                            )
+                            continue
                         await self._renew_lease(
                             poll_factory,
                             polled.lease_id if polled is not None else None,
@@ -229,7 +274,6 @@ class AcquisitionWorkerPath:
                             worker_id,
                             token,
                         )
-                        last_renew = now
                 except asyncio.CancelledError:
                     raise
                 except (WorkerLeaseConflict, WorkerLeaseNotFound) as error:

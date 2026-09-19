@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.events import EventType, PlatformEvent
 from app.events.transactional import publish_audit
@@ -37,6 +38,21 @@ logger = logging.getLogger("cap.worker.runtime")
 #: Absolute floor for the renewal cadence, in seconds. Below this the loop would
 #: spend more time writing renewals than the lease spends alive.
 _MIN_RENEWAL_INTERVAL = 0.05
+
+
+def bind_serves_one_connection(bind: object) -> bool:
+    """True when a session factory over ``bind`` would reuse one connection.
+
+    ``StaticPool`` is how an in-memory SQLite engine keeps its data alive across
+    checkouts -- every session gets THE connection -- and a session bound directly
+    to an ``AsyncConnection`` is the same situation. On such a bind there is no
+    second connection to move a concurrent writer onto, so a "dedicated" session
+    is not isolation at all: it is two tasks interleaving statements on one
+    connection, and the COMMIT of one fails with ``cannot commit transaction -
+    SQL statements in progress``.
+    """
+    pool = getattr(bind, "pool", None)
+    return pool is None or isinstance(pool, StaticPool)
 
 
 def renewal_interval_seconds(lease_ttl_seconds: float) -> float:
@@ -353,8 +369,19 @@ class WorkerRuntime:
         Called when a construction site did not name one explicitly. Renewal is
         fencing-gated (owner + fencing token + expected version CAS), so a
         private short-lived session over the same engine is always valid -- and
-        it is the ONLY valid option, because the heartbeat task runs concurrently
-        with the main execute flow on the runtime session.
+        it is the ONLY valid option wherever the engine can hand out a second
+        connection.
+
+        It is not valid when it cannot. A bind backed by a single connection --
+        ``StaticPool``, which is how an in-memory SQLite test engine stays alive
+        across checkouts, or a session bound directly to an ``AsyncConnection`` --
+        gives the "dedicated" session the SAME connection the main flow is writing
+        on. There the renewal's COMMIT lands in the middle of the operation's
+        transaction and aiosqlite answers ``cannot commit transaction - SQL
+        statements in progress``, which is how CI run 35436793797 killed
+        ``test_worker_path_executes_claimed_run``: a private session on a shared
+        connection is worse than the shared session it replaced. On such a bind
+        the main session is the only legal writer, so renewals stay on it.
         """
         bind = getattr(self._session, "bind", None)
         if bind is None:
@@ -362,6 +389,16 @@ class WorkerRuntime:
                 "worker runtime has no session bind to renew its execution lease "
                 "from; renewals will run on the shared session (unsupported under "
                 "concurrency) -- pass heartbeat_session_factory explicitly"
+            )
+            return None
+        pool = getattr(bind, "pool", None)
+        single_connection = pool is None or isinstance(pool, StaticPool)
+        if single_connection:
+            logger.debug(
+                "worker runtime bind serves one connection (%s); the execution-lease "
+                "heartbeat renews on the main session because no second connection "
+                "exists to renew on",
+                type(pool).__name__ if pool is not None else "AsyncConnection",
             )
             return None
         return async_sessionmaker(bind, expire_on_commit=False)
