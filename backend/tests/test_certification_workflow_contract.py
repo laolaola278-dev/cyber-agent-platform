@@ -10,14 +10,24 @@ runner nobody is looking at:
   * a ``workflow_dispatch`` input that no job reads, so a dispatched run "passes"
     having executed nothing;
   * a bootstrap that pipes a download into a binary without ``curl -f``, which
-    turns an HTTP error page into an executable.
+    turns an HTTP error page into an executable;
+  * a gate that hard-codes a verdict WORD owned by
+    scripts/certification/generate_report.py, which goes stale silently the day
+    the generator's states change (this is what failed the release layer at run
+    35431391962);
+  * inline workflow Python that nothing has ever executed -- a moved key or a
+    NameError there costs a whole certification run to discover.
 
 The workflows are YAML the product ships, so they are asserted like code.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import re
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -206,3 +216,173 @@ def test_ci_still_cancels_superseded_runs() -> None:
     """The other half of the exemption: it must not spread to the feedback loop."""
     doc = yaml.safe_load((WORKFLOW_DIR / "ci.yml").read_text("utf-8"))
     assert (doc.get("concurrency") or {}).get("cancel-in-progress") is True
+
+
+# -- control-plane isolation verdict must be derived, never pinned -------------
+
+#: The three states scripts/certification/generate_report.py can report, and the
+#: rule it owns: PASS is forbidden while a shipped deployment path mounts a
+#: container-runtime socket; WHICH non-PASS state is correct is the generator's
+#: business, so a workflow that pins one of them goes stale whenever the
+#: generator's definition of the states moves.
+ISOLATION_STATES = ("PASS", "PARTIAL", "NOT_CERTIFIED")
+
+
+def _pinned_isolation_verdicts(run: str) -> list[str]:
+    """Lines that pin WHICH non-PASS verdict must be reported."""
+    pinned: list[str] = []
+    for line in run.splitlines():
+        code = line.split("#", 1)[0]
+        if "worker_control_plane_isolation" not in code:
+            continue
+        if "!=" in code:  # the permitted form: forbid PASS, derive the rest
+            continue
+        if ("==" in code or "is True" in code or "is False" in code) and any(
+            state in code for state in ISOLATION_STATES
+        ):
+            pinned.append(code.strip())
+    return pinned
+
+
+def _isolation_gate_derives_facts(run: str) -> bool:
+    """True when the step re-derives the per-path facts from the generator."""
+    return "docker_socket_control_plane" in run
+
+
+def test_isolation_gate_re_derives_its_verdict_from_the_generator() -> None:
+    found = 0
+    for name, doc in WORKFLOWS.items():
+        for job_name, job in doc["jobs"].items():
+            for step in job.get("steps") or []:
+                run = step.get("run")
+                if not isinstance(run, str) or "worker_control_plane_isolation" not in run:
+                    continue
+                found += 1
+                assert not _pinned_isolation_verdicts(run), (
+                    f"{name} job {job_name} pins an isolation verdict; derive it from "
+                    "scripts/certification/generate_report.py instead"
+                )
+                assert _isolation_gate_derives_facts(run), (
+                    f"{name} job {job_name} does not re-derive the per-path control-plane "
+                    "facts, so it can only ever assert a stale expectation"
+                )
+    assert found, "no workflow gate inspects worker_control_plane_isolation -- detector is dead"
+
+
+def test_the_isolation_gate_detector_catches_the_shape_that_broke_release() -> None:
+    """Negative control for both halves above.
+
+    Run 35431391962 failed on ``assert data["worker_control_plane_isolation"] ==
+    "NOT_CERTIFIED"``: the step asserted the value a chart-only detector used to
+    produce, and went stale the day the detector started reading
+    docker-compose.yml too. That exact line must be reported.
+    """
+    derives = "live = docker_socket_control_plane()"
+    stale = (
+        'assert data["worker_control_plane_isolation"] == "NOT_CERTIFIED", \\\n'
+        '    "must be NOT_CERTIFIED (worker mounts docker.sock)"\n' + derives
+    )
+    pinned_pass = 'assert live["worker_control_plane_isolation"] == "PASS"\n' + derives
+    acceptable = 'assert live["worker_control_plane_isolation"] != "PASS"\n' + derives
+    assert _pinned_isolation_verdicts(stale), "the pinned-verdict shape must be reported"
+    assert _pinned_isolation_verdicts(pinned_pass), "pinning PASS must be reported"
+    assert not _pinned_isolation_verdicts(acceptable), "forbidding PASS is the rule, not a pin"
+    assert _isolation_gate_derives_facts(acceptable)
+    assert not _isolation_gate_derives_facts(stale.replace("docker_socket_control_plane", "x"))
+
+
+# -- the gate step's inline Python must actually run --------------------------
+
+GATE_STEP = "- name: Assert machine-readable artifact exists with all gates"
+GATE_HEREDOC_OPEN = "          python - <<'EOF'\n"
+GATE_HEREDOC_CLOSE = "\n          EOF\n"
+GATE_ARTIFACT_PATH = 'p = "outputs/cap-cert/cap-28.5-linux-certification.json"'
+
+_GENERATE_REPORT = PROJECT_ROOT / "scripts" / "certification" / "generate_report.py"
+_SPEC = importlib.util.spec_from_file_location("generate_report", str(_GENERATE_REPORT))
+assert _SPEC and _SPEC.loader
+generate_report = importlib.util.module_from_spec(_SPEC)
+sys.modules.setdefault("generate_report", generate_report)
+_SPEC.loader.exec_module(generate_report)
+
+
+def _gate_step_source() -> str:
+    """The release-layer gate's own code, lifted out of the workflow verbatim."""
+    text = (WORKFLOW_DIR / "cap-linux-certification.yml").read_text("utf-8")
+    start = text.index(GATE_STEP)
+    body_open = text.index(GATE_HEREDOC_OPEN, start) + len(GATE_HEREDOC_OPEN)
+    return textwrap.dedent(text[body_open : text.index(GATE_HEREDOC_CLOSE, body_open)])
+
+
+def _run_gate(
+    source: str,
+    payload: dict,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    expected_sha: str | None = None,
+) -> None:
+    artifact = tmp_path / "cap-28.5-linux-certification.json"
+    artifact.write_text(json.dumps(payload), "utf-8")
+    snippet = source.replace(GATE_ARTIFACT_PATH, f"p = {str(artifact)!r}")
+    assert snippet != source, f"the gate's artifact path moved -- update {__name__}"
+    if expected_sha is None:
+        monkeypatch.delenv("CAP_EXPECTED_SHA", raising=False)
+    else:
+        monkeypatch.setenv("CAP_EXPECTED_SHA", expected_sha)
+    exec(  # noqa: S102 -- running the product's own gate to check that it runs
+        compile(snippet, "<release artifact gate>", "exec"),
+        {"__name__": "cap_release_artifact_gate"},
+    )
+
+
+def test_the_release_artifact_gate_runs_and_rejects_a_stale_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inline workflow Python is code, and it has never been executed by a test.
+
+    A NameError or a moved key in this step costs a full certification run
+    (20 minutes of real infrastructure) to discover, so the step is executed
+    here against a truthful artifact and then against each kind of artifact it
+    is supposed to refuse.
+    """
+    source = _gate_step_source()
+    live = generate_report.docker_socket_control_plane()
+    sha = "0bc8efa1234567890abcdef1234567890abcdef1"
+    truthful = {
+        "phase": "28.5-L",
+        "commit": sha,
+        "gates": dict.fromkeys(generate_report.REQUIRED_GATES, "PASS"),
+        "sandbox_workload_isolation": "PASS",
+        **live,
+    }
+
+    _run_gate(source, truthful, tmp_path, monkeypatch, expected_sha=sha)  # must not raise
+
+    stale = {**truthful, "worker_control_plane_isolation": "NOT_CERTIFIED"}
+    with pytest.raises(AssertionError, match="disagree with the repo"):
+        _run_gate(source, stale, tmp_path, monkeypatch, expected_sha=sha)
+
+    missing = {k: v for k, v in truthful.items() if k != "compose_worker_mounts_runtime_socket"}
+    with pytest.raises(AssertionError, match="disagree with the repo"):
+        _run_gate(source, missing, tmp_path, monkeypatch, expected_sha=sha)
+
+    # evidence from another commit cannot certify this one
+    with pytest.raises(AssertionError, match="evidence from another commit"):
+        _run_gate(source, truthful, tmp_path, monkeypatch, expected_sha="f" * 40)
+    unbound = {k: v for k, v in truthful.items() if k != "commit"}
+    with pytest.raises(AssertionError, match="must record the SHA"):
+        _run_gate(source, unbound, tmp_path, monkeypatch, expected_sha=sha)
+    with pytest.raises(AssertionError, match="must record the SHA"):
+        _run_gate(source, {**truthful, "commit": "unknown"}, tmp_path, monkeypatch, sha)
+
+    # A chart that mounts a runtime socket is a release blocker even if the
+    # artifact agrees with it: the gate must read the repo, not just the file.
+    monkeypatch.setattr(
+        generate_report, "chart_worker_mounts_control_socket", lambda: True, raising=True
+    )
+    mounted = {
+        k: (generate_report.docker_socket_control_plane()[k] if k in live else v)
+        for k, v in truthful.items()
+    }
+    with pytest.raises(AssertionError, match="RELEASE BLOCKER"):
+        _run_gate(source, mounted, tmp_path, monkeypatch, expected_sha=sha)

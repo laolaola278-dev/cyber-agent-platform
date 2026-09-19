@@ -292,11 +292,16 @@ jobs:
           CAP_CERT_SECRET_SENTINEL="${CAP_CERT_SECRET_SENTINEL:-}" \
           python scripts/certification/generate_report.py
       - name: Assert machine-readable artifact exists with all gates
+        env:
+          CAP_EXPECTED_SHA: ${{ github.sha }}
         run: |
           python - <<'EOF'
           import json
+          import os
+          import sys
           p = "outputs/cap-cert/cap-28.5-linux-certification.json"
-          data = json.load(open(p))
+          with open(p, encoding="utf-8") as fh:
+              data = json.load(fh)
           required = ["container_isolation","filesystem","memory","cpu","pids",
                       "network_enforcement","ssrf_defense_in_depth","hard_cancellation",
                       "reaper","browser","secrets","real_integration"]
@@ -306,16 +311,39 @@ jobs:
           assert not bad, f"incomplete gates: {bad}"
           failed = [g for g, v in data["gates"].items() if v == "FAIL"]
           assert not failed, f"failed gates: {failed}"
-          # Truthful control-plane report: the worker mounts the docker control
-          # socket (docker-compose.yml), so worker_control_plane_isolation MUST
-          # be NOT_CERTIFIED -- a "PASS"/boolean-true here would be a false
-          # claim about worker-to-host isolation.
+          # An artifact certifies the commit its job checked out, or it certifies
+          # nothing: this used to be inferable only from run metadata.
+          expected_sha = os.environ.get("CAP_EXPECTED_SHA", "").strip()
+          recorded = str(data.get("commit", "")).strip()
+          assert recorded and recorded != "unknown", \
+              "the artifact must record the SHA it certified"
+          if expected_sha:
+              assert recorded == expected_sha, (
+                  f"artifact records {recorded[:12]} but this job ran {expected_sha[:12]}: "
+                  "evidence from another commit cannot certify this one"
+              )
           assert data["sandbox_workload_isolation"] == "PASS", \
               f"sandbox_workload_isolation must be PASS, got {data.get('sandbox_workload_isolation')!r}"
-          assert data["worker_control_plane_isolation"] == "NOT_CERTIFIED", \
-              "worker_control_plane_isolation must be NOT_CERTIFIED (worker mounts docker.sock)"
-          assert data["unrestricted_docker_socket_mounted"] is True, \
-              "unrestricted_docker_socket_mounted must be True"
+          # Control-plane isolation: re-derive the per-path facts from the repo at
+          # assertion time rather than pinning a verdict word in this file. The
+          # rule lives in scripts/certification/generate_report.py: never PASS
+          # while a shipped deployment path mounts a container-runtime socket,
+          # PARTIAL when only the compose path does, NOT_CERTIFIED when the chart
+          # itself does. A hard-coded string here is how the gate went stale the
+          # moment compose was read too (run 35431391962).
+          sys.path.insert(0, "scripts/certification")
+          from generate_report import docker_socket_control_plane
+          live = docker_socket_control_plane()
+          reported = {key: data.get(key) for key in live}
+          assert reported == live, \
+              f"artifact control-plane fields disagree with the repo: {reported} != {live}"
+          assert live["worker_control_plane_isolation"] != "PASS", \
+              "isolation may not be claimed while a shipped deployment path mounts the socket"
+          assert live["production_chart_worker_mounts_runtime_socket"] is False, \
+              "RELEASE BLOCKER: the production chart worker mounts a container-runtime socket"
+          assert live["compose_worker_mounts_runtime_socket"] is True, \
+              "compose mounts docker.sock by design (documented limitation); if that " \
+              "changed, update the docs and this gate together"
           print("release certification artifact OK")
           EOF
       - uses: actions/upload-artifact@v4

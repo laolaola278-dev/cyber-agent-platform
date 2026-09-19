@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -239,6 +240,32 @@ def docker_socket_control_plane() -> dict[str, object]:
     }
 
 
+def commit_id() -> str:
+    """The exact SHA this artifact certifies.
+
+    The K8s and GA artifacts have always recorded their commit; the Linux one did
+    not, so binding a Linux PASS to a commit meant reading Actions run metadata
+    and trusting that the artifact came from the run it was downloaded from. On a
+    runner ``GITHUB_SHA`` is the checked-out commit; locally, ask git. Never
+    absent: an unknown provenance is a fact the artifact should state.
+    """
+    from_ci = os.environ.get("GITHUB_SHA", "").strip()
+    if from_ci:
+        return from_ci
+    try:
+        proc = subprocess.run(  # noqa: S603 -- fixed argv, no shell
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    sha = proc.stdout.strip()
+    return sha if proc.returncode == 0 and sha else "unknown"
+
+
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     # pytest runs with working-directory: backend, so its --junitxml paths
@@ -277,6 +304,7 @@ def main() -> int:
 
     payload = {
         "phase": "28.5-L",
+        "commit": commit_id(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "environment": env,
         "images": images,
@@ -305,6 +333,7 @@ def main() -> int:
         "# CAP Phase 28.5-L — Linux Runtime Certification Report",
         "",
         f"Generated: {payload['generated_at']}",
+        f"Commit: `{payload['commit']}`",
         "",
         "## Environment",
         "```",
@@ -330,10 +359,12 @@ def main() -> int:
         "## Control plane",
         f"- sandbox_workload_isolation: {payload['sandbox_workload_isolation']}",
         f"- worker_control_plane_isolation: {payload['worker_control_plane_isolation']}",
-        "-   production chart worker mounts a runtime control socket: "
-        f"{payload['production_chart_worker_mounts_runtime_socket']}"
-        " | compose worker (evaluation path): "
-        f"{payload['compose_worker_mounts_runtime_socket']}",
+        (
+            "-   production chart worker mounts a runtime control socket: "
+            f"{payload['production_chart_worker_mounts_runtime_socket']}"
+            " | compose worker (evaluation path): "
+            f"{payload['compose_worker_mounts_runtime_socket']}"
+        ),
         f"- unrestricted_docker_socket_mounted: {payload['unrestricted_docker_socket_mounted']}",
         "",
     ]
