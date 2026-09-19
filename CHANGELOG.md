@@ -141,6 +141,24 @@ published release contents are immutable.
   (`repo_tooling`), justified by a test that resolves the real `docker build` contexts and
   the chart/compose files rather than by a comment: the moment anything under `scripts/`
   can reach a container, that category has to fall back to fail-closed.
+- **Releases were published without any certification gate, under a comment that said
+  there was one.** `cap-linux-certification.yml` claimed "release jobs depend on
+  `cap-production-certification` (the `release.yml` workflow includes this file via
+  `workflow_call` and lists it as a required job before publishing artifacts)". Both halves
+  were untrue: `release.yml` calls only `ci.yml`, and no job in any workflow required a
+  certification run -- a tag on an uncertified commit would have pushed images, packaged the
+  chart and created a GitHub Release while every reader of that comment believed it had been
+  checked. `release.yml` now has a `verify-certification` job between `validate-tag` and
+  every job that publishes anything: it resolves a completed successful run per certification
+  workflow whose *release jobs* actually executed (a green PR-layer run is not release
+  evidence) for the tagged commit or the nearest of its 80 ancestors, accepts an ancestor
+  only when `scripts/release/classify_diff.py` proves the distance is runtime-neutral, writes
+  machine-readable evidence of what it looked at, and fails closed -- an API error raises
+  instead of being reported as "uncertified". `test_release_publication_gate.py` executes that
+  inline gate against canned Actions-API answers (its acceptance rules *are* the behaviour) and
+  pins the `needs` graph, the `fetch-depth: 0` and `actions: read` the ancestor walk depends
+  on, and the wording of the comment that hid the gap; each rule was negative-controlled by
+  mutating the gate, and each mutation failed its own test.
 
 ### Fixed
 

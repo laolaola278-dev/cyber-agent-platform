@@ -48,6 +48,14 @@ the frozen candidate. Machine-readable output in `outputs/cert-becbad4/diff-*.js
 | `c8c170f → c52dcb9` | **RECERTIFICATION REQUIRED** | 3 `production_runtime` (`auth/rbac.py`, `middleware/authorization.py`, `worker/runtime.py`) |
 | `d9a2e01 → c52dcb9` | **RECERTIFICATION REQUIRED** | 4 `production_runtime` — `worker/runtime.py` and `acquisition/worker_path.py` twice: the renewal cadence (`3ebca44`) and the single-connection guard (`c52dcb9`, F-18). `d9a2e01` itself was certified green on Linux and K8s, and this is the round that replaces it |
 | `c52dcb9 → b9b7f03` (audit-tool file rows) | **INHERITED** | none: one `repo_tooling`, one `test_harness` |
+| `c52dcb9 → e4b4e86` (the report's soak/verdict rewrite) | **INHERITED** | none: 2 `docs`, 1 `test_harness`, 1 `repo_tooling` |
+| `c52dcb9 → 577e621` (F-21's publication gate) | **INHERITED** | none: 2 `ci_workflow`, 2 `docs`, 2 `test_harness`, 1 `repo_tooling` |
+
+From `577e621` this table is no longer the only place the answer lives:
+`release.yml`'s `verify-certification` job re-runs `classify_diff.py` between the certified SHA
+and the tag at publication time and refuses the release if the distance is not inheritable
+(§23 F-21), so a tip that stopped being documentation-only would block the tag rather than
+inherit quietly.
 
 Two properties of the classifier are worth naming because they shaped this line's cost:
 `.env.example` and any unlisted path fall to `production_runtime` — the fail-closed default,
@@ -661,6 +669,37 @@ its documentation and a home that collects it.
   attempts (it needs the exact microsecond where the crawl holds a statement open), so the fix is
   verified by the green CI unit job at `c52dcb9`, not by a local pass.
 
+- F-21 **The release pipeline had no certification gate, and a comment said it did.**
+  `cap-linux-certification.yml` stated that "release jobs depend on
+  `cap-production-certification` (the `release.yml` workflow includes this file via
+  `workflow_call` and lists it as a required job before publishing artifacts)". `release.yml`
+  calls only `ci.yml`, and no job in any workflow required a certification run, so pushing a tag
+  on an uncertified commit would have pushed two images, packaged the chart and created a GitHub
+  Release with every reader of that sentence believing it had been checked. That is the same
+  failure class as F-15 — prose owning a verdict no code enforces — one level up the release
+  chain, and unlike F-15 it could not fail loudly: it would have published.
+  `release.yml` now has `verify-certification` between `validate-tag` and each publishing job.
+  For every certification workflow it resolves a **completed, successful** run whose *release
+  jobs* are present (a green Linux run that only executed `fast-certification` is not release
+  evidence, and job colour alone cannot tell the two apart), for the tagged commit or the
+  nearest of its 80 ancestors, and accepts an ancestor only after
+  `scripts/release/classify_diff.py` proves that distance is runtime-neutral. It writes
+  `release-certification-gate.json` naming the run, the SHA, the distance and the classification
+  behind every claim, and fails closed: an API error raises instead of being reported as
+  "uncertified", and a shallow checkout is detected rather than misread as absent evidence.
+  `test_release_publication_gate.py` **executes** that inline step against canned Actions-API
+  answers — 14 tests over the acceptance rules, the `needs` graph, the `fetch-depth: 0` and the
+  `actions: read` scope the walk depends on — and every rule was negative-controlled by mutating
+  the gate: dropping the job-set check, removing the gate's `needs` edge from `release-images`,
+  and switching to a depth-1 checkout each failed exactly their own test. It was then run for
+  real against this repository's API at tip `577e621`
+  (`outputs/cert-e4b4e86/gate-before-ga-finished.json`), where it resolved Linux run
+  `35439343387`, K8s `35439344924` and the soak `35439341789` to `c52dcb9` 9 commits back and
+  classified all three INHERITED, and returned **FAIL** because the only GA run within reach was
+  `34128117668` at `901013a4`, 61 commits back and `RECERTIFICATION_REQUIRED` — the strict GA run
+  for `c52dcb9` was still executing. The refusal was correct and the reason was named; it is the
+  §25 open item, not a new one.
+
 **MEDIUM — open, recorded, not papered over**
 - F-4 Migration/schema naming drift: constraints and indexes renamed relative to what the revisions
   and models promise; enforcement verified intact; `alembic check` is not gated (§5). A real fix
@@ -720,9 +759,13 @@ Per `release.yml`, all keyed to the tag and its commit: `ghcr.io/<owner>/cap-bac
 and `cap-frontend:1.0.6-rc1` (both with `VERSION`/`REVISION` build-args, buildx provenance + SBOM
 attestations), the Helm package `cap-1.0.6-rc1.tgz` (`helm package` after `helm lint` +
 `helm template`), and as GitHub Release assets: that chart archive, `CHANGELOG.md`,
-`docs/releases/v1.0.6-rc1.md`, `docs/known-issues.md`. A tag push also runs `ci.yml` via
-`workflow_run`-equivalent `quality-gates` reuse, so a tag cannot publish on red gates, and
-`validate-tag` aborts unless the tag equals `VERSION` exactly.
+`docs/releases/v1.0.6-rc1.md`, `docs/known-issues.md`. A tag push runs `ci.yml` through the
+`quality-gates` job reuse, so a tag cannot publish on red unit/frontend/migration/packaging/image
+gates, and `validate-tag` aborts unless the tag equals `VERSION` exactly. From `577e621` a third
+condition applies to every publishing job: `verify-certification` must be green, and it uploads
+`cap-1.0.6-rc1-certification-evidence` (`release-certification-gate.json`) naming the run, commit
+and inheritance proof behind each workflow it accepted (§23 F-21) — a workflow artifact, not a
+Release asset, so the audit trail stays with the run that made it.
 **Not produced today and required before any real deployment**: the 3 sandbox/egress images as
 published, digested coordinates (F-7); container registry digests for the candidate (nothing is
 pushed); and a v1.0.6 → v1.0.5 rollback exercise (§18).
@@ -749,21 +792,25 @@ Evidence assembled on the certified `c52dcb9` (and inheritable deltas to the cur
   and is checked against it (§13);
 - Kubernetes 33/33 with DR, object-store outage gating, capacity/SLI gates and the console-route
   gate that found F-13 (§12, §14);
-- four product defects found by this pass and fixed at the cause, each with tests confirmed to fail
-  before the fix: the acquisition false-cancellation (F-14, including the regression its own first
-  fix introduced, F-18), the release gate pinning a verdict it does not own (F-15), the
-  "authoritative PostgreSQL" gate that could not reach PostgreSQL (F-17) and the unbound Linux
-  artifact (F-10).
+- defects found by this pass and fixed at the cause, each with tests confirmed to fail before the
+  fix. Three are in the product: console reads charged the whole platform (F-13), and a healthy
+  long-running acquisition could lose its execution lease under load (F-14, including the
+  regression its own first fix introduced, F-18). The rest are in the machinery that certifies the
+  product: a release gate asserting a verdict word it did not own (F-15), a PostgreSQL-authoritative
+  test that could not reach PostgreSQL (F-17), a Linux artifact bound to no commit (F-10), and a
+  publication gate that existed only as a comment (F-21) — the last of which was then executed for
+  real against this repository's Actions API, where it refused the release for the correct reason.
 
-**Still open when this was written:** the 7200 s reliability soak on the certified SHA (run
-`35439341789`, **in progress**), and the strict FULL-GA certification that must be dispatched on
-that SHA after it — GA resolves its soak evidence by `head_sha`, so a soak of an earlier commit is
-not evidence for this one. Neither result is asserted here as passing. **The §23 MEDIUM items
-(F-4…F-9, F-19, F-20) remain open**, each recorded with its evidence and the reason it is not
-fixed inside a release candidate.
+**Still open when this was written:** the strict FULL-GA certification on the certified SHA (run
+`35445391334`, `ga_strict=true`, **in progress**). The 7200 s reliability soak it depends on is
+already green on that SHA (run `35439341789`, §15) — GA resolves its soak evidence by `head_sha`,
+so a soak of an earlier commit would not have counted, which is why the dispatch went through the
+`cert/1.0.6-rc1` pointer branch rather than the moving `release/1.0.6-rc1` head. GA-GATE results are
+not asserted here until the run finishes. **The §23 MEDIUM items (F-4…F-9, F-19, F-20) remain
+open**, each recorded with its evidence and the reason it is not fixed inside a release candidate.
 
-**CAP v1.0.6-rc1 RELEASE BLOCKED — publication requires explicit authorization, and the soak plus
-the strict GA certification are not yet green on the candidate.**
+**CAP v1.0.6-rc1 RELEASE BLOCKED — publication requires explicit authorization, and the strict GA
+certification is not yet green on the candidate.**
 
 The verdict becomes:
 
