@@ -306,7 +306,13 @@ jobs:
 
       # GA-GATE 33: control-plane security re-certification -- the Phase 28.5
       # adversarial security suite must have COMPLETED SUCCESSFULLY for THIS
-      # exact commit (the Linux Certification workflow runs it on every push).
+      # exact commit. It runs inside `full-certification` (a push to main, or any
+      # dispatch that is not the PR layer) and inside `cap-production-certification`
+      # (a tag push, or a `layer: release` dispatch); a push to a `release/**`
+      # branch triggers this workflow with every job skipped, so for a release
+      # candidate the evidence comes from a dispatch, never from the push. The
+      # resolution below is by `head_sha`, which is why an earlier commit's green
+      # run cannot satisfy it.
       - name: "GA-GATE 33: verify security certification for this commit"
         if: always()
         env:

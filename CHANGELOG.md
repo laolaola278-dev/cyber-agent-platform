@@ -158,7 +158,12 @@ published release contents are immutable.
   inline gate against canned Actions-API answers (its acceptance rules *are* the behaviour) and
   pins the `needs` graph, the `fetch-depth: 0` and `actions: read` the ancestor walk depends
   on, and the wording of the comment that hid the gap; each rule was negative-controlled by
-  mutating the gate, and each mutation failed its own test.
+  mutating the gate, and each mutation failed its own test. The same sweep corrected two more
+  sentences that described enforcement that did not exist (the release-layer header, and GA-GATE 33's
+  "runs on every push"), and the job-set rule was measured rather than argued: applied to the last 60
+  completed runs of the Linux certification workflow it accepts 4 of the 21 green runs -- the
+  dispatched release rounds -- and refuses the other 17, every one of which a colour-only gate would
+  have accepted as release evidence.
 
 ### Fixed
 

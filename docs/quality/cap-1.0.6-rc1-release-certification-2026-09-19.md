@@ -1,10 +1,12 @@
 # CAP 1.0.6-rc1 — Final Release Certification Report
 
 Certified SHA: `c52dcb9` (branch `release/1.0.6-rc1`) — the commit CI, the Linux release layer and
-the K8s certification all ran green on. Tip at the time of writing: `b9b7f03`, one audit-tool
-commit later; `classify_diff c52dcb9 b9b7f03` reports **INHERITED** (one `repo_tooling` file, one
-`test_harness` file), and `outputs/cert-becbad4/diff-b84a13e-to-becbad4.json` /
-`outputs/cert-c52dcb9/` hold the machine-readable proofs.
+PostgreSQL matrix, the K8s certification, the 7200 s reliability soak and the strict FULL GA round
+(40/40, run `35445391334`) all ran green on. Tip at the time of writing: `cfa616e` (F-21's
+publication gate) plus documentation commits after it; `classify_diff c52dcb9 cfa616e` reports
+**INHERITED** (`ci_workflow`, `test_harness`, `repo_tooling`, `docs`), and
+`outputs/cert-becbad4/diff-*.json` / `outputs/cert-c52dcb9/` / `outputs/cert-e4b4e86/` hold the
+machine-readable proofs, including the publication gate's own evidence JSON for this tip.
 Superseded by runtime changes during this pass, in order: `154f5b6` → `71dad6e` → `0b4e207` →
 `2b65368` → `ad91e0e` → `1fc1c98` → `c8c170f` (console authorization, F-13) → `8ffd7bd` (the
 report generator's PyYAML dependency, §13) → `7e1f0e2` → `0bc8efa` (approval-gate assertions) →
@@ -12,14 +14,16 @@ report generator's PyYAML dependency, §13) → `7e1f0e2` → `0bc8efa` (approva
 `3ebca44` (the renewal cadence contract behind the same defect, plus the lint corrections it
 required) → `b84a13e` (`repo_tooling` classification, enforced by a test) → `becbad4` (release
 audit tool) → `93d360c` (cadence boundary tests) → **`c52dcb9`** (the single-connection guard that
-CI's unit job caught at `becbad4`, F-18) → `b9b7f03`. Each step is classified in §2, and every gate
+CI's unit job caught at `becbad4`, F-18). What comes after `c52dcb9` is documentation, CI workflow
+and test commits — classified per-file in §2, all INHERITED — not another runtime step. Every gate
 bound to an earlier SHA is labelled as such rather than silently reused.
 Prepared: 2026-09-19, from a Windows audit host plus GitHub-hosted Linux runners.
 Publication: **none performed** — no `v*` tag, no GitHub Release, no image pushed, no existing tag or image overwritten.
 
 > Reading note: a Windows machine passing its own suite is not production certification. Every
-> claim below says which environment produced it. Items whose evidence was still executing when
-> this was written are marked **IN FLIGHT** with the run id; §25 is the verdict.
+> claim below says which environment produced it. Nothing is marked IN FLIGHT: the last round that
+> was, the strict FULL GA certification, finished green on the certified SHA and is in §15. §25 is
+> the verdict.
 
 ---
 
@@ -408,12 +412,17 @@ after the execution-lease heartbeat fix (run `35434491797`), and at the certifie
 | PostgreSQL version matrix 15 / 16 / 17 | same run | **success** ×3 (§6) |
 | K8s certification, GATE 1..33 | `35439344924` | **33/33**, 0 not_run (§14) |
 | GA reliability soak, 7200 s with chaos | `35439341789` (`reliability-evidence`) | **success**: 480/480 healthy ticks, 480 runs created, 48 cancelled, 1440 pagination requests, **0 HTTP errors**, **0 downtime seconds**, 11 worker pods killed mid-run, RSS samples 176–538 KB with no monotonic growth, upgrade-under-load 6.1 s and rollback-under-load 0.5 s both with 0 errors, 5 tests / 0 failures over 7297 s |
+| **FULL GA certification, `ga_strict=true`, 40 gates** | `35445391334` (`ga-cert-artifacts`) | **40/40 PASS**, `mode: final-strict`, `full_ga_certified: true`, `commit: c52dcb98c270e…`; merged JUnit 67 tests / 0 failures / 0 errors / **0 skipped** (`junit-ga` 57 + `junit-reliability` 5 + `junit-supply-chain` 5), regenerated with `scripts/quality/audit_junit.py` into `outputs/cert-ga-c52dcb9/skip-audit.json`; `supply-chain` job **success** |
 | Local authoritative suite + migration catalogue + secret scan + skip/coverage audit tables | this host | §3, §5, §20, §21, §22 |
 
-**In flight when this was written:** the strict FULL-GA certification dispatched on the certified
-SHA through the `cert/1.0.6-rc1` pointer branch (run `35445391334`, `ga_strict=true`). It resolves
-its soak evidence by `head_sha`, which is why it runs on the certified commit and not on the
-docs-only tip. §25 states what is not yet closed because of it.
+Strict mode is what makes the 40/40 mean something: `CAP_GA_STRICT=1` turns a `PLANNED` gate into a
+failure and a `SKIP` into a failure, so this is the same gate set that elsewhere reports
+IMPLEMENTED-SCOPE being demanded at full strength — including gates 24–26/34/35, which are the soak
+evidence GA resolves by `head_sha` from run `35439341789`. That resolution is also why the dispatch
+went through the `cert/1.0.6-rc1` pointer branch: GA and the soak must share one commit, and
+`release/1.0.6-rc1` was moving under documentation commits. GA-GATE 33 found its security evidence
+the same way (`security-recert.json`: `conclusion: success`, run ids `35439343387` and
+`35439324778`), and GA-GATE 40's own skip scan agrees with the audit: `{'skipped': 0}`.
 
 **Why the earlier green rounds are history, not this candidate's certificate**
 
@@ -700,6 +709,23 @@ its documentation and a home that collects it.
   for `c52dcb9` was still executing. The refusal was correct and the reason was named; it is the
   §25 open item, not a new one.
 
+  **The job-set rule measured against history, not argued.** Applied to the last 60 completed runs
+  of `cap-linux-certification.yml` (`outputs/cert-e4b4e86/gate-job-set-scan.json`), 21 of them
+  successful, the rule **accepts 4 and refuses 17**. The 4 accepted runs are exactly the dispatched
+  release rounds — `0b4e207`, `d9a2e01`, `becbad4`, `c52dcb9`. All 17 refusals are push-triggered:
+  14 executed only `full-certification`, 3 only `cap-production-certification`. So the rule is not
+  decorative: most of the green certification history in this repository is not release evidence,
+  and a gate that read run colour would have accepted it. The opposite failure is closed too — of the
+  last 60 push-triggered runs of this workflow, the 28 on `release/1.0.6-rc1` are 24 `skipped` and 4
+  `cancelled` and none `success`: a release-branch push triggers it with every job skipped, and
+  GitHub reports the run as `skipped`, so an empty run cannot satisfy the gate either.
+  **Two more sentences of the same class, found by the same sweep and corrected.**
+  `cap-linux-certification.yml`'s header now names `verify-certification` and the job set instead
+  of asserting "release jobs depend on it", and GA-GATE 33's comment no longer claims the security
+  suite "runs on every push" — it runs in `full-certification` (push to `main`, or any dispatch but
+  the PR layer) and in `cap-production-certification` (tag push or `layer: release` dispatch), so a
+  release candidate's evidence comes from a dispatch and is resolved by `head_sha`.
+
 **MEDIUM — open, recorded, not papered over**
 - F-4 Migration/schema naming drift: constraints and indexes renamed relative to what the revisions
   and models promise; enforcement verified intact; `alembic check` is not gated (§5). A real fix
@@ -801,24 +827,40 @@ Evidence assembled on the certified `c52dcb9` (and inheritable deltas to the cur
   publication gate that existed only as a comment (F-21) — the last of which was then executed for
   real against this repository's Actions API, where it refused the release for the correct reason.
 
-**Still open when this was written:** the strict FULL-GA certification on the certified SHA (run
-`35445391334`, `ga_strict=true`, **in progress**). The 7200 s reliability soak it depends on is
-already green on that SHA (run `35439341789`, §15) — GA resolves its soak evidence by `head_sha`,
-so a soak of an earlier commit would not have counted, which is why the dispatch went through the
-`cert/1.0.6-rc1` pointer branch rather than the moving `release/1.0.6-rc1` head. GA-GATE results are
-not asserted here until the run finishes. **The §23 MEDIUM items (F-4…F-9, F-19, F-20) remain
-open**, each recorded with its evidence and the reason it is not fixed inside a release candidate.
+- **FULL GA, `ga_strict=true`: 40/40 gates PASS** on the certified SHA (run `35445391334`),
+  `full_ga_certified: true`, 67 merged tests with **0 skips**, its soak and security evidence
+  resolved by `head_sha` to runs `35439341789` and `35439343387` (§15);
+- the 7200 s reliability soak with chaos on that same SHA, 0 HTTP errors, 0 downtime seconds,
+  upgrade 6.1 s / rollback 0.5 s under load (§15, §17);
+- `release.yml`'s publication gate executed for real against this repository's Actions API: it
+  first **refused** the release while the strict GA run was in flight, and after it went green it
+  **passed** the tip with all four certification workflows resolving to `c52dcb9` and classified
+  INHERITED (§23 F-21) — both directions measured, not asserted.
 
-**CAP v1.0.6-rc1 RELEASE BLOCKED — publication requires explicit authorization, and the strict GA
-certification is not yet green on the candidate.**
+**What still stands between this commit and a release** is now exactly one thing: **explicit
+publication authorization** (§28). Nothing was tagged, published, pushed to a registry, or
+overwritten by this task, and the certified digests, SBOMs and provenance attestations that
+`release.yml` produces only come into existence when a tag is published (§19, §24). The §23 MEDIUM
+items (F-4…F-9, F-19, F-20) remain open by decision, each with its evidence and the reason it is
+not a late edit to a candidate; §24 lists the three things not produced today that a real
+deployment still needs. And the boundary this report has kept all along still holds: the local
+Windows measurements in §3–§6 and §20 are supporting evidence, while every claim about production
+behaviour — Linux runtime, OCI sandbox, PostgreSQL, MinIO, Kubernetes, nginx routing, the soak —
+comes from a Linux CI runner on the certified commit.
 
-The verdict becomes:
+**CAP v1.0.6-rc1 RELEASE READY — awaiting explicit publication authorization.**
 
-> CAP v1.0.6-rc1 RELEASE READY — awaiting explicit publication authorization.
+It would read BLOCKED again if any of these were true: a certification workflow green on an earlier
+commit with a runtime-affecting distance to the tag (F-21's gate refuses that by itself), a critical
+skip in any certification round, a secret-scan finding, a migration object missing by name on a real
+PostgreSQL server, or an artifact that could not be bound to the SHA it certified.
 
-only when every run above is green on the certified SHA (or on a later tip whose delta the
-classifier reports as inheritable, with that classification stored beside it), and each MEDIUM
-finding is either fixed or explicitly accepted with an owner.
+READY means the condition this document set for itself is met: every run listed above is green on
+the certified SHA, or on a later tip whose delta the classifier reports as inheritable with that
+classification stored beside it (`outputs/cert-e4b4e86/`), and every MEDIUM finding is either fixed
+or explicitly accepted with its reason recorded. It does not mean "no known limitations" — §23 and
+§24 are the list — and it is not itself an authorization.
 
-Until then: **do not tag, do not publish a Release, do not push an image, do not overwrite any
-existing tag.** Publication is a separate, explicit act.
+Standing rule, ready or not, until an explicit authorization is given: **do not tag, do not publish
+a Release, do not push an image, do not overwrite any existing tag.** Publication is a separate,
+explicit act.

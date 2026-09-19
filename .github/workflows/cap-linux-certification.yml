@@ -10,7 +10,14 @@ name: CAP Linux Certification
 #   main          : full regression + 100-run HA
 #   release tag   : full adversarial certification + 500-run benchmark
 #
-# cap-production-certification (release gate): release jobs depend on it.
+# cap-production-certification is the release layer. What that means is owned by
+# code, not by this sentence: release.yml's `verify-certification` job accepts
+# this workflow as release evidence only from a run whose green job set contains
+# cap-production-certification AND postgres-version-matrix, for the tagged commit
+# or an inheritable ancestor of it (backend/tests/test_release_publication_gate.py
+# executes that rule; docs/quality/cap-1.0.6-rc1-release-certification-2026-09-19.md
+# F-21 records how many green runs it refuses). Dispatch this workflow with
+# `layer: release` to produce release evidence.
 # Any critical gate FAIL / critical SKIP / missing JSON field -> job FAILED.
 
 on:
