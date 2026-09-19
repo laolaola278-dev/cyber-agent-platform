@@ -129,11 +129,13 @@ class FakeActionsApi:
         *,
         runs: dict[str, str] | None = None,
         jobs: dict[int, str] | None = None,
+        exact: dict[str, str] | None = None,
         classify: tuple[int, str] = (0, INHERITED),
         chain: list[str] | None = None,
         gh_fails: bool = False,
     ) -> None:
         self.runs = runs or {}
+        self.exact = exact or {}
         self.jobs = jobs or {}
         self.classify = classify
         self.chain = chain if chain is not None else CHAIN
@@ -162,9 +164,13 @@ class FakeActionsApi:
             result.stderr = "HTTP 401: Requires authentication"
             return result
         for workflow, payload in self.runs.items():
-            if f"actions/workflows/{workflow}/runs" in path:
+            if f"actions/workflows/{workflow}/runs" not in path:
+                continue
+            if "head_sha=" in path:
+                result.stdout = self.exact.get(workflow, payload)
+            else:
                 result.stdout = payload
-                return result
+            return result
         for run_id, payload in self.jobs.items():
             if f"actions/runs/{run_id}/jobs" in path:
                 result.stdout = payload
@@ -244,6 +250,62 @@ def test_gate_reads_release_history_and_holds_the_read_scope_it_needs() -> None:
     )
 
 
+def test_a_full_recent_runs_page_cannot_hide_evidence_for_the_tagged_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The listing is one page; the ``head_sha`` probe is not subject to it.
+
+    ``cap-linux-certification.yml`` runs on every push to ``main``, so 100
+    completed runs is days, not years. Evidence for the commit being tagged can
+    therefore sit outside the page while existing, and a gate that read that as
+    "uncertified" would refuse a release it should allow -- the opposite failure
+    to F-21, and just as much a lie about what it checked.
+    """
+    runs, jobs = _green_runs(SHA_TAG)
+    noise = [(f"{i:040d}", 900 + i, "success") for i in range(100)]
+    runs["cap-linux-certification.yml"] = _runs_payload(noise)
+    jobs[777] = _jobs_payload(RELEASE_JOBS["cap-linux-certification.yml"])
+    code, evidence = _exec_gate(
+        tmp_path,
+        monkeypatch,
+        FakeActionsApi(
+            runs=runs,
+            jobs=jobs,
+            exact={"cap-linux-certification.yml": _runs_payload([(SHA_TAG, 777, "success")])},
+            chain=[SHA_TAG],
+        ),
+    )
+    assert code == 0, "the exact probe found the tagged commit's run and the gate ignored it"
+    record = evidence["evidence"]["cap-linux-certification.yml"]
+    assert record["run_id"] == 777
+    assert record["runs_examined"] == 101, "page + probe, de-duplicated"
+
+
+def test_a_full_page_with_no_evidence_says_so_instead_of_claiming_absence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal has to distinguish "not found" from "not fetched"."""
+    noise = [(f"{i:040d}", 900 + i, "success") for i in range(100)]
+    code, evidence = _exec_gate(
+        tmp_path,
+        monkeypatch,
+        FakeActionsApi(
+            runs={w: _runs_payload(noise) for w in RELEASE_JOBS},
+            jobs={},
+            chain=[SHA_TAG],
+        ),
+    )
+    assert code == 1
+    assert len(evidence["failures"]) == len(RELEASE_JOBS)
+    assert all("came back full" in reason for reason in evidence["failures"]), (
+        "a truncated search must tell the operator to certify, not claim that "
+        "certification never happened"
+    )
+    assert all(
+        "dispatch certification on this commit" in reason for reason in evidence["failures"]
+    )
+
+
 def test_gate_accepts_evidence_for_the_tagged_commit_itself(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -261,6 +323,7 @@ def test_gate_accepts_evidence_for_the_tagged_commit_itself(
     for workflow, record in evidence["evidence"].items():
         assert record["distance"] == 0, f"{workflow} resolved to the wrong commit"
         assert record["run_url"], "the evidence must name the run it came from"
+        assert record["runs_examined"] == 1, f"{workflow} did not record its search"
     assert all("diff_verdict" not in record for record in evidence["evidence"].values()), (
         "nothing was inherited, so nothing should have been classified"
     )
@@ -350,6 +413,12 @@ def test_gate_refuses_when_no_certification_exists(
     assert code == 1
     assert evidence["evidence"] == {}
     assert len(evidence["failures"]) == len(RELEASE_JOBS)
+    assert all(
+        "0 most recent completed runs examined" in reason for reason in evidence["failures"]
+    ), (
+        "the refusal has to say how far it looked: 'not on the page' and 'never "
+        "ran' are different remedies for the operator holding the tag"
+    )
 
 
 def test_gate_ignores_runs_that_did_not_succeed(

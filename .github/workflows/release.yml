@@ -103,6 +103,10 @@ jobs:
           #: How far back inheritance may reach. Past this the answer is
           #: "re-certify", never "probably still fine".
           MAX_ANCESTRY_DISTANCE = 80
+          #: Runs are listed one page at a time. A full page means the search
+          #: stopped somewhere, not that nothing exists beyond it, so the gate
+          #: reports the difference instead of quietly flattening it.
+          PAGE_SIZE = 100
 
 
           def gh(path: str) -> dict:
@@ -143,12 +147,31 @@ jobs:
               return verdicts
 
 
-          def find_evidence(workflow: str, chain: list[str]) -> dict | None:
-              """Newest commit on the chain with a run of every required job."""
-              runs = gh(
+          def completed_runs(workflow: str) -> tuple[list[dict], bool]:
+              """Recent completed runs, plus a window-immune probe of the tag.
+              The listing is one page: a busy workflow (the Linux certification
+              runs on every push to `main`) can accumulate more completed runs
+              than a page holds, which would make "not found" mean "not on the
+              page". The `head_sha` query is exact and unaffected, so the tagged
+              commit -- the case that matters most -- is always really checked.
+              """
+              page = gh(
                   f"repos/{REPO}/actions/workflows/{workflow}/runs"
-                  "?per_page=100&status=completed"
+                  f"?per_page={PAGE_SIZE}&status=completed"
               ).get("workflow_runs") or []
+              by_id = {run["id"]: run for run in page}
+              exact = gh(
+                  f"repos/{REPO}/actions/workflows/{workflow}/runs"
+                  f"?per_page={PAGE_SIZE}&status=completed&head_sha={TAG_SHA}"
+              ).get("workflow_runs") or []
+              for run in exact:
+                  by_id.setdefault(run["id"], run)
+              return list(by_id.values()), len(page) >= PAGE_SIZE
+
+
+          def find_evidence(workflow: str, chain: list[str]) -> dict:
+              """Newest commit on the chain with a run of every required job."""
+              runs, window_full = completed_runs(workflow)
               wanted = REQUIRED[workflow]
               for distance, sha in enumerate(chain):
                   for run in runs:
@@ -168,9 +191,10 @@ jobs:
                           "distance": distance,
                           "run_id": run["id"],
                           "run_url": run.get("html_url"),
+                          "runs_examined": len(runs),
                           "jobs": {job: verdicts[job] for job in wanted},
                       }
-              return None
+              return {"missing": True, "runs_examined": len(runs), "window_full": window_full}
 
 
           def classify(certified: str) -> tuple[bool, dict]:
@@ -189,11 +213,19 @@ jobs:
           failures: list[str] = []
           for workflow in REQUIRED:
               found = find_evidence(workflow, chain)
-              if found is None:
+              if found.get("missing"):
+                  caveat = (
+                      " -- the run listing came back full, so older evidence "
+                      "cannot be ruled out: dispatch certification on this commit"
+                      if found["window_full"]
+                      else ""
+                  )
                   failures.append(
                       f"{workflow}: no completed successful run with jobs "
                       f"{list(REQUIRED[workflow])} for this commit or any of its "
-                      f"{len(chain)} nearest ancestors"
+                      f"{len(chain)} nearest ancestors, in the "
+                      f"{found['runs_examined']} most recent completed runs "
+                      f"examined{caveat}"
                   )
                   print(f"{workflow}: NO CERTIFICATION EVIDENCE", file=sys.stderr)
                   continue
