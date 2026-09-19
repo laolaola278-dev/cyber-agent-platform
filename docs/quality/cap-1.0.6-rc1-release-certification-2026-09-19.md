@@ -129,7 +129,8 @@ backend/alembic` empty), so this release ships no schema change — which is a f
 reason to skip the run.
 
 Executed by `backend/tests/test_migration_catalogue.py` against a live PostgreSQL 16.2 server
-(pgserver bundle), **6 passed** (`outputs/cert-8a8711f/migration-catalogue.log`):
+(pgserver bundle), **6 passed** — re-executed at the certified `c52dcb9` in 663 s
+(`outputs/cert-c52dcb9/migration-junit.xml`; originally `outputs/cert-8a8711f/migration-catalogue.log`):
 
 1. single head; the migrated database's `alembic_version` equals the scripts' head;
 2. fresh empty DB → `alembic upgrade head` → 104 public tables;
@@ -170,8 +171,8 @@ junit evidence (`junit-pg-matrix-<v>.xml`). CI also gates the chain on every pus
 Kubernetes certification adds: GATE 3 the worker mounts no runtime socket, GATE 4 its Role is
 namespaced least-privilege, GATE 5 adversarial attempts with the worker token are denied,
 GATE 6/7 sandbox has no SA token and NetworkPolicy denies by default — all PASS at
-`154f5b6` (`outputs/cert-154f5b6/k8s-artifacts/cap-28.6-k8s-certification.json`) and
-re-executing at `8a8711f` (**IN FLIGHT**, run `35427778399`).
+`154f5b6` (`outputs/cert-154f5b6/k8s-artifacts/cap-28.6-k8s-certification.json`), re-executed at
+`c8c170f` and `d9a2e01`, and PASS on the certified `c52dcb9` (run `35439344924`, §14).
 
 ## 8. ZAP API key: the README and the code now agree
 
@@ -229,8 +230,9 @@ Repairs, all at this candidate:
   the test rejects a file that claims to derive it while pasting the coordinate;
 - object-store behaviour is certified by the gates that use it: 12 `object_store` tests (skipped
   without a server, executed in the Linux certification), K8s GATE 21 *object store outage
-  blocks* and GATE 24/25 backup/restore + data-survives-restart, all PASS at `154f5b6` and
-  re-running at `c8c170f` (**IN FLIGHT**, run `35429505106`).
+  blocks* and GATE 24/25 backup/restore + data-survives-restart, all PASS at `154f5b6`, re-run at
+  `c8c170f` and `d9a2e01`, and PASS on the certified `c52dcb9` (K8s run `35439344924`; the Linux
+  layer's 12 `object_store` tests execute there under `CAP_CERTIFICATION_STRICT=1`, §13).
 
 Provenance recorded honestly, including the gap: the Quay image's own labels carry
 `release=RELEASE.2025-04-22T22-12-26Z`, `vendor: MinIO Inc <dev@min.io>`, UBI9 base, built
@@ -335,6 +337,17 @@ substring grep and is now a structural, per-path fact.
 | `sandbox_workload_isolation` | **PASS** |
 | `worker_control_plane_isolation` | **PARTIAL**, with `production_chart_worker_mounts_runtime_socket: false` and `compose_worker_mounts_runtime_socket: true` — the per-path report §23 F-15 requires, and the gate derived it from the generator rather than pinning the word |
 | `commit` | `c52dcb98c270…`, compared by the gate against the SHA its own job checked out (§23 F-10) |
+
+The four skips inside each layer's regression are the Playwright-driven browser variants
+(`test_phase_28_2_browser_reaping::test_cancel_race_does_not_leak_browser_contexts`,
+`test_phase_28_4_browser_isolation::test_browser_runs_inside_sandbox_and_renders`,
+`::test_terminate_kills_browser_process_tree`, `::test_repeated_browser_runs_leave_no_orphans`),
+which need a local Chromium; the `browser` **gate** is decided by a different, executed proof —
+`test_phase_28_5_container_integration.py::test_browser_renders_page_in_isolated_container`, per the
+`GATE_TESTS` map in `scripts/certification/generate_report.py` — so the gate is not riding on a skip.
+Error-log audit of both jobs' complete logs — `gh run view --job 105887344482 --log`
+(`full-certification`, 3375 lines) and `--job 105887344373 --log`
+(`cap-production-certification`, 3594 lines): **0 tracebacks**.
 
 Environment captured alongside: `uname.txt`, `os-release.txt`, `docker-version.txt`,
 `docker-info.txt`, `resources.txt`, `cgroup.txt`, `ip-route.txt`, `iptables-save.txt`,
@@ -448,8 +461,10 @@ strict mode) when `syft`/`trivy` are absent — which is exactly why the count a
 ## 20. Secret scan, executed
 
 `scripts/quality/scan_secrets.py` — stdlib-only, so no vendor download can break the gate that
-catches credentials (this line's tooling has already been bitten by one). Scanned **1034 tracked
-files, 0 findings** (`outputs/cert-154f5b6/secret-scan.json`; re-run clean at the candidate).
+catches credentials (this line's tooling has already been bitten by one). Scanned **1040 tracked
+files, 0 findings** at the certified `c52dcb9`
+(`outputs/cert-c52dcb9/secret-scan.json`; 1034 at `154f5b6`,
+`outputs/cert-154f5b6/secret-scan.json` — the growth is this pass's own tooling and tests).
 Rules: provider-shaped tokens (AWS/GitHub/Slack/Stripe/Google/OpenAI/HuggingFace), PEM header +
 base64 body, JWTs, credentials inside URLs, assignments of high-entropy values to secret-shaped
 names, and a tracked `.env` as a finding by itself. Getting to zero took four rounds, each driven
