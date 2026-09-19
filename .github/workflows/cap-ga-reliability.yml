@@ -47,10 +47,22 @@ jobs:
         with: { version: v3.17.3 }
 
       - name: Install kind + mc (MinIO client)
+        # See cap-ga-certification.yml: dl.min.io now returns 410 Gone and the
+        # unfailen curl installed the error page as /usr/local/bin/mc, which is
+        # why every nightly soak since 2026-09-13 failed in this step. Pinned
+        # asset + published sha256sum + `curl -f`, and the soak needs mc for the
+        # same DR backup/restore scripts.
         run: |
-          curl -sSLo kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+          set -euo pipefail
+          curl -fSsL --retry 3 -o kind \
+            https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
           chmod +x kind && sudo mv kind /usr/local/bin/
-          curl -sSLo mc https://dl.min.io/client/mc/release/linux-amd64/mc
+          mc_release=RELEASE.2025-08-13T08-35-41Z
+          mc_base=https://github.com/minio/mc/releases/download/$mc_release
+          curl -fSsL --retry 3 -o mc "$mc_base/mc.linux-amd64.$mc_release"
+          curl -fSsL --retry 3 -o mc.sha256sum "$mc_base/mc.linux-amd64.$mc_release.sha256sum"
+          echo "$(cut -d' ' -f1 mc.sha256sum)  mc" | sha256sum --check --status \
+            || { echo "FATAL: mc checksum does not match the published sha256sum"; exit 1; }
           chmod +x mc && sudo mv mc /usr/local/bin/
           kind version && mc --version
 

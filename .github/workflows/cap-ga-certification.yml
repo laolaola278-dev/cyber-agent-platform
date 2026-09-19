@@ -50,10 +50,25 @@ jobs:
         with: { version: v3.17.3 }
 
       - name: Install kind + mc (MinIO client)
+        # dl.min.io retired the open-source client and now answers 410 Gone.
+        # `curl -sSLo` ignored the status, wrote the error page to disk, chmod
+        # +x'd it and installed it as /usr/local/bin/mc -- every GA run then died
+        # with "/usr/local/bin/mc: line 3: syntax error near unexpected token"
+        # (nightly failures since 2026-09-13). mc is not cosmetic:
+        # scripts/certification/{backup,restore}_cluster.sh need `mc alias set`
+        # and `mc mirror` for the DR gates. Pin the release, fail on HTTP errors,
+        # and verify the published sha256sum before installing.
         run: |
-          curl -sSLo kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+          set -euo pipefail
+          curl -fSsL --retry 3 -o kind \
+            https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
           chmod +x kind && sudo mv kind /usr/local/bin/
-          curl -sSLo mc https://dl.min.io/client/mc/release/linux-amd64/mc
+          mc_release=RELEASE.2025-08-13T08-35-41Z
+          mc_base=https://github.com/minio/mc/releases/download/$mc_release
+          curl -fSsL --retry 3 -o mc "$mc_base/mc.linux-amd64.$mc_release"
+          curl -fSsL --retry 3 -o mc.sha256sum "$mc_base/mc.linux-amd64.$mc_release.sha256sum"
+          echo "$(cut -d' ' -f1 mc.sha256sum)  mc" | sha256sum --check --status \
+            || { echo "FATAL: mc checksum does not match the published sha256sum"; exit 1; }
           chmod +x mc && sudo mv mc /usr/local/bin/
           kind version && mc --version
 

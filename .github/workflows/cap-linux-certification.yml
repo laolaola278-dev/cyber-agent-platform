@@ -26,11 +26,6 @@ on:
           - pr
           - main
           - release
-      ha_n:
-        description: "HA run count (main layer only)"
-        required: false
-        default: "20"
-        type: string
   pull_request:
     branches: [main]
   push:
@@ -49,7 +44,11 @@ jobs:
   # PR / fast subset
   # ---------------------------------------------------------------------
   fast-certification:
-    if: github.event_name == 'pull_request'
+    # `layer` used to be decorative: no job read it, so a workflow_dispatch run
+    # on any ref completed green having executed nothing.
+    if: >-
+      github.event_name == 'pull_request'
+      || (github.event_name == 'workflow_dispatch' && inputs.layer == 'pr')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -123,7 +122,9 @@ jobs:
   # main / full certification (100-run HA; no 500-run benchmark)
   # ---------------------------------------------------------------------
   full-certification:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'workflow_dispatch' && inputs.layer != 'pr')
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
@@ -203,7 +204,9 @@ jobs:
   # release tag / production certification (RELEASE GATE)
   # ---------------------------------------------------------------------
   cap-production-certification:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      startsWith(github.ref, 'refs/tags/v')
+      || (github.event_name == 'workflow_dispatch' && inputs.layer == 'release')
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:

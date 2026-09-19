@@ -35,7 +35,9 @@ jobs:
 
       - name: Install kind
         run: |
-          curl -sSLo kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+          set -euo pipefail
+          curl -fSsL --retry 3 -o kind \
+            https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
           chmod +x kind && sudo mv kind /usr/local/bin/
           kind version
 
