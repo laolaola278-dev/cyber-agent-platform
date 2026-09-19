@@ -26,6 +26,11 @@ Use immutable RC/final image tags in controlled environments. `docker compose do
 - Frontend serves `/` and proxies `/api/` to Backend.
 - Unknown/missing trusted identity receives 401; unauthorized role receives 403.
 - Alembic has one head and upgrade is complete.
+Redis runs in this stack because `settings.redis_url` names it, not because the request path
+uses it: no module in `backend/app` imports a Redis client, and `GET /readiness`'s
+`redis_configured` is `bool(redis_url)` -- it reports that a URL is configured, not that
+anything connected. Nothing in v1 breaks if the `redis` service is removed.
+
 Sandbox images are a separate build. `docker compose up --build` builds the
 backend, the console and the egress proxy, but the acquisition worker defaults to
 `SANDBOX_IMAGE=cap-sandbox-http:latest` and `SANDBOX_BROWSER_IMAGE=cap-sandbox-browser:latest`,

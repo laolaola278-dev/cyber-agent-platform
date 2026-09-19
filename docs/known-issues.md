@@ -31,6 +31,16 @@ The readiness verdict and the exact candidate SHA are recorded in
 
 ## Operational limitations
 
+- **Redis is configured but unused.** `settings.redis_url` has a default, `docker-compose.yml`
+  runs a `redis` service, and `GET /readiness` reports `redis_configured` -- which is
+  `bool(settings.redis_url)`, i.e. proof that a string exists, not that anything connects.
+  No module in `backend/app` imports a Redis client, and the telemetry coordinator's docstring
+  states it has no broker dependency. Consequences an operator should know: a deployment that
+  does not run Redis is unaffected; a deployment that does is protecting a stateful service for
+  nothing; and `redis_configured: true` must never be read as health. Deliberately **not
+  certified with invented tests** -- there is no business behaviour to observe. Removing the
+  service and the field is a settings/API change and belongs with the event-plane work that
+  would justify it.
 - **The release publishes two images; the product runs five.** `release.yml` builds and
   pushes `cap-backend` and `cap-console` to ghcr.io (with SBOM and provenance attestations);
   the acquisition worker starts sandboxes from `cap-sandbox-http` and

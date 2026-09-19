@@ -21,7 +21,7 @@ Each checked item must have an owner, execution date, environment, and evidence 
 
 ## Data and recovery
 
-- [ ] PostgreSQL 16 and Redis 7 target services are supported, encrypted as required, monitored, and capacity tested.
+- [ ] PostgreSQL 16 is supported, encrypted as required, monitored, and capacity tested. **Redis is not on any v1 request path** -- no client exists in `backend/app`; `settings.redis_url` feeds only a readiness field that reports whether a URL string was set. Deploy Redis solely if a planned event plane needs it, and do not treat a running Redis as evidence of CAP health.
 - [ ] Backup completed; restore was tested into an isolated environment; RPO/RTO are approved.
 - [ ] Alembic single head is `20260812_0021`; migration round-trip and lock impact are staging-tested.
 
