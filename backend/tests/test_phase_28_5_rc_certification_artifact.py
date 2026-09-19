@@ -25,16 +25,29 @@ def _load_gen():
 
 def test_compose_declares_worker_control_socket() -> None:
     gen = _load_gen()
-    assert gen._worker_mounts_control_socket() is True, (
+    assert gen.compose_worker_mounts_control_socket() is True, (
         "docker-compose.yml declares /var/run/docker.sock on the acquisition "
         "worker; the truthfulness detector must see it"
     )
+    # The detection is structural (the service's volume list), not a grep: prose
+    # about the socket in .env.example must not be able to set a security verdict.
+    assert gen.chart_worker_mounts_control_socket() is False
 
 
 def test_worker_control_plane_is_not_certified() -> None:
+    """PARTIAL, and never PASS, while a shipped deployment path holds the socket.
+
+    The verdict was NOT_CERTIFIED when the detector could not tell the paths
+    apart. It now distinguishes them -- the production chart mounts nothing, the
+    compose worker does -- so the honest value is PARTIAL, and the rule this test
+    exists to enforce is unchanged: no blanket PASS while any shipped path can
+    reach the host container runtime, and the legacy boolean stays true so an
+    older consumer cannot read the finer answer as full isolation.
+    """
     gen = _load_gen()
     ctx = gen.docker_socket_control_plane()
-    assert ctx["worker_control_plane_isolation"] == "NOT_CERTIFIED"
+    assert ctx["worker_control_plane_isolation"] == "PARTIAL"
+    assert ctx["worker_control_plane_isolation"] != "PASS"
     assert ctx["unrestricted_docker_socket_mounted"] is True
 
 
@@ -74,14 +87,15 @@ def test_json_and_human_report_are_consistent(tmp_path, monkeypatch) -> None:
     data = json.loads((out / "cap-28.5-linux-certification.json").read_text(encoding="utf-8"))
     # sandbox workload isolation is certified by the 12 gates
     assert data["sandbox_workload_isolation"] == "PASS"
-    # worker-to-host control-plane isolation is NOT certified (docker.sock)
-    assert data["worker_control_plane_isolation"] == "NOT_CERTIFIED"
+    # worker-to-host control-plane isolation is not a PASS: compose mounts the socket
+    assert data["worker_control_plane_isolation"] == "PARTIAL"
     assert data["unrestricted_docker_socket_mounted"] is True
 
     report = (out / "CAP Phase 28.5-L Linux Runtime Certification Report.md").read_text(
         encoding="utf-8"
     )
-    assert "worker_control_plane_isolation: NOT_CERTIFIED" in report
+    assert "worker_control_plane_isolation: PARTIAL" in report
+    assert "compose worker (evaluation path): True" in report
     # meta-test: human report and JSON must agree (a report saying NOT_CERTIFIED
     # while the JSON says PASS would be an inconsistency).
     assert "sandbox_workload_isolation: PASS" in report

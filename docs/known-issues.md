@@ -80,7 +80,13 @@ The readiness verdict and the exact candidate SHA are recorded in
   verification is performed per release and recorded in the certification report.
 - OpenTelemetry spans are not exported when `OTEL_EXPORTER_ENDPOINT` is empty.
 - Metrics and API docs are public application paths; production networks must restrict metrics, while API docs default to disabled.
-- The Web Console defaults to `read-only` for local Compose. It is not a production identity solution.
+- **The console's default identity is `read-only`, and the chart/compose default to
+  it.** After this line's permission fix that is enough to *view* every console page,
+  but not to start an acquisition, run a workflow or write the registry: a deployment
+  that lets operators act must point the gateway at an identity holding the matching
+  `*.execute`/`*.write` permissions (SOC Analyst is the intended role), because the
+  trusted proxy -- not CAP -- is the only thing binding a header to a person. See
+  `docs/deployment/production-checklist.md` and the audit-attribution limitation above.
 - The console entry chunk is ~487 kB (157 kB gzipped) after route-level code
   splitting, under the 550 kB threshold. The antd core shared by most views is why
   it cannot shrink much further; the remaining page code is lazy-loaded.

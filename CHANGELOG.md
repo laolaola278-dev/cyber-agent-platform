@@ -111,6 +111,29 @@ published release contents are immutable.
   and `test_certification_workflow_contract.py` pins both halves.
 
 ### Fixed
+- Half the console's API surface required the whole platform. `/acquisitions`,
+  `/agents`, `/agent/*`, `/tasks`, `/workflow`, `/registry`, `/capabilities` and
+  `/runtime` had no rule in the authorization map, so they fell through to
+  `platform.manage` -- described in the RBAC catalog itself as "Operate *legacy*
+  control-plane management APIs". Consequences: the shipped default deployment
+  (console identity `read-only`) answered **403 `Permission required:
+  platform.manage`** on the Acquisitions, Agents, Tasks, Workflow, Registry,
+  Capabilities and Runtime pages, and the only operator "fix" available was to grant
+  the console user `platform.manage` -- the escalation the map exists to prevent.
+  K8S-GATE 33 found it by issuing the console's own request through the real nginx
+  proxy with no identity headers of its own; no unit test had ever asked as
+  `read-only`. The map now covers each resource with read/execute pairs
+  (`acquisition.read|execute`, `agent.read|execute`, `task.read|write`,
+  `workflow.read|execute`, `registry.read|write`, `capability.read`,
+  `runtime.read|write`), SOC Analyst gains the analyst-plane actions it already
+  performs, Incident Responder gains reads, and `Read Only` gains exactly the reads
+  the console displays -- no writes. `backend/tests/test_rbac_permission_mapping.py`
+  then pins the boundary so it cannot rot back: every advertised endpoint maps to a
+  real permission, the `platform.manage` fallback is a reviewed allow-list rather
+  than the default outcome for a route nobody thought about, and the shipped
+  enforcement path is exercised as `read-only`, including the 401s for an unknown
+  user and a wrong proxy secret.
+
 
 - `npm run build` was broken by this audit's own new fixture. The build
   typechecks `src/**/*.test.ts` as well, and `http.test.ts` passed `{}` where
@@ -264,6 +287,12 @@ published release contents are immutable.
   documents that it has no broker dependency -- yet the checklist asked operators to
   support, secure, monitor and capacity-test Redis 7. The documents state what is true
   rather than the certification inventing a test for behaviour that does not exist.
+
+- `backend/tests/test_rbac_permission_mapping.py` and
+  `backend/tests/test_sandbox_socket_boundary.py`: the permission map, the
+  least-privilege set of each role, and the runtime-socket boundary between the
+  production chart and the compose evaluation path are now asserted in both
+  directions, including negative controls for an unmapped future route.
 
 ## [1.0.5] - 2026-09-07
 

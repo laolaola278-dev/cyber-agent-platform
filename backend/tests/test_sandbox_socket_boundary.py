@@ -105,15 +105,27 @@ def test_compose_worker_socket_and_its_documentation_agree() -> None:
 def test_certification_artifact_reports_both_paths_separately() -> None:
     """One PASS word over two different deployments is how a false claim survives."""
     payload = generate_report.docker_socket_control_plane()
-    assert payload["production_chart_worker_mounts_runtime_socket"] is False
-    assert payload["worker_control_plane_isolation"] == "PASS"
+    chart = payload["production_chart_worker_mounts_runtime_socket"]
+    compose = payload["compose_worker_mounts_runtime_socket"]
+    assert chart is False, "the production chart must mount no control socket"
+    assert compose is True, (
+        "compose still mounts the runtime socket; update the docs, this test and "
+        "the report line together -- the verdict below depends on it"
+    )
+    # The enum is the point: the production path being clean does not buy a PASS
+    # while a shipped path can reach the host container runtime.
+    assert payload["worker_control_plane_isolation"] == "PARTIAL"
+    assert payload["unrestricted_docker_socket_mounted"] is True
     assert "compose_worker_mounts_runtime_socket" in payload
     assert "Compose is the evaluation/single-node path" in str(
         payload["compose_control_socket_scope"]
     ) or "no longer mounts" in str(payload["compose_control_socket_scope"])
     # The human report must not be able to print the headline without the path.
     source = (PROJECT_ROOT / "scripts" / "certification" / "generate_report.py").read_text("utf-8")
-    assert "(production chart)" in source, "the report line lost the path it describes"
+    assert "production chart worker mounts a runtime control socket" in source, (
+        "the report line lost the path it describes"
+    )
+    assert "compose worker (evaluation path)" in source, "the report dropped the compose path"
 
 
 def test_detector_is_not_a_substring_grep() -> None:

@@ -66,6 +66,33 @@ def _permission_for(method: str, path: str) -> str:
         return "approval.decide"
     if path in {"/roles", "/permissions", "/users"}:
         return "rbac.read"
+    # The analyst/operations plane below is read by the console and written by its
+    # operator roles. Before this it fell through to `platform.manage`, whose own
+    # catalog description says "legacy control-plane management APIs": a read of
+    # /acquisitions, /tasks or /workflow therefore demanded the whole platform,
+    # which is what made the default `read-only` console answer 403 on half its
+    # pages (found by K8S-GATE 33, not by a unit test).
+    if path.startswith("/acquisitions"):
+        return "acquisition.read" if read else "acquisition.execute"
+    if path == "/agent" or path.startswith("/agent/"):
+        return "agent.read" if read else "agent.execute"
+    if path.startswith("/agents"):
+        return "agent.read" if read else "agent.execute"
+    if path.startswith("/tasks"):
+        return "task.read" if read else "task.write"
+    if path.startswith("/workflow"):
+        return "workflow.read" if read else "workflow.execute"
+    if path.startswith("/registry"):
+        return "registry.read" if read else "registry.write"
+    if path.startswith("/capabilities"):
+        return "capability.read"
+    if path.startswith("/runtime"):
+        return "runtime.read" if read else "runtime.write"
+    # Everything else is the legacy control plane: agent registration/heartbeat,
+    # and any route added without an explicit rule. Failing closed to the
+    # broadest permission is deliberate -- test_rbac_permission_mapping.py makes a
+    # new console endpoint that lands here a failure, so the fallback cannot
+    # quietly absorb the next page.
     return "platform.manage"
 
 

@@ -179,10 +179,15 @@ def docker_socket_control_plane() -> dict[str, object]:
     """Per-path control-socket facts, so the artifact cannot be read as a blanket claim."""
     compose = compose_worker_mounts_control_socket()
     chart = chart_worker_mounts_control_socket()
+    # Never a blanket PASS while any shipped deployment path holds the socket:
+    # PARTIAL says "the production chart is isolated, the compose path is not",
+    # and the legacy boolean stays true if *either* path mounts one, so an older
+    # consumer cannot read this as full isolation.
+    mounted = chart or compose
+    verdict = "PASS" if not mounted else ("NOT_CERTIFIED" if chart else "PARTIAL")
     return {
-        # The production deployment path decides the headline.
-        "worker_control_plane_isolation": "NOT_CERTIFIED" if chart else "PASS",
-        "unrestricted_docker_socket_mounted": chart,
+        "worker_control_plane_isolation": verdict,
+        "unrestricted_docker_socket_mounted": mounted,
         "production_chart_worker_mounts_runtime_socket": chart,
         "compose_worker_mounts_runtime_socket": compose,
         "compose_control_socket_scope": (
@@ -242,6 +247,11 @@ def main() -> int:
         "sandbox_workload_isolation": sandbox_workload,
         "worker_control_plane_isolation": socket_ctx["worker_control_plane_isolation"],
         "unrestricted_docker_socket_mounted": socket_ctx["unrestricted_docker_socket_mounted"],
+        "production_chart_worker_mounts_runtime_socket": socket_ctx[
+            "production_chart_worker_mounts_runtime_socket"
+        ],
+        "compose_worker_mounts_runtime_socket": socket_ctx["compose_worker_mounts_runtime_socket"],
+        "compose_control_socket_scope": socket_ctx["compose_control_socket_scope"],
         "tests": {"total": len(results), "outcomes": {
             "passed": sum(1 for v in results.values() if v == "passed"),
             "failed": sum(1 for v in results.values() if v == "failed"),
@@ -282,9 +292,10 @@ def main() -> int:
         "",
         "## Control plane",
         f"- sandbox_workload_isolation: {payload['sandbox_workload_isolation']}",
-        f"- worker_control_plane_isolation (production chart): "
-        f"{payload['worker_control_plane_isolation']}",
-        f"- compose worker mounts a runtime control socket (evaluation path): "
+        f"- worker_control_plane_isolation: {payload['worker_control_plane_isolation']}",
+        "-   production chart worker mounts a runtime control socket: "
+        f"{payload['production_chart_worker_mounts_runtime_socket']}"
+        " | compose worker (evaluation path): "
         f"{payload['compose_worker_mounts_runtime_socket']}",
         f"- unrestricted_docker_socket_mounted: {payload['unrestricted_docker_socket_mounted']}",
         "",
