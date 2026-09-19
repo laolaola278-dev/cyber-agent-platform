@@ -110,6 +110,38 @@ published release contents are immutable.
   `ci.yml` keeps cancellation -- superseded unit-test runs have no evidence value --
   and `test_certification_workflow_contract.py` pins both halves.
 
+- `scripts/quality/audit_junit.py` turns a job's JUnit (and optional coverage XML) into
+  the two tables the release report publishes: which tests did not run, grouped by what
+  the skip *message* says, and which modules and files the headline coverage percentage
+  hides. Whether a skip matters is decided by the test's own identity, not by its
+  excuse -- a security test that skipped for want of a container runtime is still a
+  security test that did not run. The tool is descriptive by design: each certification
+  job owns its strictness policy, so it never fails a build, it only refuses to let a
+  skip be anonymous. Until now both tables were assembled by hand from ad-hoc queries,
+  which is how "132 skipped" reached a report without naming the twelve object-store
+  skips inside it.
+- Release evidence now binds itself to a commit. The Linux certification artifact records
+  the SHA it certified (`GITHUB_SHA`, or `git rev-parse HEAD` locally), and the
+  release-layer gate refuses an artifact that records no commit, records `"unknown"`, or
+  records a different one than its own job checked out. The same gate stopped asserting a
+  control-plane verdict *word* it does not own: it re-derives the per-path socket facts
+  from `scripts/certification/generate_report.py`, refuses `PASS` while any shipped
+  deployment path mounts a container-runtime socket, and treats a chart socket mount as a
+  release blocker. Two contract tests hold the class shut -- one fails any workflow step
+  pinning an isolation verdict, the other **executes** that inline gate step against a
+  truthful artifact and against every shape it must refuse, inline workflow Python no
+  test had ever run before.
+- `scripts/` joined the lint gate in both `make lint` and CI, and
+  `backend/tests/test_quality_gate_parity.py` binds the Makefile targets to the CI steps
+  so the two declared gate sets cannot drift apart again. The same test requires every
+  suite CI `--ignore`s and every node CI `--deselect`s to keep a home that actually
+  collects it -- another CI job, or an explicit note in `ci.yml` naming where -- because
+  an exclusion that quietly ends a test's only execution is a hole in the release
+  evidence, not a speed-up. `scripts/quality/**` also became its own classifier category
+  (`repo_tooling`), justified by a test that resolves the real `docker build` contexts and
+  the chart/compose files rather than by a comment: the moment anything under `scripts/`
+  can reach a container, that category has to fall back to fail-closed.
+
 ### Fixed
 
 - **A healthy long-running acquisition could be cancelled under load.** The execution-lease
@@ -127,6 +159,20 @@ published release contents are immutable.
   renew nor commit. Found as `assert 'CANCELLED' == 'COMPLETE'` in the release layer of the Linux
   certification (run `35430453285`), where the same commit passed the same test in a sibling job;
   pinned by deterministic tests that were confirmed to fail against the pre-fix code.
+  Two follow-on corrections came out of certifying it. The cadence itself — written
+  `max(1.0, lease_ttl / 3)` at both call sites — broke the documented "renew three times per lease"
+  rule for any TTL under ~3 s, which is the regime the certification harnesses run in, leaving a
+  healthy operation a 1.33 s stall budget; it is now one named function (`ttl / 3`, never slower)
+  whose production value at 120 s is bit-identical to before, with tests asserting both halves and
+  the 0.15 s floor boundary. Then CI's own unit job caught the fix overreaching: deriving a
+  renewal-only session from the runtime's bind is right wherever a second connection exists and
+  wrong on a single-connection bind (`StaticPool`, the in-memory SQLite the test suite shares),
+  where the "dedicated" session is the same connection the crawl is writing on and its `COMMIT`
+  fails mid-transaction — `cannot commit transaction - SQL statements in progress`, run
+  `35436793797`. Both places now ask one helper (`bind_serves_one_connection`) and renew through
+  the operation's own session when there is nowhere else to renew; the heartbeat's first renewal is
+  also anchored on the loop clock instead of `0.0`, which had made every first poll iteration renew
+  unconditionally. Verified by the green CI unit job at `c52dcb9`.
 - Three certification gates were corrected where they were wrong rather than strict. The Linux
   release layer asserted a control-plane `worker_control_plane_isolation` *verdict word* it does not
   own, so it failed run `35431391962` after 193 regression tests, the 500-run OCI benchmark, the

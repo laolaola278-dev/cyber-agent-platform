@@ -412,10 +412,14 @@ after upgrade, and GA-GATE 34 performing a Helm upgrade **during sustained load*
   `helm rollback` to a v1.0.5 release needs no migration and no data repair. Stated as a fact
   with its evidence rather than assumed.
 - **What will not roll back cleanly**: a workflow instance parked at the new approval gate.
-  `1.0.6` writes `WAITING` steps with `context.approvals`; v1.0.5's approval handler has no
-  decision endpoint and re-parks on resume (`_tmp/wt-v105/backend/app/workflow/nodes.py:62-71`,
-  `runtime.py:57-60`), so the run is **stranded, not silently approved** — it cannot fail open,
-  but an operator must list open `WAITING` approval steps before deciding to roll back.
+  `1.0.6` writes `WAITING` steps with `context.approvals`; at v1.0.5 the approval handler is the
+  Phase 3 placeholder (`git show v1.0.5:backend/app/workflow/nodes.py`, `ApprovalNodeHandler`
+  returning `WAITING` with `{"reason": "Approval provider is not implemented in Phase 3"}`) and
+  resume re-parks every `WAITING` step back to `PENDING` (`git show
+  v1.0.5:backend/app/workflow/runtime.py`, the `elif instance.status == WAITING` branch), so the
+  run is **stranded, not silently approved** — it cannot fail open, but an operator must list open
+  `WAITING` approval steps before deciding to roll back, and after rolling forward again they will
+  be re-presented for a decision rather than auto-completed.
 - The guide itself (`docs/deployment/rollback.md`) keeps the hard rules: freeze high-impact
   operations and preserve evidence, `helm rollback --wait`, re-verify RBAC deny paths / audit /
   queue / critical workflows afterwards, restore a *verified* backup only after stopping writers
@@ -431,10 +435,11 @@ after upgrade, and GA-GATE 34 performing a Helm upgrade **during sustained load*
 (`ed142fd0673e97e23eac54620cfb913e5ce36c25`), three scans (`fs` on the repository,
 `cap-backend:ci`, `cap-frontend:ci`) each `severity: HIGH,CRITICAL`, `ignore-unfixed: true`,
 `exit-code: "1"` — a new fixable HIGH/CRITICAL in a shipped image fails the push, and that job is
-green at `8a8711f` (**IN FLIGHT** `35427771415`). SBOM and provenance attestations are produced by
-`release.yml`'s buildx on publish (`sbom: true`, `provenance: true`) with `VERSION`/`REVISION`
-build-args; a candidate that is not published therefore has **no registry attestation**, and this
-report says so rather than presenting an image ID as one. The GA workflow's supply-chain job adds
+green on the certified `c52dcb9` (CI run `35439324779`, all five jobs). SBOM and provenance
+attestations are produced by `release.yml`'s buildx on publish (`sbom: true`, `provenance: true`)
+with `VERSION`/`REVISION` build-args; a candidate that is not published therefore has **no registry
+attestation**, and this report says so rather than presenting an image ID as one. The GA workflow's
+supply-chain job adds
 `syft` SBOMs (cyclonedx + spdx) and trivy JSON per image, pinned; those artifacts from earlier runs
 live under `outputs/cap-cert-ga/` and are labelled by the commit they describe.
 `test_phase_28_7_ga_tier2_supply_chain.py` asserts the toolchain and skips (→ fails under
