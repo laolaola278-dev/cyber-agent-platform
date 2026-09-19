@@ -1863,7 +1863,7 @@ def console_port() -> int:
     # a guessed one fails as "unreachable" with nothing to show why.
     service_port = _kubectl(
         ["get", service, "-n", NAMESPACE, "-o", "jsonpath={.spec.ports[0].port}"]
-    ).strip()
+    ).stdout.strip()  # _kubectl returns the CompletedProcess, like every other caller
     assert service_port.isdigit(), f"{service} exposes no numeric port: {service_port!r}"
     port = 18081
     error_log = tempfile.TemporaryFile(mode="w+")
