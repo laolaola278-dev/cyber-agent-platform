@@ -26,4 +26,21 @@ Use immutable RC/final image tags in controlled environments. `docker compose do
 - Frontend serves `/` and proxies `/api/` to Backend.
 - Unknown/missing trusted identity receives 401; unauthorized role receives 403.
 - Alembic has one head and upgrade is complete.
+Sandbox images are a separate build. `docker compose up --build` builds the
+backend, the console and the egress proxy, but the acquisition worker defaults to
+`SANDBOX_IMAGE=cap-sandbox-http:latest` and `SANDBOX_BROWSER_IMAGE=cap-sandbox-browser:latest`,
+and compose builds neither -- the first acquisition would fail on a missing image.
+Build them from the repository before starting a run:
+
+```bash
+bash backend/docker/build_sandbox_images.sh --with-browser
+```
+
+That script tags `:latest` locally, which is right for a single-node evaluation box
+and wrong for production: publish the two images to your own registry from the same
+Dockerfiles (`backend/docker/sandbox-http/Dockerfile`,
+`backend/docker/sandbox-browser/Dockerfile`), pin them by digest, and pass the
+coordinates in (`SANDBOX_IMAGE`, `SANDBOX_BROWSER_IMAGE`, or the chart's
+`sandbox.image` / `sandbox.browserImage`). Release assets from `release.yml` contain
+the backend and console images only.
 - Prometheus targets and alert rules load when the profile is enabled.

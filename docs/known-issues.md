@@ -31,6 +31,16 @@ The readiness verdict and the exact candidate SHA are recorded in
 
 ## Operational limitations
 
+- **The release publishes two images; the product runs five.** `release.yml` builds and
+  pushes `cap-backend` and `cap-console` to ghcr.io (with SBOM and provenance attestations);
+  the acquisition worker starts sandboxes from `cap-sandbox-http` and
+  `cap-sandbox-browser`, and the egress proxy is a third image, none of which is published.
+  The chart's defaults are `:latest` tags that no registry serves, so a default install
+  fails at the first acquisition until the operator builds them
+  (`backend/docker/build_sandbox_images.sh`, now named in the compose guide, the production
+  checklist and the README). Follow-up, not fixed here because it changes build tooling:
+  publish all five by digest from `release.yml` and make the chart default to the published
+  coordinates instead of `:latest`.
 - Identity is supplied by a trusted reverse proxy; CAP does not provide an OIDC login implementation. Production gateways must overwrite identity headers.
 - **Audit attribution is client-supplied.** Transition/assign/decision endpoints take
   an `actor` (or `approver`) in the request body, and the Web Console submits the

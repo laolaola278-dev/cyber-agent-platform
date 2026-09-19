@@ -61,6 +61,13 @@ place makes every incident creation fail with `SECRET_NOT_FOUND`.
 - Backend readiness: http://localhost:8000/ready
 - Metrics: http://localhost:8000/metrics
 
+Build the sandbox images before the first acquisition run -- compose builds
+the application services, not the two images the worker starts sandboxes from:
+
+```bash
+bash backend/docker/build_sandbox_images.sh --with-browser
+```
+
 Compose is an evaluation/single-node path. See [`docs/deployment/docker-compose.md`](docs/deployment/docker-compose.md).
 
 ## Kubernetes packaging

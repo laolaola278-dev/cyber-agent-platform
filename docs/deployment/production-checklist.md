@@ -7,7 +7,7 @@ Each checked item must have an owner, execution date, environment, and evidence 
 ## Governance
 
 - [ ] Architect approved the exact commit, tag, image digests, Chart package, SBOM, release notes, and known issues.
-- [ ] `v1.0.0-rc1` artifacts are immutable; any change uses a new RC.
+- [ ] The published release artifacts (tag, images by digest, chart package, SBOM, notes) are immutable; any change uses a new RC.
 - [ ] Phase 22 API latency risk is closed or formally accepted with capacity limits.
 
 ## Security
@@ -23,9 +23,11 @@ Each checked item must have an owner, execution date, environment, and evidence 
 
 - [ ] PostgreSQL 16 and Redis 7 target services are supported, encrypted as required, monitored, and capacity tested.
 - [ ] Backup completed; restore was tested into an isolated environment; RPO/RTO are approved.
-- [ ] Alembic single head is `20260803_0018`; migration round-trip and lock impact are staging-tested.
+- [ ] Alembic single head is `20260812_0021`; migration round-trip and lock impact are staging-tested.
 
 ## Deployment
+
+- [ ] The sandbox images the worker starts are present in a registry the cluster can pull, pinned by digest, and built from the same commit as the backend image (`backend/docker/build_sandbox_images.sh --with-browser`); the chart's default `cap-sandbox-http:latest` / `cap-sandbox-browser:latest` are published by nothing, so a default install fails at the first acquisition.
 
 - [ ] Helm lint/template and cluster server-side dry run pass.
 - [ ] Startup/readiness/liveness probes, PDB, rolling update, resource requests/limits, and migration Job pass.
