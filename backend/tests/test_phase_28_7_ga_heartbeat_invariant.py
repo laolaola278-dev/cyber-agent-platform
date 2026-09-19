@@ -14,16 +14,30 @@ by SQLAlchemy and corrupted the session state machine under load:
 A dying heartbeat stops renewals, so a HEALTHY run was then falsely
 reclaimed by another worker. This module pins the invariant permanently:
 
-  INVARIANT: any WorkerRuntime that may run long operations must renew its
-  execution lease on a session NOT shared with the main execute flow.
+  INVARIANT: every WorkerRuntime renews its execution lease on a session NOT
+  shared with the main execute flow. The heartbeat task is created
+  unconditionally by execute(), so this does not depend on how long a caller
+  expects an operation to run.
 
-Enforced two ways:
-  1. STATIC: every ``WorkerRuntime(`` construction in app/ must pass
-     ``heartbeat_session_factory=`` (short-lived TEST constructions in
-     tests/ are allowlisted by policy and not scanned).
-  2. BEHAVIORAL: with a deliberately-open transaction on the runtime
-     session, a concurrent renewal through the dedicated-session path must
-     succeed without touching the open transaction.
+Enforced three ways:
+  1. BY CONSTRUCTION: WorkerRuntime derives a renewal-only session factory from
+     the runtime session's bind when a site omits one, so no construction site
+     -- production or test -- can put the heartbeat and the main execute flow on
+     the same AsyncSession.
+  2. STATIC: every ``WorkerRuntime(`` construction in app/ must still name its
+     ``heartbeat_session_factory=`` (production wiring stays visible at the call
+     site), and no site anywhere may opt out with an explicit ``None``.
+  3. BEHAVIORAL: with a deliberately-open transaction on the runtime session, a
+     concurrent renewal through the dedicated-session path must succeed without
+     touching the open transaction; and a renewal that fails for a TRANSIENT
+     reason (SQLite "database is locked" under writer contention) must be
+     retried on the next tick rather than end the heartbeat.
+
+The transient-retry half is not theoretical: run 35430453285
+(cap-production-certification, healthy 3.5s acquisition on a loaded runner)
+lost one renewal, the heartbeat died silently, the 2s execution lease lapsed
+unrenewed, the fenced commit was correctly rejected, and the run landed
+CANCELLED -- a healthy run falsely cancelled.
 
 Historical forbidden failures are asserted never to reappear.
 """
@@ -31,6 +45,7 @@ Historical forbidden failures are asserted never to reappear.
 from __future__ import annotations
 
 import ast
+import asyncio
 import os
 import uuid
 from datetime import UTC, datetime
@@ -39,6 +54,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -47,6 +63,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from app.database import Base
+from app.exceptions import WorkerLeaseConflict
 from app.models.worker import SandboxExecution
 from app.models.worker import WorkerLease as WorkerLeaseModel
 from app.sandbox.policy import SandboxPolicyEngine
@@ -71,21 +88,27 @@ FORBIDDEN_ERRORS = (
 # -- 1. STATIC architecture scan ----------------------------------------------
 
 
-def _worker_runtime_calls() -> list[tuple[Path, ast.Call]]:
+def _worker_runtime_calls(
+    directory: Path, relative_to: Path = BACKEND
+) -> list[tuple[Path, ast.Call]]:
     calls: list[tuple[Path, ast.Call]] = []
-    for path in sorted(APP_DIR.rglob("*.py")):
+    for path in sorted(directory.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 fn = node.func
                 name = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", "")
                 if name == "WorkerRuntime":
-                    calls.append((path.relative_to(BACKEND), node))
+                    calls.append((path.relative_to(relative_to), node))
     return calls
 
 
+def _keyword(node: ast.Call, name: str) -> ast.keyword | None:
+    return next((kw for kw in node.keywords if kw.arg == name), None)
+
+
 def test_arch_every_app_worker_runtime_site_uses_dedicated_heartbeat_session() -> None:
-    sites = _worker_runtime_calls()
+    sites = _worker_runtime_calls(APP_DIR)
     assert sites, "scanner found no WorkerRuntime sites -- scanner is broken"
     offenders = [
         str(path)
@@ -97,8 +120,31 @@ def test_arch_every_app_worker_runtime_site_uses_dedicated_heartbeat_session() -
         f"heartbeat_session_factory in {offenders}. The execution-time "
         "heartbeat must renew on its own AsyncSession -- sharing one session "
         "between the heartbeat task and the main execute flow corrupts the "
-        "session state machine (see commit 2ba8bec). Short-lived TEST "
-        "constructions live in tests/ and are not scanned."
+        "session state machine (see commit 2ba8bec). WorkerRuntime now derives "
+        "a factory from the session bind when one is omitted, so an app/ site "
+        "that omits it is relying on that fallback instead of naming its own "
+        "session maker -- name it."
+    )
+
+
+def test_arch_no_worker_runtime_site_opts_out_of_heartbeat_isolation() -> None:
+    """``heartbeat_session_factory=None`` is the one way to defeat the invariant.
+
+    Scanned across BOTH app/ and tests/: a test that opts out reintroduces the
+    load-dependent false cancellation that certification caught in run
+    35430453285, so the exemption tests/ used to enjoy is gone.
+    """
+    sites = _worker_runtime_calls(APP_DIR) + _worker_runtime_calls(BACKEND / "tests")
+    assert sites, "scanner found no WorkerRuntime sites -- scanner is broken"
+    opted_out = [
+        f"{path}:{node.lineno}"
+        for path, node in sites
+        if (kw := _keyword(node, "heartbeat_session_factory")) is not None
+        and isinstance(kw.value, ast.Constant)
+        and kw.value.value is None
+    ]
+    assert not opted_out, (
+        f"WorkerRuntime sites opt out of heartbeat isolation with None: {opted_out}"
     )
 
 
@@ -302,17 +348,170 @@ async def test_heartbeat_write_contention_uses_separate_connections(
     await runtime_session.close()
 
 
+async def test_heartbeat_is_dedicated_even_when_the_site_omits_the_factory(
+    hb_engine, monkeypatch
+) -> None:
+    """The 28.3 construction shape can no longer share the runtime session.
+
+    ``test_phase_28_3_lease_heartbeat.py`` builds a WorkerRuntime without
+    ``heartbeat_session_factory``, which put the heartbeat task and the main
+    execute flow on one AsyncSession -- the unsupported configuration that made
+    renewals stop under contention. WorkerRuntime now derives a renewal-only
+    factory from the session bind, so omitting the argument is safe everywhere.
+    """
+    factory = async_sessionmaker(hb_engine, expire_on_commit=False)
+    runtime_session = factory()
+
+    leases = WorkerLeaseManager(runtime_session)
+    runtime = WorkerRuntime(
+        runtime_session,
+        WorkerRegistry(runtime_session),
+        WorkerScheduler(WorkerRegistry(runtime_session)),
+        leases,
+        SandboxRuntime(MemorySandboxProvider(), SandboxPolicyEngine()),
+        lease_ttl_seconds=3,
+        # heartbeat_session_factory DELIBERATELY omitted -- this is the shape
+        # that used to renew on the shared session.
+    )
+
+    assert runtime._heartbeat_session_factory is not None
+    opened = runtime._heartbeat_session_factory()
+    try:
+        assert opened is not runtime_session
+    finally:
+        await opened.close()
+
+    worker_id = uuid4()
+    await _register_test_worker(runtime_session, worker_id, "hb-derived")
+    lease = await leases.acquire(
+        worker_id=worker_id,
+        execution_id=uuid4(),
+        owner="acquisition:hb-derived",
+        ttl_seconds=3,
+    )
+
+    route: list[str] = []
+
+    async def dedicated(current, owner):
+        route.append("dedicated")
+        return current
+
+    async def shared(*args, **kwargs):  # pragma: no cover - must never run
+        route.append("shared")
+        raise AssertionError("renewal ran on the shared runtime session")
+
+    monkeypatch.setattr(runtime, "_renew_on_dedicated_session", dedicated)
+    monkeypatch.setattr(leases, "renew", shared)
+    await runtime._renew_lease(lease, "acquisition:hb-derived")
+    assert route == ["dedicated"]
+
+    await runtime_session.close()
+
+
+async def test_transient_renewal_failure_is_retried_and_ownership_loss_stops(
+    hb_engine, monkeypatch
+) -> None:
+    """One locked renewal must not end the heartbeat; a lost lease must.
+
+    Deterministic form of run 35430453285: the acquisition was healthy, a
+    renewal hit SQLite's single-writer limit, the heartbeat coroutine died with
+    it, renewals stopped for the rest of the operation, the execution lease
+    lapsed, and the fenced commit was rejected -- cancelling a run that should
+    have completed. Ownership loss (WorkerLeaseConflict) must still stop the
+    loop immediately, or this would become a way to renew over a reclaimed
+    lease.
+    """
+    factory = async_sessionmaker(hb_engine, expire_on_commit=False)
+    runtime_session = factory()
+
+    leases = WorkerLeaseManager(runtime_session)
+    runtime = WorkerRuntime(
+        runtime_session,
+        WorkerRegistry(runtime_session),
+        WorkerScheduler(WorkerRegistry(runtime_session)),
+        leases,
+        SandboxRuntime(MemorySandboxProvider(), SandboxPolicyEngine()),
+        lease_ttl_seconds=3,
+        heartbeat_session_factory=factory,
+    )
+    worker_id = uuid4()
+    await _register_test_worker(runtime_session, worker_id, "hb-retry")
+    lease = await leases.acquire(
+        worker_id=worker_id,
+        execution_id=uuid4(),
+        owner="acquisition:hb-retry",
+        ttl_seconds=3,
+    )
+    version_at_start = lease.version
+
+    ticks: list[tuple[str, int]] = []
+
+    async def flaky_renewal(current, owner):
+        # tick 1: transient writer lock; tick 2: same version, succeeds;
+        # tick 3: the lease is genuinely gone -- stop.
+        if not ticks:
+            ticks.append(("transient", current.version))
+            raise OperationalError(
+                "UPDATE worker_leases", {}, Exception("database is locked")
+            )
+        if len(ticks) == 1:
+            ticks.append(("renewed", current.version))
+            return await runtime._renew_on_dedicated_session(current, owner)
+        ticks.append(("conflict", current.version))
+        raise WorkerLeaseConflict("Worker lease renewal failed fencing validation")
+
+    monkeypatch.setattr(runtime, "_renew_lease", flaky_renewal)
+
+    holder = [lease]
+    stop = asyncio.Event()
+    task = asyncio.create_task(runtime._heartbeat_lease(holder, "acquisition:hb-retry", stop))
+    # three ticks at the 1.0s renewal floor; the loop returns on the conflict
+    await asyncio.wait_for(task, timeout=30)
+
+    assert [kind for kind, _ in ticks] == ["transient", "renewed", "conflict"]
+    # the retry reused the version the failed CAS never advanced
+    assert ticks[0][1] == ticks[1][1] == version_at_start
+    # the successful renewal is the holder's state going forward
+    assert holder[0].version == version_at_start + 1
+
+    await runtime_session.close()
+
+
+PG_DSN_VARIABLE = "CAP_PG_TEST_DSN"
+
+#: What a working DSN for this test has to look like. The driver matters as much
+#: as the server: the whole point of this variant is PostgreSQL's row-level
+#: locking, which SQLite's single-writer limit cannot express.
+PG_DSN_PREFIX = "postgresql+asyncpg://"
+
+
 @pytest.mark.skipif(
     os.environ.get("CAP_PG_TEST") != "1",
-    reason="authoritative PostgreSQL run: set CAP_PG_TEST=1 + DATABASE_URL "
-    "(GA certification workflow provides a real postgres cluster)",
+    reason="authoritative PostgreSQL run: set CAP_PG_TEST=1 + "
+    f"{PG_DSN_VARIABLE} (GA certification workflow provides a real postgres cluster)",
 )
 async def test_heartbeat_renewal_isolation_postgres_authoritative() -> None:
     """AUTHORITATIVE variant against PostgreSQL (the GA backend): with the
     main execution transaction holding an UNCOMMITTED WRITE, a concurrent
     renewal through the dedicated session must SUCCEED -- row-level locking
-    allows exactly what SQLite's single-writer limit forbids."""
-    url = os.environ["DATABASE_URL"]
+    allows exactly what SQLite's single-writer limit forbids.
+
+    The DSN comes from ``CAP_PG_TEST_DSN``, NOT from ``DATABASE_URL``:
+    tests/conftest.py pins ``DATABASE_URL`` to in-memory SQLite for every test
+    process, so a variant that trusted it could never reach PostgreSQL. It then
+    died on ``no such table: workers`` -- in-memory SQLite plus ``NullPool``
+    means the create_all connection and the session's connection are different,
+    empty databases -- which is how the strict GA job (run 35429972509) finally
+    caught a test that had been unable to run since the day it was written.
+    Skipping this variant is a certification GAP, never a pass.
+    """
+    url = os.environ.get(PG_DSN_VARIABLE, "").strip()
+    assert url.startswith(PG_DSN_PREFIX), (
+        f"CAP_PG_TEST=1 but {PG_DSN_VARIABLE} is "
+        f"{url!r}: this variant must run against a real PostgreSQL through "
+        f"{PG_DSN_PREFIX}. Point it at the certification cluster (the GA workflow "
+        "port-forwards one); SQLite cannot express the case under test."
+    )
     engine = create_async_engine(url, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:

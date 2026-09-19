@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.events import EventType, PlatformEvent
 from app.events.transactional import publish_audit
@@ -85,7 +85,15 @@ class WorkerRuntime:
         # When a factory is provided the heartbeat renews through its OWN
         # short-lived session -- renewal is fencing-gated on
         # (owner, fencing_token, version), so any session works.
+        #
+        # The factory is NOT optional-by-omission: when a caller leaves it out
+        # we derive one over the runtime's own bind, so no construction site
+        # (production or test) can put the heartbeat task and the main execute
+        # flow on the same AsyncSession. Passing ``None`` explicitly opts out
+        # only when the session has no bind to open a connection from.
         self._heartbeat_session_factory = heartbeat_session_factory
+        if self._heartbeat_session_factory is None:
+            self._heartbeat_session_factory = self._derive_heartbeat_session_factory()
 
     async def execute(
         self,
@@ -319,6 +327,37 @@ class WorkerRuntime:
             f"exit heartbeat for worker {worker_id} kept losing the CAS race"
         ) from last_error
 
+    def _derive_heartbeat_session_factory(self) -> Callable[[], AsyncSession] | None:
+        """Build the renewal-only session factory over the runtime's own bind.
+
+        Called when a construction site did not name one explicitly. Renewal is
+        fencing-gated (owner + fencing token + expected version CAS), so a
+        private short-lived session over the same engine is always valid -- and
+        it is the ONLY valid option, because the heartbeat task runs concurrently
+        with the main execute flow on the runtime session.
+        """
+        bind = getattr(self._session, "bind", None)
+        if bind is None:
+            logger.warning(
+                "worker runtime has no session bind to renew its execution lease "
+                "from; renewals will run on the shared session (unsupported under "
+                "concurrency) -- pass heartbeat_session_factory explicitly"
+            )
+            return None
+        return async_sessionmaker(bind, expire_on_commit=False)
+
+    async def _renew_lease(self, current: WorkerLease, owner: str) -> WorkerLease:
+        """One execution-lease renewal, always off the main execute flow."""
+        if self._heartbeat_session_factory is not None:
+            return await self._renew_on_dedicated_session(current, owner)
+        return await self._leases.renew(
+            current.id,
+            owner=owner,
+            fencing_token=current.fencing_token,
+            expected_version=current.version,
+            ttl_seconds=self._lease_ttl_seconds,
+        )
+
     async def _heartbeat_lease(
         self, holder: list[WorkerLease], owner: str, stop: asyncio.Event
     ) -> None:
@@ -332,8 +371,18 @@ class WorkerRuntime:
         is correctly fenced out. Teardown is COOPERATIVE (``stop`` event,
         observed between renewals) so a renewal in flight never has its
         statement abandoned -- no background task outlives ``execute``.
+
+        A renewal that fails for any reason OTHER than lost ownership is
+        transient (SQLite "database is locked" while the main flow holds the
+        single writer, a dropped connection, a rollback race). Such a failure
+        must NOT end the heartbeat: the loop retries on the next tick with the
+        same expected version (the CAS never landed, so the token/version are
+        still the ones on the row). Silently dying here was the load-dependent
+        defect behind run 35430453285, where a healthy 3.5s acquisition outlived
+        its 2s lease, lost the fenced commit, and the run landed CANCELLED.
         """
         interval = max(1.0, self._lease_ttl_seconds / 3.0)
+        transient_failures = 0
         try:
             while True:
                 # Interruptible wait: teardown sets ``stop`` and the wait
@@ -348,20 +397,20 @@ class WorkerRuntime:
                     return
                 current = holder[0]
                 try:
-                    if self._heartbeat_session_factory is not None:
-                        holder[0] = await self._renew_on_dedicated_session(current, owner)
-                    else:
-                        holder[0] = await self._leases.renew(
-                            current.id,
-                            owner=owner,
-                            fencing_token=current.fencing_token,
-                            expected_version=current.version,
-                            ttl_seconds=self._lease_ttl_seconds,
-                        )
+                    holder[0] = await self._renew_lease(current, owner)
                 except WorkerLeaseConflict:
                     # lost the lease -- stop renewing; the commit path will
                     # be rejected by the fencing gate (correct stale outcome)
                     return
+                except Exception as error:  # noqa: BLE001 -- transient, retried
+                    transient_failures += 1
+                    logger.warning(
+                        "execution-lease renewal for %s failed (transient, retrying "
+                        "on the next tick; attempt %d): %s",
+                        owner,
+                        transient_failures,
+                        error,
+                    )
         except asyncio.CancelledError:
             raise
 
