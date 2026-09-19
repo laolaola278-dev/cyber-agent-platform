@@ -212,9 +212,16 @@ jobs:
 
       - name: Generate reliability artifact
         if: always()
+        env:
+          # This job owns the soak and DR gates; the rest of the GA table has no
+          # evidence here by construction. Preview mode says so instead of
+          # printing "GA certification FAILED gates: [33 gates]" in the log of a
+          # green run -- and the exit code is no longer thrown away, so a real
+          # FAIL or a silently skipped certification test still reddens the job.
+          CAP_GA_PREVIEW: "1"
         run: |
           mkdir -p outputs/cap-cert-ga outputs/ga-dr
-          python scripts/certification/generate_report_28_7.py || true
+          python scripts/certification/generate_report_28_7.py
 
       - uses: actions/upload-artifact@v4
         if: always()

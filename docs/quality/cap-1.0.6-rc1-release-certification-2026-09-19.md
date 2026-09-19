@@ -426,6 +426,11 @@ went through the `cert/1.0.6-rc1` pointer branch: GA and the soak must share one
 `release/1.0.6-rc1` was moving under documentation commits. GA-GATE 33 found its security evidence
 the same way (`security-recert.json`: `conclusion: success`, run ids `35439343387` and
 `35439324778`), and GA-GATE 40's own skip scan agrees with the audit: `{'skipped': 0}`.
+The error-log audit was extended to both new rounds over their complete job logs: the strict GA job
+(`105903324450`, 3441 lines) has **0 tracebacks, 0 `ERROR`/`CRITICAL` lines, 0 failed-test
+markers**; the soak job (3154 lines) likewise, and the one failure-shaped string in it —
+`GA certification FAILED gates: [33 gates]` printed by a job that succeeded — is not a hidden soak
+problem but the misreport §23 F-22 records and fixes.
 
 **Why the earlier green rounds are history, not this candidate's certificate**
 
@@ -771,6 +776,36 @@ its documentation and a home that collects it.
   did not treat as enforcement claims — several are the requirements the §12/§13 tests do enforce,
   and the rest are labelled as future or out-of-scope work in their own text.
 
+**MEDIUM — found and resolved during this pass**
+
+- F-22 **A green soak job reported 33 failed GA gates.** The error-log audit of run
+  `35439341789` found `GA certification FAILED gates: ['GA-GATE 1', … 33 more]` inside a job that
+  finished *successfully*. The reliability workflow generates the GA artifact so its own DR evidence
+  is visible, but every other gate's test runs in another workflow, so they are `NOT_RUN` there by
+  construction — and the generator's development-mode decision calls `NOT_RUN` a failure. Its exit
+  code was then thrown away by `|| true`, so the line was simultaneously false (a green run cannot
+  have 33 failures) and useless (a real `FAIL`, or a certification test that started skipping, would
+  have printed the same words and been swallowed just the same). The generator now has a third mode,
+  `CAP_GA_PREVIEW=1`: absence is printed as absence and stays out of the decision, a `FAIL` or a
+  skipped test is still fatal, and `cap-ga-reliability.yml` no longer discards the code. Strict mode
+  ignores the flag, so it cannot soften a FULL GA verdict. `test_ga_report_preview_mode.py` runs the
+  script as a real process for each mode; removing the preview branch or the `|| true` guard fails
+  its own test.
+- F-23 **Two more defects in the same generator, both found by running it rather than reading it.**
+  (a) With `CAP_GA_OUT` redirected to an empty directory, the JUnit parser fell through to
+  `<repo>/outputs/cap-cert-ga/junit-ga.xml` — a *leftover from another run* — and reported 28 gates
+  PASS for an execution that had produced nothing. The fallback now applies only at the default
+  location, which is the only case it was ever meant to serve. (b) A Tier-2 evidence file outside the
+  checkout raised `ValueError: … is not in the subpath of …` from `relative_to(REPO_ROOT)` after the
+  artifact had been written, so the run died with a traceback over the cosmetic form of a source
+  path; the path is now best-effort absolute. This one is latent rather than live (CI keeps both
+  directories inside the workspace) and would have cost an operator their GA artifact the moment they
+  pointed `GA_REPORT_DIR` elsewhere. The Tier-2 consistency message also read `GA-GA-GATE 27`.
+  **A replay of the certified evidence through the fixed generator** (`outputs/cert-ga-c52dcb9/`
+  in, `ga-report-replay-at-tip.json` out) reproduces **39 PASS and refuses only GA-GATE 33**, because that gate
+  compares `security-recert.json`'s `head_sha` with the current checkout — the anti-stale rule from
+  F-10 doing its job on a replay at a different commit, which is exactly what a replay is.
+
 **MEDIUM — open, recorded, not papered over**
 - F-4 Migration/schema naming drift: constraints and indexes renamed relative to what the revisions
   and models promise; enforcement verified intact; `alembic check` is not gated (§5). A real fix
@@ -880,8 +915,10 @@ Evidence assembled on the certified `c52dcb9` (and inheritable deltas to the cur
   long-running acquisition could lose its execution lease under load (F-14, including the
   regression its own first fix introduced, F-18). The rest are in the machinery that certifies the
   product: a release gate asserting a verdict word it did not own (F-15), a PostgreSQL-authoritative
-  test that could not reach PostgreSQL (F-17), a Linux artifact bound to no commit (F-10), and a
-  publication gate that existed only as a comment (F-21).
+  test that could not reach PostgreSQL (F-17), a Linux artifact bound to no commit (F-10), a
+  publication gate that existed only as a comment (F-21), and a report generator whose successful job
+  printed 33 gate failures while `|| true` discarded its exit code (F-22, plus two more defects in
+  the same file that only executing it could show, F-23).
 
 **What still stands between this commit and a release** is now exactly one thing: **explicit
 publication authorization** (§28). Nothing was tagged, published, pushed to a registry, or

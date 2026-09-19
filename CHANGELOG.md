@@ -169,6 +169,23 @@ published release contents are immutable.
   completed runs of the Linux certification workflow it accepts 4 of the 21 green runs -- the
   dispatched release rounds -- and refuses the other 17, every one of which a colour-only gate would
   have accepted as release evidence.
+- **The GA report generator stopped lying in the reliability job, and stopped being lied to.** The
+  error-log audit of the soak found `GA certification FAILED gates: [33 gates]` printed by a job that
+  *succeeded*: `cap-ga-reliability.yml` generates the GA artifact so its own DR evidence is visible,
+  every other gate's tests live in another workflow, the development-mode decision calls `NOT_RUN`
+  a failure, and `|| true` threw the exit code away -- one line that was false (a green run does not
+  have 33 failures) and blind at once, because a real `FAIL` or a certification test that started
+  skipping printed the same words and vanished the same way. The generator now has a third mode,
+  `CAP_GA_PREVIEW=1`: absence is reported as absence and excluded from the decision, a `FAIL` or a
+  skipped test stays fatal, strict mode ignores the flag so it cannot soften a FULL GA verdict, and
+  the workflow keeps the exit code (F-22). Executing the generator outside CI turned up two more of
+  its own defects (F-23): with `CAP_GA_OUT` redirected, the JUnit parser fell through to the
+  repository's leftover `outputs/cap-cert-ga/junit-ga.xml` and reported 28 gates PASS for a run that
+  had produced nothing -- the fallback now applies only where it was ever meant to -- and a Tier-2
+  evidence file outside the checkout raised `ValueError` from `relative_to(REPO_ROOT)` *after* the
+  artifact was written, killing the report over the cosmetic form of a source path.
+  `backend/tests/test_ga_report_preview_mode.py` runs the script as a real process in each mode and
+  with each evidence layout; each rule was negative-controlled by reverting it.
 
 ### Fixed
 

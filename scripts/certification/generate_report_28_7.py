@@ -3,9 +3,10 @@
 Gates are derived from the JUnit XML of the GA certification test run plus
 the measured DR evidence (outputs/ga-dr/ga-dr-context.json). A gate backed
 by a test that is not passing is reported FAIL/SKIPPED/NOT_RUN -- never
-silently PASS (SKIP == FAIL, NOT_RUN == FAIL).
+silently PASS (SKIP == FAIL in every mode; NOT_RUN == FAIL except where the
+mode list below says otherwise).
 
-TWO DECISION MODES (restored STRICT GA semantics):
+THREE DECISION MODES (restored STRICT GA semantics):
 
 * development (default): gates without ANY implementing test are PLANNED --
   visible but excluded from the pass/fail decision. Used while gates
@@ -16,6 +17,10 @@ TWO DECISION MODES (restored STRICT GA semantics):
   titled "FULL GA CERTIFIED". The forbidden state "24 planned + workflow
   green = GA certified" is structurally impossible here: this mode makes
   that state exit non-zero.
+* preview (CAP_GA_PREVIEW=1, ignored under strict): the reliability job's own
+  run, where gates whose tests live in other workflows are NOT_RUN by
+  construction. Those are reported as absence and stay out of the decision; a
+  real FAIL still exits non-zero, so the caller must not swallow the code.
 """
 
 from __future__ import annotations
@@ -127,7 +132,12 @@ def _parse_junit() -> dict[str, str]:
     this runner via a download-artifact step.
     """
     candidates = sorted(OUT_DIR.glob("junit-*.xml"))
-    if not candidates:
+    if not candidates and not os.environ.get("CAP_GA_OUT"):
+        # The dev-time location, and only when the caller did NOT redirect the
+        # output. With CAP_GA_OUT set, reaching into the repository's own
+        # outputs/ would certify this run from some earlier run's leftover JUnit
+        # -- evidence this invocation never produced. (That fallback made a
+        # redirected local run report 28 gates PASS from a stale junit-ga.xml.)
         legacy = REPO_ROOT / "outputs" / "cap-cert-ga" / "junit-ga.xml"
         if legacy.exists():
             candidates = [legacy]
@@ -258,7 +268,13 @@ def _tier2_evidence(gates: dict[str, str], section: str) -> dict:
             "found_gate": raw.get("gate"),
         }
     base = {k: v for k, v in raw.items()}
-    base["evidence_source"] = str(source.relative_to(REPO_ROOT))
+    try:
+        base["evidence_source"] = str(source.relative_to(REPO_ROOT))
+    except ValueError:
+        # GA_REPORT_DIR / CAP_GA_OUT may point anywhere -- the evidence is no
+        # less real for living outside the checkout, and a report about measured
+        # DR numbers must not abort over how pretty its source path is.
+        base["evidence_source"] = str(source)
     if outcome == "PASS":
         base["executed"] = True
         base["status"] = "PASS"
@@ -314,6 +330,14 @@ def main() -> int:
     # mode (PLANNED == failure, 40/40 required). Default stays development
     # mode while gates land; both modes are reported in the artifact.
     final_strict = os.environ.get("CAP_GA_STRICT") == "1"
+    # PREVIEW mode (CAP_GA_PREVIEW=1, and never in strict mode): the reliability
+    # job runs this generator so its own DR/Tier-2 evidence is visible in the
+    # artifact, but the other gates have no evidence in that job by construction
+    # -- their tests run in other workflows. There, NOT_RUN is "not produced
+    # here", not a failure, and printing it as "GA certification FAILED gates"
+    # made the log of a green soak claim 33 failures while `|| true` threw the
+    # exit code away. A real FAIL is still fatal; absence is still reported.
+    preview = os.environ.get("CAP_GA_PREVIEW") == "1" and not final_strict
 
     gates = {gate: "NOT_RUN" for gate in ALL_GATES}
     implemented = _implemented_gates()
@@ -479,6 +503,16 @@ def main() -> int:
     bad_dev = [
         g for g, v in gates.items() if v in ("FAIL", "NOT_RUN") and g in implemented
     ]
+    if bad_dev and preview:
+        absent = [g for g in bad_dev if gates[g] == "NOT_RUN"]
+        broken = [g for g in bad_dev if gates[g] != "NOT_RUN"]
+        if absent:
+            print(
+                f"GA preview: {len(absent)} implemented gates have no evidence in "
+                "this job (their tests belong to other workflows); the decision "
+                "below is not this run's verdict"
+            )
+        bad_dev = broken
     if bad_dev:
         print(f"GA certification FAILED gates: {bad_dev}", file=sys.stderr)
         return 1
@@ -509,7 +543,7 @@ def main() -> int:
         gate = TIER2_EVIDENCE[sec][0]
         if gates.get(gate) == "PASS" and not _tier2_evidence_present(sec):
             print(
-                f"GA-{gate} PASS but Tier-2 {sec} evidence file missing -- "
+                f"{gate} PASS but Tier-2 {sec} evidence file missing -- "
                 "machine artifact inconsistent with measured evidence",
                 file=sys.stderr,
             )
