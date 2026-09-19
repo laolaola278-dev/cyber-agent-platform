@@ -109,6 +109,17 @@ VERSION_FIELD_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r'^\s*app_version\s*(:\s*str\s*)?=\s*'),
     # backend/app/__init__.py:  __version__ = "1.0.0"
     re.compile(r'^\s*__version__\s*=\s*'),
+    # .env.example / env templates:  APP_VERSION=1.0.0
+    # APP_VERSION became a carrier in 1a55df0: docker-compose interpolates it
+    # into the containers and it overrides settings.app_version at runtime, so
+    # test_release_version_consistency requires it to equal VERSION. Without this
+    # pattern every RC bump was misread as production_runtime and reported
+    # RECERTIFICATION_REQUIRED for a commit that changes no behaviour at all.
+    # Narrow by construction: a line only counts when the *value* is a version
+    # literal, because is_release_metadata_only_change() still requires every
+    # changed line to normalize identically and a version token to be present --
+    # `FOO_VERSION=$(git describe)` vs a literal still fails closed.
+    re.compile(r'^\s*[A-Z0-9_]*VERSION\s*=\s*["\']?\d'),
 )
 
 RELEASE_METADATA_FIELD_PATTERNS: tuple[re.Pattern[str], ...] = (

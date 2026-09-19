@@ -346,3 +346,37 @@ def test_diff_helpers_route_through_the_decoder(monkeypatch) -> None:
         ["git", "diff", "--name-only", "a..b"],
         ["git", "diff", "a..b", "--", "a.py"],
     ]
+
+
+# -- env-template version carrier (.env.example APP_VERSION) ------------------
+
+
+def test_env_template_version_line_is_a_version_field() -> None:
+    """APP_VERSION=1.0.6-rc1 is the same kind of carrier as ARG VERSION=...
+
+    Since 1a55df0 the compose file requires APP_VERSION and it overrides
+    settings.app_version at runtime, so the consistency gate demands
+    APP_VERSION == VERSION. The classifier has to recognise the line or every
+    RC bump reports RECERTIFICATION_REQUIRED for a commit with no behaviour in
+    it -- which is what happened to the 1.0.6-rc1 anchor.
+    """
+    removed = ["APP_VERSION=1.0.5"]
+    added = ["APP_VERSION=1.0.6-rc1"]
+    assert _is_version_field(added[0])
+    assert is_release_metadata_only_change(removed, added)
+
+
+def test_env_template_change_beyond_the_literal_still_blocks_inheritance() -> None:
+    """Adding the pattern must not let a real config edit through."""
+    removed = ["APP_VERSION=1.0.5", "REDIS_URL=redis://localhost:6379/0"]
+    added = [
+        "APP_VERSION=1.0.6-rc1",
+        "REDIS_URL=redis://attacker.example:6379/0",
+    ]
+    assert not is_release_metadata_only_change(removed, added)
+
+
+def test_env_template_indirection_is_not_mistaken_for_a_bump() -> None:
+    """A substituted value is not a version literal, so it stays runtime work."""
+    assert not _is_version_field("APP_VERSION=$(git describe)")
+    assert not _is_version_field("APP_VERSION=")
