@@ -459,8 +459,10 @@ def main() -> int:
         "",
         f"- phase: 28.7 | version: `{version}` | commit: `{payload['commit'][:12]}`",
         f"- mode: `{payload['mode']}` | decision: **{title}**",
-        f"- gates: {passed}/{len(ALL_GATES)} PASS"
-        f" (implemented {len(implemented)}, planned {planned})",
+        (
+            f"- gates: {passed}/{len(ALL_GATES)} PASS"
+            f" (implemented {len(implemented)}, planned {planned})"
+        ),
         "",
         "| Gate | Status |",
         "|---|---|",

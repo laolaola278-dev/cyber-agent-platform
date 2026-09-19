@@ -38,7 +38,7 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --project backend --frozen --extra dev
       - name: Lint
-        run: uv run --project backend ruff check backend/app backend/tests benchmarks/phase22
+        run: uv run --project backend ruff check backend/app backend/tests benchmarks/phase22 scripts
       - name: Unit tests and coverage
         # Exclude the Linux/container certification suite (network/reaper/
         # resources/secrets/sandbox_image): those tests need the cap-sandbox-*

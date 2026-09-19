@@ -22,7 +22,7 @@ install:
 	npm ci --prefix frontend
 
 lint:
-	$(UV) run --project backend ruff check backend/app backend/tests benchmarks/phase22
+	$(UV) run --project backend ruff check backend/app backend/tests benchmarks/phase22 scripts
 	npm run lint --prefix frontend -- --max-warnings=0
 
 test:
