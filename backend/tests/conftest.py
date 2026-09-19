@@ -36,8 +36,28 @@ _TEST_CONFIG = {
     "OBJECT_STORE_BACKEND": "local",
     "API_DOCS_ENABLED": "true",
     "TRACING_ENABLED": "true",
+    # Integration credential. create_app() seeds MemorySecretProvider from it
+    # since 41bbc49, so a developer's .env could provision ZAP inside the test
+    # process and change what the incident plane does; the client fixture below
+    # puts the test secret into the provider explicitly instead.
+    "CAP_ZAP_API_KEY": "",
 }
 _os.environ.update(_TEST_CONFIG)
+
+# Pinning a whitelist of keys is still whack-a-mole, and two leaks got through
+# the list above: CAP_ZAP_API_KEY (a developer .env provisioned ZAP inside the
+# incident-plane tests) and APP_VERSION (a stale .env made /health report the
+# *previous* release, so test_health failed on a tree whose 16 version carriers
+# all agreed). Both are the same root cause as the 401 incident described in
+# docs/releases -- settings resolve ``env_file=".env"`` against the CWD, so any
+# untracked key can reconfigure the suite. Stop loading the file itself: with
+# env_file cleared, Settings sees process env + declared defaults only, which is
+# exactly what a container gets in deployment, and no untracked key can reach a
+# test. pydantic-settings reads model_config per instantiation, so patching the
+# class before app.main is imported covers every Settings() call in the process.
+from app.config.settings import Settings as _Settings  # noqa: E402
+
+_Settings.model_config = {**_Settings.model_config, "env_file": None}
 
 from collections.abc import AsyncIterator  # noqa: E402
 
