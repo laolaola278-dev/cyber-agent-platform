@@ -103,8 +103,17 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      # Compose refuses to interpolate without APP_VERSION (it is a required
+      # carrier written as ${APP_VERSION:?...} so a deployment can never start
+      # self-reporting a version nobody built). Resolve it from the canonical
+      # VERSION file rather than a literal, which is how the provenance defect
+      # in .github/workflows/ci.yml survived five releases.
+      - name: Resolve version
+        id: version
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
       - name: Validate Compose
         env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
           POSTGRES_PASSWORD: ci-postgres-password
           DATABASE_URL: postgresql+asyncpg://cap:ci-postgres-password@postgres:5432/cap
           SECRET_KEY: ci-secret-key-at-least-32-characters
