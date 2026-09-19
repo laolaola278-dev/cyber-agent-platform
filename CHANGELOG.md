@@ -111,6 +111,35 @@ published release contents are immutable.
   and `test_certification_workflow_contract.py` pins both halves.
 
 ### Fixed
+
+- **A healthy long-running acquisition could be cancelled under load.** The execution-lease
+  heartbeat in `WorkerRuntime` renews the lease while the sandbox operation runs, and it did so on
+  the *same* `AsyncSession` as the main execute flow at every construction site that omitted
+  `heartbeat_session_factory` — the architecture scan meant to prevent that exempted `tests/`
+  outright, and the Phase 28.3 suite was one of those sites. Worse, any renewal failure other than
+  a real ownership loss (SQLite's single-writer `database is locked` being the common one under
+  contention) ended the heartbeat coroutine silently, so renewals stopped for the rest of the
+  operation, the lease lapsed unrenewed, the fenced commit was correctly rejected, and the run was
+  finalised `CANCELLED`. `WorkerRuntime` now derives a renewal-only session factory from its own
+  bind when a site omits one — no construction site, in `app/` or `tests/`, can share the main
+  session any more — and retries a transient renewal on the next tick while `WorkerLeaseConflict`
+  still stops the heartbeat immediately, so fencing is unchanged: a stale worker can still neither
+  renew nor commit. Found as `assert 'CANCELLED' == 'COMPLETE'` in the release layer of the Linux
+  certification (run `35430453285`), where the same commit passed the same test in a sibling job;
+  pinned by deterministic tests that were confirmed to fail against the pre-fix code.
+- Three certification gates were corrected where they were wrong rather than strict. The Linux
+  release layer asserted a control-plane `worker_control_plane_isolation` *verdict word* it does not
+  own, so it failed run `35431391962` after 193 regression tests, the 500-run OCI benchmark, the
+  100-run kill-9 HA gate and all three PostgreSQL matrix legs had passed; it now re-derives the
+  per-path facts from `scripts/certification/generate_report.py`, refuses `PASS` while any shipped
+  deployment path mounts a container-runtime socket, and treats a chart socket mount as a release
+  blocker. That artifact also records the commit it certified, and the gate refuses evidence whose
+  commit is missing, unknown, or not the one its own job checked out. And the "authoritative
+  PostgreSQL" heartbeat-isolation variant read `DATABASE_URL` — which `backend/tests/conftest.py`
+  pins to in-memory SQLite for every test process — so it had never reached PostgreSQL and died on
+  `no such table: workers` in the strict GA job (run `35429972509`); it now reads a dedicated,
+  shape-checked `CAP_PG_TEST_DSN`, wired into both GA workflows, fails loudly if that is set
+  without a real server, and is verified against a real PostgreSQL 16.2.
 - Half the console's API surface required the whole platform. `/acquisitions`,
   `/agents`, `/agent/*`, `/tasks`, `/workflow`, `/registry`, `/capabilities` and
   `/runtime` had no rule in the authorization map, so they fell through to

@@ -241,7 +241,8 @@ defined permission, the `platform.manage` fallback is an explicit reviewed list
 (`POST /heartbeat`), and a negative control proves an unruled route still falls through — so the
 next console endpoint cannot silently inherit the platform again.
 
-Status **IN FLIGHT** at `c8c170f` (run `35429507835`); it took four dispatches to get here, each
+**PASS on the candidate**: K8S-GATE 33 is green — run `35429507835` at `c8c170f`, 33/33 gates,
+`outputs/cert-8ffd7bd/k8s-artifacts/`. Reaching that took four dispatches to get here, each
 fixing the *gate* (assumed container port 8080 where the Service publishes 80; called
 `.strip()` on a `CompletedProcess`), which is worth recording: the routing behaviour itself has
 not been contradicted.
@@ -253,8 +254,24 @@ not been contradicted.
 (`cert-artifacts-main/`, `cert-artifacts-release/cap-28.5-linux-certification.json`), including
 the 500-run OCI correctness benchmark, 100-run kill-9 HA, full adversarial security and the
 28.1–28.5 regression. Environment recorded (Ubuntu 24.04.5, kernel 6.17.0-1022-azure, Docker
-info, cgroup, nft/iptables rulesets). Re-running at `c8c170f` (**IN FLIGHT**, run `35429505106`)
-because the intervening `.env.example`/compose edits are runtime-affecting by policy.
+info, cgroup, nft/iptables rulesets). Re-running on the candidate chain took three dispatches
+after that baseline, and each failure was a real finding rather than noise:
+
+- run `35429505106` (`c8c170f`) — `full-certification` crashed in the report generator with
+  `ModuleNotFoundError: No module named 'yaml'`: the socket detector imported PyYAML, which the
+  certification runners never installed. Fixed at `8ffd7bd` by an indent scanner in the stdlib,
+  with a test that re-executes the generator with `sys.modules["yaml"] = None`.
+- run `35430453285` (`8ffd7bd`) — `postgres-version-matrix` (15/16/17) and `full-certification`
+  passed; `cap-production-certification` failed `Full regression (28.1 - 28.5)` on
+  `test_phase_28_3_lease_heartbeat.py::test_long_operation_survives_lease_ttl` with
+  `assert 'CANCELLED' == 'COMPLETE'`. The same commit, the same test, passed in the sibling job:
+  that is F-14, a healthy long-running acquisition losing its execution lease under runner
+  contention. Fixed in the product, not in the assertion.
+- run `35431391962` (`0bc8efa`) — regression **193 passed / 0 failed**, 500-run OCI benchmark
+  **PASS**, 100-run kill-9 HA **PASS**, matrix **PASS**; the release-layer artifact gate then
+  asserted `worker_control_plane_isolation == "NOT_CERTIFIED"`, a verdict word it does not own
+  (F-15).
+
 The artifact's `worker_control_plane_isolation` field is discussed in §23 (F-1): it was a
 substring grep and is now a structural, per-path fact.
 Critical skips: `CAP_CERTIFICATION_STRICT=1` turns an availability skip into a failure in the
@@ -263,7 +280,10 @@ step is the machine-readable check that the count is zero.
 
 ## 14. Kubernetes certification
 
-`cap-k8s-certification.yml`: **32/32 gates PASS** at `154f5b6` — kind v0.27.0 on Kubernetes
+`cap-k8s-certification.yml`: **33/33 gates PASS** at `c8c170f` (run `35429507835`, artifact
+`outputs/cert-8ffd7bd/k8s-artifacts/cap-28.6-k8s-certification.json`, which records
+`commit: c8c170f…` and `gate_summary: {total: 33, passed: 33, failed: 0, not_run: 0}`); the
+32-gate predecessor ran at `154f5b6` — kind v0.27.0 on Kubernetes
 `v1.37.0`, 3 nodes, Cilium NetworkPolicy enforcing, PostgreSQL 16 + MinIO in `cap-infra`, all CAP
 images imported into every node — with the DR sequence (GATE 24 backup/restore round-trip, GATE 25
 data survives restart), HPA/PDB capacity (22), SLI/SLO metrics (23), alerting config (27),
@@ -275,7 +295,9 @@ Status at `8a8711f`: **IN FLIGHT** (run `35427778399`).
 ## 15. Gates inherited vs gates re-run
 
 **Re-run on the candidate** (because the classifier says runtime-affecting since the last
-certification of each): Linux full+production, K8s 1..33, the PostgreSQL matrix, CI's unit/coverage/
+certification of each): Linux full+production, K8s 1..33 (**33/33 PASS at `c8c170f`**, inherited to `8ffd7bd` because the delta is
+`test_harness` + `docs` + `certification_generator`, classified INHERITED), the PostgreSQL matrix
+(**15/16/17 green at `c8c170f`**'s predecessor run set), CI's unit/coverage/
 console/packaging/image jobs, the 500-run OCI benchmark, the local suite + migration catalogue +
 secret scan + console flows, and the 2-hour soak.
 Reason: `v1.0.5 → candidate` carries 49 production-runtime files; and `ad91e0e` re-classified as
@@ -417,6 +439,51 @@ skips, which is the point of that switch.
   per-resource read/execute permissions plus a mapping test that makes an unmapped console
   endpoint a failure (§7).
 
+- F-14 **A healthy long-running acquisition could be cancelled.** Run `35430453285`
+  (`cap-production-certification`, `assert 'CANCELLED' == 'COMPLETE'`) while the *same* commit
+  passed the same test in `full-certification` — contention, not chance. Two compounding causes
+  in `WorkerRuntime`: (1) the execution-lease heartbeat ran as a task sharing the runtime's
+  `AsyncSession` with the main execute flow at every construction site that omitted
+  `heartbeat_session_factory`, and the architecture scan that was supposed to prevent that
+  exempted `tests/` outright — the Phase 28.3 suite was exactly such a site; (2) any renewal
+  failure other than a real ownership loss (SQLite's single-writer `database is locked` is the
+  common one) killed the heartbeat coroutine silently, so renewals stopped for the rest of the
+  operation, the lease lapsed unrenewed, the fenced commit was *correctly* rejected, and the run
+  was finalised CANCELLED. Fixed in the product: the runtime now derives a renewal-only session
+  factory from its own bind when a site omits one (no site can share the main session, in `app/`
+  or `tests/`), and a transient renewal failure is retried on the next tick while
+  `WorkerLeaseConflict` still stops the heartbeat immediately — fencing is untouched. Pinned by
+  `test_phase_28_7_ga_heartbeat_invariant.py` (isolation by construction, deterministic
+  transient-retry/ownership-loss split, and an `explicit None` scan across both source trees);
+  both new tests were verified to fail against the pre-fix code.
+
+- F-15 **A release gate asserted a verdict word it did not own.** After F-1's detector started
+  reading `docker-compose.yml` structurally, the truthful release-layer value became `PARTIAL`
+  (chart isolated, compose mounted), but `cap-linux-certification.yml` still hard-coded
+  `== "NOT_CERTIFIED"`, so run `35431391962` failed *after* 193 regression tests, the 500-run
+  benchmark, the 100-run HA gate and all three matrix legs had passed. The gate now re-derives
+  the per-path facts from `scripts/certification/generate_report.py` at assertion time, forbids
+  `PASS` while any shipped deployment path holds a socket, and treats a chart socket mount as a
+  release blocker. Two additions make the class impossible to reintroduce: a contract test that
+  fails any workflow step pinning an isolation verdict word, and one that **executes** that
+  inline gate step against truthful, stale and chart-regression artifacts — inline workflow
+  Python that no test had ever run before.
+
+- F-17 **An "authoritative PostgreSQL" gate could never reach PostgreSQL.**
+  `test_heartbeat_renewal_isolation_postgres_authoritative` took its DSN from
+  `DATABASE_URL` — the very variable `backend/tests/conftest.py` pins to in-memory SQLite for
+  every test process (§4's hermeticity fix). In-memory SQLite plus `NullPool` means the
+  `create_all` connection and the session's connection are two different empty databases, so the
+  variant died on `sqlite3.OperationalError: no such table: workers` the first time the strict GA
+  job got far enough to execute it (run `35429972509`, after the MinIO outage stopped blocking the
+  workflow). Had it merely skipped, the GA artifact would have reported PostgreSQL row-locking as
+  certified on the strength of a SQLite run. It now reads a dedicated, shape-checked
+  `CAP_PG_TEST_DSN` (wired into both GA workflows), fails loudly when `CAP_PG_TEST=1` is set
+  without a real server, and `test_settings_dotenv_hermeticity.py` forbids the `DATABASE_URL`-as-
+  server read pattern across `tests/` with a positive control. Verified both ways against a real
+  PostgreSQL 16.2 on this machine: the variant passes, and removing the DSN produces the
+  actionable failure instead of a wrong-backend mystery.
+
 **MEDIUM — open, recorded, not papered over**
 - F-4 Migration/schema naming drift: constraints and indexes renamed relative to what the revisions
   and models promise; enforcement verified intact; `alembic check` is not gated (§5). A real fix
@@ -431,9 +498,19 @@ skips, which is the point of that switch.
 - F-9 Vendor risk: the pinned MinIO image receives no upstream CVE fixes (§10).
 
 **LOW**
-- F-10 The Linux certification JSON had no `commit` field, so the artifact could only be bound to a
-  SHA through run metadata; the K8s and GA artifacts do record it. Recorded for the follow-up
-  rather than "fixed" by relabelling old artifacts.
+- F-16 `scripts/` — the code that *generates* the release certification artifact and the quality
+  scanners — was outside the declared lint gate in both CI and the Makefile, and carried two
+  ruff findings (unparenthesized implicit concatenation inside a list, the shape that hides a
+  missing comma) that nobody could see. Both paths now lint it, and
+  `test_quality_gate_parity.py` binds `make lint`/`make check` to the CI steps and requires
+  every CI-`--ignore`d suite and CI-`--deselect`ed node to have a home that actually collects it
+  (the §12 question, made permanent).
+- F-10 **resolved here** The Linux certification JSON carried no `commit` field, so a Linux PASS
+  could only be bound to a SHA through Actions run metadata (the K8s and GA artifacts already
+  recorded theirs). The artifact now records the SHA — `GITHUB_SHA` on a runner, `git rev-parse
+  HEAD` locally, `"unknown"` if neither answers — and the release gate refuses an artifact whose
+  recorded commit is missing, `"unknown"`, or different from the commit its own job checked out.
+  Both refusals are covered by the executed-gate test (§23 F-15).
 - F-11 `docs/Phase 14 Development Report.md` contains mojibake in a table (historical document).
 - F-12 `redis_configured: true` in the readiness payload reads as health to a reasonable operator
   (§9); the documents now say what it is, and removing it is an API change.
