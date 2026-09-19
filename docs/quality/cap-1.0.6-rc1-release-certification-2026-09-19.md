@@ -264,6 +264,21 @@ precisely because nothing was pushed). Registry digests appear only when `releas
 **Finding F-7 (MEDIUM):** the release publishes 2 images while a deployment needs 5, and the chart
 defaults the other 3 to `:latest` tags no registry serves.
 
+Sandbox/egress images on the certified candidate
+(`outputs/cert-c52dcb9/linux-artifacts/sandbox-images.json`): `cap-sandbox-http`
+`sha256:0e2e471f70d9…` (177 467 307 bytes, base `python:3.13.12-slim-bookworm`,
+`dockerfile_sha256 b7efc782b3d9…`) and `cap-sandbox-browser`
+`sha256:1620a2c56e7d…` (1 542 705 307 bytes, base `cap-sandbox-http:latest`,
+`dockerfile_sha256 64122a4ff8de…`), built at `2026-09-19T11:10:30Z` / `11:11:00Z`. Both
+`repo_digest` and `base_digest` are empty/null — not because nothing was pushed, but because the
+**bases are tags**: `python:3.13-slim` twice in `backend/Dockerfile`, `node:22-alpine` and
+`cap-sandbox-http:latest` in `frontend/Dockerfile` / `sandbox-browser/Dockerfile` float across
+patch and minor releases, while `nginx:1.30.4-alpine` and `python:3.13.12-slim-bookworm` are
+patch-pinned but still tag-referenced. Rebuilding this exact commit next month can therefore
+produce a different image with nothing in the lock saying so. That is **F-20 (MEDIUM)**, and the
+place to fix it is the existing `deployment/third-party-images.json` +
+`test_third_party_image_lock.py`, which already prove a coordinate is pinned where it is used.
+
 ## 12. Nginx and the console route — certified through the real image, not a stand-in
 
 The local audit's Python front door was for walking the console; it certifies nothing. **K8S-GATE
@@ -655,6 +670,28 @@ its documentation and a home that collects it.
   17-minute release-layer run was destroyed (run `35427694720`). Fixed at `1fc1c98` for all four
   certification workflows; CI keeps cancelling; both halves are asserted.
 - F-9 Vendor risk: the pinned MinIO image receives no upstream CVE fixes (§10).
+- F-19 The single-connection bind still has two rough edges, both inert in deployment. (a) The
+  acquisition heartbeat **skips** its lease renewal there (§23 F-18's guard refuses to commit on the
+  connection the crawl is writing on), so a run longer than the TTL in that configuration could still
+  be reclaimed. (b) `AcquisitionClaimCoordinator._reject_stale` still persists its rejection counter
+  through an isolated session, and on a one-connection bind that `COMMIT` lands inside the *caller's*
+  transaction — the exact thing its own docstring forbids, though the counter is observational and
+  the fencing rejection itself (`verify_owner` raising first) is unaffected. Neither path is reachable
+  where it matters: `ACQ_LEASE_TTL_SECONDS` and the asyncpg/file-SQLite engines behind it always
+  provide a pool, and `test_phase_28_2_claim_fencing.py` builds a file-backed engine specifically "so
+  each worker session gets its own DB connection", which is where the stale-commit invariant is
+  actually proven. Closing both properly means either giving the renewal a connection from a
+  separate pool or refusing to run at all on a bind that cannot honour the lease contract — a
+  behaviour change worth its own certification cycle, not a late edit to a candidate.
+- F-20 Base images are referenced by tag (§11): `python:3.13-slim` (twice, `backend/Dockerfile`),
+  `node:22-alpine` (`frontend/Dockerfile`), `cap-sandbox-http:latest` (`sandbox-browser`), plus the
+  patch-pinned-but-still-tagged `nginx:1.30.4-alpine` and `python:3.13.12-slim-bookworm`. So a
+  rebuild of this commit later can differ with no record, and the certified artifact's
+  `base_digest` is null for exactly that reason. The fix belongs in the lock that already exists —
+  add each base to `deployment/third-party-images.json` with its manifest-list digest and let
+  `test_third_party_image_lock.py` police every `FROM` line the way it polices MinIO; pinning the
+  `FROM` lines themselves without being able to build here would trade a documented gap for an
+  unverified one.
 
 **LOW**
 - F-16 `scripts/` — the code that *generates* the release certification artifact and the quality
