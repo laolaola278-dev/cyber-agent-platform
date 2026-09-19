@@ -14,6 +14,10 @@ on:
 permissions:
   contents: write
   packages: write
+  # `verify-certification` below reads OTHER workflows' runs through the Actions
+  # REST API. Once any scope is declared, the undeclared ones become `none`, so
+  # the read scope has to be stated rather than assumed.
+  actions: read
 
 jobs:
   quality-gates:
@@ -41,8 +45,216 @@ jobs:
           esac
           echo "notes_file=docs/releases/v${version}.md" >> "$GITHUB_OUTPUT"
 
-  release-images:
+  # ---------------------------------------------------------------------
+  # PUBLICATION GATE. A tag may not publish artefacts for certification it
+  # does not have. Until this job existed the claim lived only in a comment
+  # ("release jobs depend on cap-production-certification") that nothing
+  # enforced, so `release.yml` would have built and published images from an
+  # uncertified commit without noticing. F-21.
+  #
+  # What counts as certified, per the documented release policy: a completed,
+  # successful run of every certification workflow whose release jobs ran -- for
+  # THIS commit, or for the nearest ancestor of it whose diff to this commit
+  # scripts/release/classify_diff.py classifies as non-runtime-affecting
+  # (INHERITED). Certification therefore happens before the tag is pushed; a tag
+  # on a runtime change with no certification of its own fails here, which is
+  # the point.
+  # ---------------------------------------------------------------------
+  verify-certification:
     needs: validate-tag
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CERT_TAG_SHA: ${{ github.sha }}
+      CERT_REPOSITORY: ${{ github.repository }}
+      CERT_VERSION: ${{ needs.validate-tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The ancestor walk below needs real history, not the default depth-1
+          # checkout: at depth 1 every ancestor looks uncertified.
+          fetch-depth: 0
+      - name: Require green certification for this commit or an inheritable ancestor
+        run: |
+          python3 - <<'RELEASE_GATE_PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
+
+          TAG_SHA = os.environ["CERT_TAG_SHA"]
+          REPO = os.environ["CERT_REPOSITORY"]
+          OUT = pathlib.Path("outputs/cap-cert-release")
+          #: Workflow -> the jobs that must be present and successful in it. A
+          #: green run of the Linux workflow with only its PR layer executed is
+          #: not release evidence, so the job set is checked, not the run colour.
+          #: `postgres-version-matrix` legs share the base name and all legs
+          #: must be green; a job skipped by its `if` is absent, hence "missing".
+          REQUIRED = {
+              "cap-linux-certification.yml": (
+                  "cap-production-certification",
+                  "postgres-version-matrix",
+              ),
+              "cap-k8s-certification.yml": ("k8s-certification",),
+              "cap-ga-certification.yml": ("ga-certification", "supply-chain"),
+              "cap-ga-reliability.yml": ("reliability",),
+          }
+          #: How far back inheritance may reach. Past this the answer is
+          #: "re-certify", never "probably still fine".
+          MAX_ANCESTRY_DISTANCE = 80
+
+
+          def gh(path: str) -> dict:
+              # Explicit UTF-8, not text=True: see _git() in
+              # scripts/release/classify_diff.py -- a locale decode turns one
+              # non-ASCII byte in a run name into a crash far from its cause.
+              proc = subprocess.run(
+                  ("gh", "api", path), capture_output=True, encoding="utf-8"
+              )
+              if proc.returncode != 0:
+                  raise RuntimeError(f"gh api {path} failed: {proc.stderr.strip()}")
+              return json.loads(proc.stdout)
+
+
+          def ancestor_chain() -> list[str]:
+              proc = subprocess.run(
+                  ("git", "rev-list", f"--max-count={MAX_ANCESTRY_DISTANCE}", TAG_SHA),
+                  capture_output=True,
+                  encoding="utf-8",
+              )
+              if proc.returncode != 0:
+                  raise RuntimeError(f"git rev-list failed: {proc.stderr.strip()}")
+              chain = [line for line in proc.stdout.split() if line]
+              if not chain or chain[0] != TAG_SHA:
+                  raise RuntimeError(
+                      f"rev-list of {TAG_SHA} does not start at the tagged commit "
+                      "-- is the checkout deep enough?"
+                  )
+              return chain
+
+
+          def job_conclusions(run_id: int) -> dict[str, list[str]]:
+              data = gh(f"repos/{REPO}/actions/runs/{run_id}/jobs?per_page=100")
+              verdicts: dict[str, list[str]] = {}
+              for job in data.get("jobs") or []:
+                  base = job["name"].split(" (", 1)[0]
+                  verdicts.setdefault(base, []).append(job.get("conclusion"))
+              return verdicts
+
+
+          def find_evidence(workflow: str, chain: list[str]) -> dict | None:
+              """Newest commit on the chain with a run of every required job."""
+              runs = gh(
+                  f"repos/{REPO}/actions/workflows/{workflow}/runs"
+                  "?per_page=100&status=completed"
+              ).get("workflow_runs") or []
+              wanted = REQUIRED[workflow]
+              for distance, sha in enumerate(chain):
+                  for run in runs:
+                      if run.get("head_sha") != sha or run.get("conclusion") != "success":
+                          continue
+                      verdicts = job_conclusions(run["id"])
+                      missing = [job for job in wanted if job not in verdicts]
+                      if missing:
+                          print(
+                              f"  {workflow} run {run['id']} at {sha[:8]} is green "
+                              f"without the release job set (missing: {missing})",
+                              file=sys.stderr,
+                          )
+                          continue
+                      return {
+                          "sha": sha,
+                          "distance": distance,
+                          "run_id": run["id"],
+                          "run_url": run.get("html_url"),
+                          "jobs": {job: verdicts[job] for job in wanted},
+                      }
+              return None
+
+
+          def classify(certified: str) -> tuple[bool, dict]:
+              proc = subprocess.run(
+                  (sys.executable, "scripts/release/classify_diff.py", certified, TAG_SHA),
+                  capture_output=True,
+                  encoding="utf-8",
+              )
+              if proc.returncode not in (0, 2):
+                  raise RuntimeError(f"classifier failed: {proc.stderr.strip()}")
+              return proc.returncode == 0, json.loads(proc.stdout)
+
+
+          chain = ancestor_chain()
+          evidence: dict[str, dict] = {}
+          failures: list[str] = []
+          for workflow in REQUIRED:
+              found = find_evidence(workflow, chain)
+              if found is None:
+                  failures.append(
+                      f"{workflow}: no completed successful run with jobs "
+                      f"{list(REQUIRED[workflow])} for this commit or any of its "
+                      f"{len(chain)} nearest ancestors"
+                  )
+                  print(f"{workflow}: NO CERTIFICATION EVIDENCE", file=sys.stderr)
+                  continue
+              print(
+                  f"{workflow}: run {found['run_id']} at {found['sha'][:8]} "
+                  f"(+{found['distance']} commits from the tag)"
+              )
+              if found["distance"]:
+                  inheritable, report = classify(found["sha"])
+                  found["diff_verdict"] = report["inheritance"]
+                  found["runtime_affecting"] = report["runtime_affecting"]
+                  found["blocking_files"] = [
+                      f["path"] for f in report["files"] if f["runtime_affecting"]
+                  ]
+                  if not inheritable:
+                      failures.append(
+                          f"{workflow}: certified at {found['sha'][:12]} but the "
+                          f"{found['distance']}-commit distance to the tag is "
+                          f"{report['inheritance']} ({found['blocking_files']})"
+                      )
+                      print(
+                          f"  {report['inheritance']}: "
+                          f"{', '.join(found['blocking_files'][:10])}",
+                          file=sys.stderr,
+                      )
+              evidence[workflow] = found
+
+          OUT.mkdir(parents=True, exist_ok=True)
+          (OUT / "release-certification-gate.json").write_text(
+              json.dumps(
+                  {
+                      "tag_sha": TAG_SHA,
+                      "tag_ref": os.environ.get("GITHUB_REF_NAME"),
+                      "version": os.environ.get("CERT_VERSION"),
+                      "ancestors_considered": len(chain),
+                      "required": {k: list(v) for k, v in REQUIRED.items()},
+                      "evidence": evidence,
+                      "failures": failures,
+                      "verdict": "PASS" if not failures else "FAIL",
+                  },
+                  indent=2,
+              )
+              + "\n",
+              "utf-8",
+          )
+          if failures:
+              print("\nRELEASE BLOCKED -- certification:", file=sys.stderr)
+              for reason in failures:
+                  print(f"  * {reason}", file=sys.stderr)
+              sys.exit(1)
+          print(f"\nCertification gate PASS for {TAG_SHA[:12]}")
+          RELEASE_GATE_PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cap-${{ needs.validate-tag.outputs.version }}-certification-evidence
+          path: outputs/cap-cert-release/
+          if-no-files-found: error
+
+  release-images:
+    needs: [validate-tag, verify-certification]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -67,7 +279,7 @@ jobs:
             REVISION=${{ github.sha }}
 
   release-chart:
-    needs: validate-tag
+    needs: [validate-tag, verify-certification]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -87,7 +299,7 @@ jobs:
             docs/known-issues.md
 
   publish-release:
-    needs: [validate-tag, release-images, release-chart]
+    needs: [validate-tag, verify-certification, release-images, release-chart]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -110,4 +322,5 @@ jobs:
             release-assets/docs/known-issues.md
       - run: |
           echo "Artifacts are release outputs only."
-          echo "Architect approval and all Production Entry Gates remain mandatory."
+          echo "Certification was checked by verify-certification; architect approval"
+          echo "and the remaining Production Entry Gates are human decisions on top."

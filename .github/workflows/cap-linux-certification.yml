@@ -353,9 +353,15 @@ jobs:
           path: outputs/cap-cert/
           if-no-files-found: error
 
-# Production releases MUST depend on cap-production-certification
-# (the release.yml workflow includes this file via workflow_call and lists it
-# as a required job before publishing artifacts).
+# Release publications are gated on cap-production-certification +
+# postgres-version-matrix: release.yml's `verify-certification` job resolves a
+# successful run of THIS workflow whose head_sha is the tagged commit or an
+# inheritable ancestor of it, and no image, chart or GitHub Release is published
+# before that job is green. The rule lives in that job's code and in
+# backend/tests/test_certification_workflow_contract.py, not in this comment --
+# the previous wording here claimed `release.yml` includes this file via
+# workflow_call and lists it as a required job, which was untrue: release.yml
+# calls only ci.yml, and nothing anywhere required a certification run (F-21).
 
   # ---------------------------------------------------------------------
   # PostgreSQL version matrix (release-certification section 6)
