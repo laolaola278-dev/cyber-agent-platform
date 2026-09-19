@@ -71,7 +71,7 @@ from app.sandbox.runtime import MemorySandboxProvider, SandboxRuntime
 from app.worker.contracts import WorkerRecord
 from app.worker.lease import WorkerLeaseManager
 from app.worker.registry import WorkerRegistry
-from app.worker.runtime import WorkerRuntime
+from app.worker.runtime import WorkerRuntime, renewal_interval_seconds
 from app.worker.scheduler import WorkerScheduler
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -483,6 +483,48 @@ PG_DSN_VARIABLE = "CAP_PG_TEST_DSN"
 #: as the server: the whole point of this variant is PostgreSQL's row-level
 #: locking, which SQLite's single-writer limit cannot express.
 PG_DSN_PREFIX = "postgresql+asyncpg://"
+
+
+@pytest.mark.parametrize("ttl", [3, 4, 5, 6, 30, 120, 300, 3600])
+def test_the_cadence_fix_is_bit_identical_where_production_runs(ttl: int) -> None:
+    """The claim "no deployed behaviour changes", made decidable.
+
+    F-14's third cause is the ``max(1.0, ttl/3)`` floor under-renewing short
+    leases. Correcting it must not touch the range a deployment can be configured
+    in: wherever the old floor was inert (``ttl/3 >= 1s``; the shipped default is
+    120s) the new rule returns the same number.
+    """
+    assert renewal_interval_seconds(ttl) == max(1.0, ttl / 3.0)
+
+
+@pytest.mark.parametrize("ttl", [0.15, 0.3, 0.5, 1, 2, 2.9])
+def test_short_leases_get_at_least_three_renewals_before_expiry(ttl: float) -> None:
+    """The half that DID change: a short lease no longer under-renews.
+
+    ``ttl / interval >= 3`` is the contract the Phase 28.3 comments have always
+    claimed; ``max(1.0, ttl/3)`` broke it below ~3 s -- exactly the regime the
+    certification harnesses run in, where one runner stall then cost a healthy
+    acquisition its lease (run 35430453285).
+    """
+    interval = renewal_interval_seconds(ttl)
+    assert interval <= ttl / 3.0 + 1e-9, (ttl, interval)
+    assert ttl / interval >= 3.0 - 1e-6, (ttl, interval)
+
+
+def test_the_renewal_floor_bounds_the_contract_and_says_so() -> None:
+    """Where the three-renewals rule stops applying, asserted not assumed.
+
+    Below ``3 * 0.05 s`` the 50 ms floor wins, so a 0.1 s lease is renewed twice
+    rather than being chased by a loop polling the writer every 33 ms -- the
+    renewal would be the heavier failure. Nothing configures a lease that short
+    (``ACQ_LEASE_TTL_SECONDS`` defaults to 120 s, and that is what both the API
+    and the worker pass), and the boundary is pinned here so a future change to
+    either number cannot move it silently.
+    """
+    assert renewal_interval_seconds(0.1) == 0.05
+    assert 0.1 / renewal_interval_seconds(0.1) < 3.0
+    # the contract's own edge: three renewals exactly at 0.15s
+    assert renewal_interval_seconds(0.15) == pytest.approx(0.05)
 
 
 @pytest.mark.skipif(

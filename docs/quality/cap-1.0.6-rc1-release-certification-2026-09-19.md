@@ -1,7 +1,14 @@
 # CAP 1.0.6-rc1 — Final Release Certification Report
 
-Candidate: `c8c170fe2a2512949dd2e6fb429e7c83e04741db` (short `c8c170f`), branch `release/1.0.6-rc1`.
-Superseded by runtime changes during this pass, in order: `154f5b6` → `71dad6e` → `0b4e207` → `2b65368` → `ad91e0e` → `1fc1c98` → `c8c170f`. Each step is classified in §2, and every gate bound to an earlier SHA is labelled as such rather than silently reused.
+Candidate: `becbad4` (branch `release/1.0.6-rc1`), the tree that includes every fix found during
+this certification pass.
+Superseded by runtime changes during this pass, in order: `154f5b6` → `71dad6e` → `0b4e207` →
+`2b65368` → `ad91e0e` → `1fc1c98` → `c8c170f` (console authorization, F-13) → `8ffd7bd` (the
+report generator's PyYAML dependency, §13) → `7e1f0e2` → `0bc8efa` (approval-gate assertions) →
+`d9a2e01` (execution-lease heartbeat, F-14 — certified green on Linux and K8s) → `a5d7379` /
+`3ebca44` / `b84a13e` (the renewal cadence contract behind the same defect, plus the lint and
+classifier corrections it required). Each step is classified in §2, and every gate bound to an
+earlier SHA is labelled as such rather than silently reused.
 Prepared: 2026-09-19, from a Windows audit host plus GitHub-hosted Linux runners.
 Publication: **none performed** — no `v*` tag, no GitHub Release, no image pushed, no existing tag or image overwritten.
 
@@ -26,21 +33,35 @@ Publication: **none performed** — no `v*` tag, no GitHub Release, no image pus
 
 ## 2. Diff classification against the last certified and last published commits
 
-`python scripts/release/classify_diff.py <from> <to>` (fail-closed by design):
+`python scripts/release/classify_diff.py <from> <to>` (fail-closed by design), re-executed against
+the frozen candidate. Machine-readable output in `outputs/cert-becbad4/diff-*.json`.
 
 | Range | Verdict | Runtime-affecting files |
 | --- | --- | --- |
-| `v1.0.5 → candidate` | **RECERTIFICATION REQUIRED** | 49 `production_runtime` + 1 `database` + 2 `dependency` + 3 `deployment` (96 files total) |
-| `a5ce0c4` (last audited tree) `→ candidate` | **RECERTIFICATION REQUIRED** | 1 (`scripts/quality/scan_secrets.py`), plus 3 `deployment`, 5 `ci_workflow`, 12 `test_harness`, 11 `version_bump`, 4 `docs`, 4 `certification_generator`, 1 `release_metadata` |
-| `ad91e0e → 1fc1c98` (`.github/workflows` concurrency + contract tests + changelog) | **INHERITED** | none |
-| `2b65368 → ad91e0e` (`.env.example`, `docker-compose.yml` comment corrections, socket detector, boundary tests) | **RECERTIFICATION REQUIRED** | `.env.example` (`production_runtime`), `docker-compose.yml` (`deployment`) |
+| `v1.0.5 → becbad4` | **RECERTIFICATION REQUIRED** | 51 `production_runtime` + 1 `database` + 2 `dependency` + 3 `deployment` (116 files total) |
+| `a5ce0c4` (last audited tree) `→ becbad4` | **RECERTIFICATION REQUIRED** | 6 `production_runtime` + 3 `deployment` (65 files: 21 `test_harness`, 10 `version_bump`, 9 `certification_generator`, 7 `docs`, 5 `ci_workflow`, 3 `repo_tooling`, 1 `release_metadata`) |
+| `c8c170f → becbad4` | **RECERTIFICATION REQUIRED** | 3 `production_runtime` (`auth/rbac.py`, `middleware/authorization.py`, `worker/runtime.py`) |
+| `d9a2e01 → becbad4` | **RECERTIFICATION REQUIRED** | 2 `production_runtime` — only the renewal-cadence function behind F-14, and it is why the round below re-runs Linux, K8s, the soak and GA rather than inheriting `d9a2e01`'s green |
 
 Two properties of the classifier are worth naming because they shaped this line's cost:
-`scripts/quality/**` and `.env.example` have no explicit rule, so unknown paths fall to
-`production_runtime` — the fail-closed default, deliberately kept; and a comment-only edit to a
-deployment file is still a deployment edit. Both are conservative in the right direction.
+`.env.example` and any unlisted path fall to `production_runtime` — the fail-closed default,
+deliberately kept — and a comment-only edit to a deployment file is still a deployment edit. Both
+are conservative in the right direction.
 
-Artifacts: `outputs/cert-1fc1c98/`, `outputs/cert-ad91e0e/diff-2b65368-to-final.json`,
+**A category this pass added, stated so it can be judged rather than trusted.** `scripts/quality/**`
+used to fall to that fail-closed default, so editing the secret scanner's docstring demanded a
+2-hour re-soak. `becbad4` gives it a `repo_tooling` category, which is inheritable. The
+justification is not a comment: `backend/tests/test_release_diff_classifier.py` resolves every
+`docker build` context CI actually runs and asks whether the repository-root `scripts/` tree is
+inside one, then checks both Dockerfiles, `docker-compose.yml` and every chart manifest for a
+reference to it, with planted controls for each route — including the route that must NOT fire (the
+backend context legitimately owns its own `backend/scripts/`, which stays runtime-affecting). If
+scripts ever start shipping inside an image or a pod, that test fails and the category has to go
+back to fail-closed. The scan rules were also anchored (`=scripts/quality/`) because the matcher is
+substring-based and `backend/scripts/quality/x.py` would otherwise have borrowed the category.
+
+Artifacts: `outputs/cert-becbad4/diff-*.json` plus the earlier
+`outputs/cert-1fc1c98/`, `outputs/cert-ad91e0e/diff-2b65368-to-final.json`,
 `outputs/cert-71dad6e/diff-*.json`, `outputs/cert-final/diff-0b4e207-to-final.json`.
 
 ## 3. Local audit, re-executed, machine-readable
@@ -290,7 +311,10 @@ data survives restart), HPA/PDB capacity (22), SLI/SLO metrics (23), alerting co
 baseline regression (28), RTO (29), resource limits (30), security baseline (31), overall health
 no-stale (32), plus the long-run lease renewal pre-gate. The candidate adds GATE 33 → **33 gates**;
 `generate_report_28_6.py`'s `ALL_GATES` is the authority and any report saying "1..32" predates it.
-Status at `8a8711f`: **IN FLIGHT** (run `35427778399`).
+Status: **33/33 PASS twice on this line** — at `c8c170f` (run `35429507835`) and again at `d9a2e01`,
+after the execution-lease heartbeat fix (run `35434491797`, 14m). The final round at the candidate
+`becbad4` is **IN FLIGHT** (run `35436798236`) because the cadence change in `3ebca44` is
+production-runtime code and cannot inherit.
 
 ## 15. Gates inherited vs gates re-run
 
@@ -455,7 +479,17 @@ skips, which is the point of that switch.
   `WorkerLeaseConflict` still stops the heartbeat immediately — fencing is untouched. Pinned by
   `test_phase_28_7_ga_heartbeat_invariant.py` (isolation by construction, deterministic
   transient-retry/ownership-loss split, and an `explicit None` scan across both source trees);
-  both new tests were verified to fail against the pre-fix code.
+  both new tests were verified to fail against the pre-fix code. Those two fixes are certified
+  green at `d9a2e01`: Linux full + production + all three matrix legs (run `35434486047`) and K8s
+  33/33 (run `35434491797`).
+  A third cause was found by measuring what margin was left rather than by a failure: both renewal
+  cadences were written `max(1.0, lease_ttl / 3)`, whose 1 s floor silently breaks the documented
+  "renew three times per lease" contract for any TTL under ~3 s — exactly the regime the
+  certification harnesses run in — leaving a healthy 3.5 s operation with a 1.33 s stall budget on
+  a runner that had just executed 500 containers. The cadence is now one named function both call
+  sites share, `ttl / 3` and never slower; at the production TTL of 120 s it yields the same 40 s
+  as before, so no deployed behaviour changes. That edit is production-runtime code, so the final
+  round below re-certifies it.
 
 - F-15 **A release gate asserted a verdict word it did not own.** After F-1's detector started
   reading `docker-compose.yml` structurally, the truthful release-layer value became `PARTIAL`
