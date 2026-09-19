@@ -66,6 +66,14 @@ services:
       TRACING_ENABLED: ${TRACING_ENABLED:-true}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-cyber-agent-platform}
       OTEL_EXPORTER_ENDPOINT: ${OTEL_EXPORTER_ENDPOINT:-}
+      # The ZAP credential has to be listed here: compose declares its
+      # environment explicitly (no env_file), so a variable that only exists in
+      # .env never reaches the process. Settings exposes it as cap_zap_api_key,
+      # create_app() seeds the secret provider with it, and without a value the
+      # incident and assessment planes answer SECRET_NOT_FOUND. Only the api is
+      # wired: AssessmentService is constructed as an HTTP dependency, so the
+      # worker never resolves this credential.
+      CAP_ZAP_API_KEY: ${CAP_ZAP_API_KEY:-}
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]
     ports:
       - "8000:8000"

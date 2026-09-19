@@ -6,6 +6,8 @@ Compose defines health-gated startup: PostgreSQL and Redis must become healthy b
 
 Required variables are `POSTGRES_PASSWORD`, `DATABASE_URL`, `SECRET_KEY`, `JWT_SECRET`, `RBAC_TRUSTED_PROXY_SECRET`, and observability/admin passwords when those profiles are enabled. Omitted required values cause Compose interpolation failure. Repository placeholders are rejected when `APP_ENVIRONMENT=production`.
 
+`CAP_ZAP_API_KEY` is the exception rather than the rule: compose forwards it to the api container but defaults it to empty, meaning "ZAP not provisioned". Set it in `.env` before starting the stack if you want the assessment and incident planes to run scans; left unset they answer `SECRET_NOT_FOUND` rather than authenticate to ZAP with the placeholder text from `.env.example`.
+
 ## Lifecycle
 
 ```bash

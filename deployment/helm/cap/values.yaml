@@ -32,6 +32,12 @@ backend:
   service:
     port: 8000
   existingSecret: cap-runtime
+  # The api deployment mounts this Secret with envFrom, so every key in it
+  # becomes an environment variable: DATABASE_URL, REDIS_URL, SECRET_KEY,
+  # JWT_SECRET, RBAC_TRUSTED_PROXY_SECRET and -- optionally -- CAP_ZAP_API_KEY.
+  # Without CAP_ZAP_API_KEY the ZAP integration is simply not provisioned: the
+  # assessment and incident planes answer SECRET_NOT_FOUND instead of starting
+  # scans with a bogus credential.
   resources:
     requests:
       cpu: 250m
