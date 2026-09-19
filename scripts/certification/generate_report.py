@@ -141,22 +141,59 @@ def _mounts_socket(mounts: object) -> bool:
     return False
 
 
+def compose_worker_volumes(text: str, service: str = COMPOSE_WORKER_SERVICE) -> list[str]:
+    """The `volumes:` entries of one compose service, parsed with the stdlib only.
+
+    A YAML parser was tried first and rejected: PyYAML is in the backend venv, but
+    the certification job calls this script with a bare interpreter, so the gate
+    would have depended on which python happened to run it (that is how the
+    full-certification layer failed with ModuleNotFoundError: No module named
+    'yaml'). Compose files of this shape are regular enough that indent-scanning
+    answers the one question asked, and it keeps the gate dependency-free like
+    scripts/quality/scan_secrets.py.
+    """
+    lines = text.splitlines()
+    try:
+        start = next(
+            i
+            for i, line in enumerate(lines)
+            if line.rstrip() == f"  {service}:"
+        )
+    except StopIteration:
+        return []
+    volumes: list[str] = []
+    in_volumes = False
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= 2:  # next service, or the end of this one
+            break
+        if stripped.startswith("volumes:"):
+            in_volumes = True
+            continue
+        if in_volumes:
+            if stripped.startswith("- "):
+                volumes.append(stripped[2:])
+            elif stripped.endswith(":"):
+                in_volumes = False  # a sibling key ended the volumes list
+    return volumes
+
+
 def compose_worker_mounts_control_socket() -> bool:
-    """Read the compose definition structurally; a comment is not a mount.
+    """True when the compose worker mounts a container-runtime socket.
 
     The oci-sandbox provider starts sandbox containers through the docker CLI, so
     the compose worker legitimately holds ``/var/run/docker.sock``. That is a
     property of the evaluation path, not something to hide in a report: it makes
-    that worker host-root-equivalent.
+    that worker host-root-equivalent. Comments are not mounts -- only the service's
+    own volume entries are read.
     """
-    import yaml
-
     path = ROOT / "docker-compose.yml"
     if not path.exists():
         return False
-    document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    service = (document.get("services") or {}).get(COMPOSE_WORKER_SERVICE) or {}
-    return _mounts_socket(service.get("volumes"))
+    return _mounts_socket(compose_worker_volumes(path.read_text(encoding="utf-8", errors="replace")))
 
 
 def chart_worker_mounts_control_socket() -> bool:

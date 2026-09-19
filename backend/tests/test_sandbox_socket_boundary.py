@@ -19,6 +19,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -26,8 +27,10 @@ COMPOSE = PROJECT_ROOT / "docker-compose.yml"
 WORKER_SERVICE = "acquisition-worker"
 SOCKETS = ("docker.sock", "podman.sock", "containerd.sock", "crio.sock")
 
+GENERATE_REPORT = PROJECT_ROOT / "scripts" / "certification" / "generate_report.py"
+
 _SPEC = importlib.util.spec_from_file_location(
-    "cap_generate_report", PROJECT_ROOT / "scripts" / "certification" / "generate_report.py"
+    "cap_generate_report", str(GENERATE_REPORT)
 )
 generate_report = importlib.util.module_from_spec(_SPEC)
 sys.modules["cap_generate_report"] = generate_report
@@ -155,3 +158,29 @@ def test_env_example_does_not_claim_the_impossible() -> None:
         "for the oci-sandbox provider this same file configures"
     )
     assert "kubernetes-sandbox" in text and "oci-sandbox" in text
+
+def test_the_detector_needs_no_third_party_import(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The certification job calls generate_report.py with a bare interpreter.
+
+    A first version of the compose detector imported PyYAML, which exists in the
+    backend venv -- so the tests passed while the full-certification layer died with
+    ``ModuleNotFoundError: No module named 'yaml'``. A gate whose answer depends on
+    which python happens to have a package installed is not a gate.
+    """
+    import importlib.util
+    import sys
+
+    for name in list(sys.modules):
+        if name == "yaml" or name.startswith("yaml."):
+            monkeypatch.setitem(sys.modules, name, None)  # type: ignore[arg-type]
+    monkeypatch.setitem(sys.modules, "yaml", None)  # `import yaml` now raises
+
+    spec = importlib.util.spec_from_file_location(
+        "cap_generate_report_without_yaml", GENERATE_REPORT
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.compose_worker_mounts_control_socket() is True
+    assert module.chart_worker_mounts_control_socket() is False
+    assert module.docker_socket_control_plane()["worker_control_plane_isolation"] == "PARTIAL"
