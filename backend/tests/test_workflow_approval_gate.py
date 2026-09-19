@@ -205,6 +205,19 @@ def test_answering_a_gate_needs_the_approval_permission() -> None:
     assert (
         _permission_for("POST", f"/workflow/run/{run_id}/decision") == "approval.decide"
     )
-    # Starting and resuming a run keeps the pre-existing mapping.
-    assert _permission_for("POST", f"/workflow/run/{run_id}/resume") == "platform.manage"
-    assert _permission_for("GET", f"/workflow/run/{run_id}") == "platform.manage"
+    # Operating a run is narrower than owning the platform: this assertion used to
+    # record the fall-through to `platform.manage`, which is precisely the mapping
+    # that broke the console's read-only pages. Starting/resuming now requires
+    # `workflow.execute` -- held by SOC Analyst, not by `read-only` -- and reading
+    # a run requires `workflow.read`.
+    assert _permission_for("POST", f"/workflow/run/{run_id}/resume") == "workflow.execute"
+    assert _permission_for("GET", f"/workflow/run/{run_id}") == "workflow.read"
+    # The separation that matters is untouched: deciding is not operating.
+    from app.auth.rbac import _principal
+
+    analyst = _principal("soc-analyst")
+    assert analyst is not None
+    assert "workflow.execute" in analyst.permissions
+    assert "approval.decide" not in analyst.permissions, (
+        "an analyst must not be able to approve their own plan"
+    )
