@@ -701,12 +701,16 @@ its documentation and a home that collects it.
   tag, version and required job set beside it — before the step re-raises, so a red gate never
   leaves the run with two failing steps and no artifact saying what was being looked at.
   `test_release_publication_gate.py` **executes** that inline step against canned Actions-API
-  answers — 16 tests over the acceptance rules, the `needs` graph, the `fetch-depth: 0` and the
-  `actions: read` scope the walk depends on — and every rule was negative-controlled by mutating
-  the gate: dropping the job-set check, removing the gate's `needs` edge from `release-images`,
-  switching to a depth-1 checkout, deleting the `head_sha` probe, pinning the full-window flag to
-  false, and changing the ERROR verdict word each failed exactly its own test and nothing else. It
-  was then run for real against this repository's API at tip `577e621`
+  answers — 17 tests over the acceptance rules, the `needs` graph, the `fetch-depth: 0` and
+  `actions: read` the walk depends on, the SHA normalisation and the shallow-checkout refusal — and
+  every rule was negative-controlled by mutating the gate: dropping the job-set check, removing the
+  gate's `needs` edge from `release-images`, deleting the `head_sha` probe, pinning the full-window
+  flag to false, and changing the ERROR verdict word each failed exactly its own test and nothing
+  else. Running it for real turned up two rough edges of its own: an abbreviated input was reported
+  as a shallow checkout, so the tag is resolved with `git rev-parse --verify` before anything
+  consumes it, and a one-commit history is now refused with a message that names `fetch-depth`
+  rather than implying certification is missing. It was then run for real against this repository's
+  API at tip `577e621`
   (`outputs/cert-e4b4e86/gate-before-ga-finished.json`), where it resolved Linux run
   `35439343387`, K8s `35439344924` and the soak `35439341789` to `c52dcb9` 9 commits back and
   classified all three INHERITED, and returned **FAIL** because the only GA run within reach was

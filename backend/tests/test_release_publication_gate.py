@@ -61,6 +61,9 @@ PG_LEGS = ["15-alpine", "16-alpine", "17-alpine"]
 SHA_TAG = "a" * 40
 SHA_CERTIFIED = "b" * 40
 CHAIN = [SHA_TAG, SHA_CERTIFIED, "c" * 40]
+#: Evidence at the tagged commit still needs a chain with history: a chain of one
+#: is the shallow-checkout signature the gate refuses to read as "uncertified".
+CHAIN_TAG = [SHA_TAG, "d" * 40]
 
 INHERITED = json.dumps(
     {"inheritance": "INHERITED", "runtime_affecting": False, "files": []}
@@ -134,6 +137,7 @@ class FakeActionsApi:
         exact: dict[str, str] | None = None,
         classify: tuple[int, str] = (0, INHERITED),
         chain: list[str] | None = None,
+        resolved: str | None = None,
         gh_fails: bool = False,
     ) -> None:
         self.runs = runs or {}
@@ -141,6 +145,7 @@ class FakeActionsApi:
         self.jobs = jobs or {}
         self.classify = classify
         self.chain = chain if chain is not None else CHAIN
+        self.resolved = resolved if resolved is not None else self.chain[0]
         self.gh_fails = gh_fails
         self.calls: list[tuple[str, ...]] = []
 
@@ -150,6 +155,9 @@ class FakeActionsApi:
         result = types.SimpleNamespace(returncode=0, stdout="", stderr="")
         if argv[:2] == ("gh", "api"):
             return self._gh(argv[2], result)
+        if argv[0] == "git" and "rev-parse" in argv:
+            result.stdout = self.resolved + "\n"
+            return result
         if argv[0] == "git":
             result.stdout = "\n".join(self.chain) + "\n"
             return result
@@ -188,10 +196,13 @@ class FakeActionsApi:
 
 
 def _exec_gate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, api: FakeActionsApi
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    api: FakeActionsApi,
+    tag_sha: str = SHA_TAG,
 ) -> tuple[int, dict | None]:
     """Run the gate's own code in ``tmp_path``; return (exit code, evidence)."""
-    monkeypatch.setenv("CERT_TAG_SHA", SHA_TAG)
+    monkeypatch.setenv("CERT_TAG_SHA", tag_sha)
     monkeypatch.setenv("CERT_REPOSITORY", "octo/repo")
     monkeypatch.setenv("CERT_VERSION", "1.0.6-rc1")
     monkeypatch.setenv("GITHUB_REF_NAME", "v1.0.6-rc1")
@@ -274,7 +285,7 @@ def test_a_full_recent_runs_page_cannot_hide_evidence_for_the_tagged_commit(
             runs=runs,
             jobs=jobs,
             exact={"cap-linux-certification.yml": _runs_payload([(SHA_TAG, 777, "success")])},
-            chain=[SHA_TAG],
+            chain=CHAIN_TAG,
         ),
     )
     assert code == 0, "the exact probe found the tagged commit's run and the gate ignored it"
@@ -294,7 +305,7 @@ def test_a_full_page_with_no_evidence_says_so_instead_of_claiming_absence(
         FakeActionsApi(
             runs={w: _runs_payload(noise) for w in RELEASE_JOBS},
             jobs={},
-            chain=[SHA_TAG],
+            chain=CHAIN_TAG,
         ),
     )
     assert code == 1
@@ -313,7 +324,7 @@ def test_gate_accepts_evidence_for_the_tagged_commit_itself(
 ) -> None:
     runs, jobs = _green_runs(SHA_TAG)
     code, evidence = _exec_gate(
-        tmp_path, monkeypatch, FakeActionsApi(runs=runs, jobs=jobs, chain=[SHA_TAG])
+        tmp_path, monkeypatch, FakeActionsApi(runs=runs, jobs=jobs, chain=CHAIN_TAG)
     )
     assert code == 0
     assert evidence["verdict"] == "PASS"
@@ -367,7 +378,7 @@ def test_gate_refuses_a_green_run_that_did_not_execute_the_release_jobs(
     code, evidence = _exec_gate(
         tmp_path,
         monkeypatch,
-        FakeActionsApi(runs=runs, jobs=jobs, chain=[SHA_TAG]),
+        FakeActionsApi(runs=runs, jobs=jobs, chain=CHAIN_TAG),
     )
     assert code == 1
     assert evidence["verdict"] == "FAIL"
@@ -433,7 +444,7 @@ def test_gate_ignores_runs_that_did_not_succeed(
         for workflow in RELEASE_JOBS
     }
     code, evidence = _exec_gate(
-        tmp_path, monkeypatch, FakeActionsApi(runs=runs, jobs=jobs, chain=[SHA_TAG])
+        tmp_path, monkeypatch, FakeActionsApi(runs=runs, jobs=jobs, chain=CHAIN_TAG)
     )
     assert code == 1
     assert evidence["evidence"] == {}
@@ -459,12 +470,34 @@ def test_api_failure_raises_instead_of_looking_like_absent_evidence(
     assert evidence["tag_sha"] == SHA_TAG and evidence["required"] == RELEASE_JOBS
 
 
-def test_shallow_checkout_is_detected_rather_than_misread(
+def test_a_shallow_checkout_is_reported_as_one_rather_than_as_absent_certification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``git rev-list`` that does not start at the tag means the checkout is wrong."""
-    with pytest.raises(RuntimeError, match="deep enough"):
-        _exec_gate(tmp_path, monkeypatch, FakeActionsApi(chain=["f" * 40]))
+    """Depth-1 history cannot show an ancestor, and must not claim one is missing."""
+    with pytest.raises(RuntimeError, match="fetch-depth"):
+        _exec_gate(
+            tmp_path,
+            monkeypatch,
+            FakeActionsApi(runs={}, jobs={}, chain=[SHA_TAG]),
+        )
+
+
+def test_an_abbreviated_tag_sha_is_normalised_before_it_is_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The evidence, the walk and the ``head_sha`` probe all need the full commit."""
+    runs, jobs = _green_runs(SHA_TAG)
+    api = FakeActionsApi(runs=runs, jobs=jobs, chain=CHAIN_TAG)
+    code, evidence = _exec_gate(tmp_path, monkeypatch, api, tag_sha=SHA_TAG[:7])
+    assert code == 0, "an abbreviated input must still resolve to the tagged commit"
+    assert evidence["tag_sha"] == SHA_TAG
+    probes = [
+        call[2]
+        for call in api.calls
+        if call[:2] == ("gh", "api") and "head_sha=" in call[2]
+    ]
+    assert probes, "the gate must probe by head_sha, which only matches full SHAs"
+    assert all(probe.endswith(SHA_TAG) for probe in probes), probes
 
 
 def test_the_gate_writes_its_evidence_even_when_it_fails(

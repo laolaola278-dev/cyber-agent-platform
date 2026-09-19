@@ -130,10 +130,18 @@ jobs:
               if proc.returncode != 0:
                   raise RuntimeError(f"git rev-list failed: {proc.stderr.strip()}")
               chain = [line for line in proc.stdout.split() if line]
-              if not chain or chain[0] != TAG_SHA:
+              if not chain:
+                  raise RuntimeError(f"git rev-list of {TAG_SHA[:12]} produced no commits")
+              if chain[0] != TAG_SHA:
                   raise RuntimeError(
-                      f"rev-list of {TAG_SHA} does not start at the tagged commit "
-                      "-- is the checkout deep enough?"
+                      f"rev-list starts at {chain[0][:12]}, not the tagged commit "
+                      f"{TAG_SHA[:12]} -- this checkout does not contain the tag"
+                  )
+              if len(chain) == 1:
+                  raise RuntimeError(
+                      "only the tagged commit is in this checkout, so an inherited "
+                      "certification cannot be checked -- this job must check out "
+                      "with fetch-depth: 0"
                   )
               return chain
 
@@ -195,6 +203,26 @@ jobs:
                           "jobs": {job: verdicts[job] for job in wanted},
                       }
               return {"missing": True, "runs_examined": len(runs), "window_full": window_full}
+
+
+          def resolve_sha(rev: str) -> str:
+              """Full commit SHA, or a complaint that names the input.
+
+              `github.sha` is always 40 characters, but the value is worth
+              normalising: an abbreviated one would make `ancestor_chain` report a
+              shallow checkout, and `head_sha=` only matches full SHAs.
+              """
+              proc = subprocess.run(
+                  ("git", "rev-parse", "--verify", f"{rev}^{{commit}}"),
+                  capture_output=True,
+                  encoding="utf-8",
+              )
+              if proc.returncode != 0:
+                  raise RuntimeError(
+                      f"cannot resolve {rev!r} to a commit in this checkout: "
+                      f"{proc.stderr.strip()}"
+                  )
+              return proc.stdout.strip()
 
 
           def classify(certified: str) -> tuple[bool, dict]:
@@ -290,6 +318,7 @@ jobs:
 
 
           try:
+              TAG_SHA = resolve_sha(TAG_SHA)
               GATE_EXIT = main()
           except (RuntimeError, KeyError, IndexError, ValueError) as error:
               # Could not decide is not the same as uncertified, and it is still
