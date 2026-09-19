@@ -208,75 +208,104 @@ jobs:
               return proc.returncode == 0, json.loads(proc.stdout)
 
 
-          chain = ancestor_chain()
-          evidence: dict[str, dict] = {}
-          failures: list[str] = []
-          for workflow in REQUIRED:
-              found = find_evidence(workflow, chain)
-              if found.get("missing"):
-                  caveat = (
-                      " -- the run listing came back full, so older evidence "
-                      "cannot be ruled out: dispatch certification on this commit"
-                      if found["window_full"]
-                      else ""
-                  )
-                  failures.append(
-                      f"{workflow}: no completed successful run with jobs "
-                      f"{list(REQUIRED[workflow])} for this commit or any of its "
-                      f"{len(chain)} nearest ancestors, in the "
-                      f"{found['runs_examined']} most recent completed runs "
-                      f"examined{caveat}"
-                  )
-                  print(f"{workflow}: NO CERTIFICATION EVIDENCE", file=sys.stderr)
-                  continue
-              print(
-                  f"{workflow}: run {found['run_id']} at {found['sha'][:8]} "
-                  f"(+{found['distance']} commits from the tag)"
+          def write_evidence(payload: dict) -> None:
+              OUT.mkdir(parents=True, exist_ok=True)
+              (OUT / "release-certification-gate.json").write_text(
+                  json.dumps(payload, indent=2) + "\n", "utf-8"
               )
-              if found["distance"]:
-                  inheritable, report = classify(found["sha"])
-                  found["diff_verdict"] = report["inheritance"]
-                  found["runtime_affecting"] = report["runtime_affecting"]
-                  found["blocking_files"] = [
-                      f["path"] for f in report["files"] if f["runtime_affecting"]
-                  ]
-                  if not inheritable:
-                      failures.append(
-                          f"{workflow}: certified at {found['sha'][:12]} but the "
-                          f"{found['distance']}-commit distance to the tag is "
-                          f"{report['inheritance']} ({found['blocking_files']})"
-                      )
-                      print(
-                          f"  {report['inheritance']}: "
-                          f"{', '.join(found['blocking_files'][:10])}",
-                          file=sys.stderr,
-                      )
-              evidence[workflow] = found
 
-          OUT.mkdir(parents=True, exist_ok=True)
-          (OUT / "release-certification-gate.json").write_text(
-              json.dumps(
-                  {
-                      "tag_sha": TAG_SHA,
-                      "tag_ref": os.environ.get("GITHUB_REF_NAME"),
-                      "version": os.environ.get("CERT_VERSION"),
-                      "ancestors_considered": len(chain),
-                      "required": {k: list(v) for k, v in REQUIRED.items()},
-                      "evidence": evidence,
-                      "failures": failures,
-                      "verdict": "PASS" if not failures else "FAIL",
-                  },
-                  indent=2,
+
+          def base_payload(**extra: object) -> dict:
+              payload = {
+                  "tag_sha": TAG_SHA,
+                  "tag_ref": os.environ.get("GITHUB_REF_NAME"),
+                  "version": os.environ.get("CERT_VERSION"),
+                  "required": {job: list(jobs) for job, jobs in REQUIRED.items()},
+              }
+              payload.update(extra)
+              return payload
+
+
+          def main() -> int:
+              chain = ancestor_chain()
+              evidence: dict[str, dict] = {}
+              failures: list[str] = []
+              for workflow in REQUIRED:
+                  found = find_evidence(workflow, chain)
+                  if found.get("missing"):
+                      caveat = (
+                          " -- the run listing came back full, so older evidence "
+                          "cannot be ruled out: dispatch certification on this commit"
+                          if found["window_full"]
+                          else ""
+                      )
+                      failures.append(
+                          f"{workflow}: no completed successful run with jobs "
+                          f"{list(REQUIRED[workflow])} for this commit or any of its "
+                          f"{len(chain)} nearest ancestors, in the "
+                          f"{found['runs_examined']} most recent completed runs "
+                          f"examined{caveat}"
+                      )
+                      print(f"{workflow}: NO CERTIFICATION EVIDENCE", file=sys.stderr)
+                      continue
+                  print(
+                      f"{workflow}: run {found['run_id']} at {found['sha'][:8]} "
+                      f"(+{found['distance']} commits from the tag)"
+                  )
+                  if found["distance"]:
+                      inheritable, report = classify(found["sha"])
+                      found["diff_verdict"] = report["inheritance"]
+                      found["runtime_affecting"] = report["runtime_affecting"]
+                      found["blocking_files"] = [
+                          f["path"] for f in report["files"] if f["runtime_affecting"]
+                      ]
+                      if not inheritable:
+                          failures.append(
+                              f"{workflow}: certified at {found['sha'][:12]} but the "
+                              f"{found['distance']}-commit distance to the tag is "
+                              f"{report['inheritance']} ({found['blocking_files']})"
+                          )
+                          print(
+                              f"  {report['inheritance']}: "
+                              f"{', '.join(found['blocking_files'][:10])}",
+                              file=sys.stderr,
+                          )
+                  evidence[workflow] = found
+
+              write_evidence(
+                  base_payload(
+                      ancestors_considered=len(chain),
+                      evidence=evidence,
+                      failures=failures,
+                      verdict="PASS" if not failures else "FAIL",
+                  )
               )
-              + "\n",
-              "utf-8",
-          )
-          if failures:
-              print("\nRELEASE BLOCKED -- certification:", file=sys.stderr)
-              for reason in failures:
-                  print(f"  * {reason}", file=sys.stderr)
-              sys.exit(1)
-          print(f"\nCertification gate PASS for {TAG_SHA[:12]}")
+              if failures:
+                  print("\nRELEASE BLOCKED -- certification:", file=sys.stderr)
+                  for reason in failures:
+                      print(f"  * {reason}", file=sys.stderr)
+                  return 1
+              print(f"\nCertification gate PASS for {TAG_SHA[:12]}")
+              return 0
+
+
+          try:
+              GATE_EXIT = main()
+          except (RuntimeError, KeyError, IndexError, ValueError) as error:
+              # Could not decide is not the same as uncertified, and it is still
+              # evidence: without this the run shows two red steps and no file
+              # saying what was being looked at when the ground moved.
+              write_evidence(
+                  base_payload(
+                      verdict="ERROR",
+                      error=f"{type(error).__name__}: {error}",
+                      evidence={},
+                      failures=[str(error)],
+                  )
+              )
+              print(f"certification gate could not decide: {error}", file=sys.stderr)
+              raise
+          raise SystemExit(GATE_EXIT)
           RELEASE_GATE_PY
       - uses: actions/upload-artifact@v4
         if: always()

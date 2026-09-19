@@ -450,7 +450,13 @@ def test_api_failure_raises_instead_of_looking_like_absent_evidence(
     """
     with pytest.raises(RuntimeError, match="gh api"):
         _exec_gate(tmp_path, monkeypatch, FakeActionsApi(gh_fails=True))
-    assert not (tmp_path / EVIDENCE_FILE).exists()
+    evidence = json.loads((tmp_path / EVIDENCE_FILE).read_text("utf-8"))
+    assert evidence["verdict"] == "ERROR", (
+        "a gate that could not look must say so, not leave the run with two red "
+        "steps and no artifact explaining which of them decided anything"
+    )
+    assert "gh api" in evidence["error"]
+    assert evidence["tag_sha"] == SHA_TAG and evidence["required"] == RELEASE_JOBS
 
 
 def test_shallow_checkout_is_detected_rather_than_misread(

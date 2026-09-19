@@ -53,7 +53,7 @@ the frozen candidate. Machine-readable output in `outputs/cert-becbad4/diff-*.js
 | `d9a2e01 → c52dcb9` | **RECERTIFICATION REQUIRED** | 4 `production_runtime` — `worker/runtime.py` and `acquisition/worker_path.py` twice: the renewal cadence (`3ebca44`) and the single-connection guard (`c52dcb9`, F-18). `d9a2e01` itself was certified green on Linux and K8s, and this is the round that replaces it |
 | `c52dcb9 → b9b7f03` (audit-tool file rows) | **INHERITED** | none: one `repo_tooling`, one `test_harness` |
 | `c52dcb9 → e4b4e86` (the report's soak/verdict rewrite) | **INHERITED** | none: 2 `docs`, 1 `test_harness`, 1 `repo_tooling` |
-| `c52dcb9 → 577e621` (F-21's publication gate) | **INHERITED** | none: 2 `ci_workflow`, 2 `docs`, 2 `test_harness`, 1 `repo_tooling` |
+| `c52dcb9 → 118fd43` (last CI-verified tip: F-21's gate, its tests, the comment corrections) | **INHERITED** | none: 3 `ci_workflow`, 2 `docs`, 2 `test_harness`, 1 `repo_tooling` (8 files) — `outputs/cert-e4b4e86/diff-c52dcb9-to-final-tip.json` |
 
 From `577e621` this table is no longer the only place the answer lives:
 `release.yml`'s `verify-certification` job re-runs `classify_diff.py` between the certified SHA
@@ -503,7 +503,9 @@ strict mode) when `syft`/`trivy` are absent — which is exactly why the count a
 catches credentials (this line's tooling has already been bitten by one). Scanned **1040 tracked
 files, 0 findings** at the certified `c52dcb9`
 (`outputs/cert-c52dcb9/secret-scan.json`; 1034 at `154f5b6`,
-`outputs/cert-154f5b6/secret-scan.json` — the growth is this pass's own tooling and tests).
+`outputs/cert-154f5b6/secret-scan.json` — the growth is this pass's own tooling and tests), and
+re-executed at the final tip `118fd43` with the same result: **1041 files, 0 findings**
+(`outputs/cert-e4b4e86/secret-scan-final.json`).
 Rules: provider-shaped tokens (AWS/GitHub/Slack/Stripe/Google/OpenAI/HuggingFace), PEM header +
 base64 body, JWTs, credentials inside URLs, assignments of high-entropy values to secret-shaped
 names, and a tracked `.env` as a finding by itself. Getting to zero took four rounds, each driven
@@ -695,19 +697,28 @@ its documentation and a home that collects it.
   `scripts/release/classify_diff.py` proves that distance is runtime-neutral. It writes
   `release-certification-gate.json` naming the run, the SHA, the distance and the classification
   behind every claim, and fails closed: an API error raises instead of being reported as
-  "uncertified", and a shallow checkout is detected rather than misread as absent evidence.
+  "uncertified", and a failure it cannot get past is itself recorded — `verdict: ERROR` with the
+  tag, version and required job set beside it — before the step re-raises, so a red gate never
+  leaves the run with two failing steps and no artifact saying what was being looked at.
   `test_release_publication_gate.py` **executes** that inline step against canned Actions-API
-  answers — 14 tests over the acceptance rules, the `needs` graph, the `fetch-depth: 0` and the
+  answers — 16 tests over the acceptance rules, the `needs` graph, the `fetch-depth: 0` and the
   `actions: read` scope the walk depends on — and every rule was negative-controlled by mutating
   the gate: dropping the job-set check, removing the gate's `needs` edge from `release-images`,
-  and switching to a depth-1 checkout each failed exactly their own test. It was then run for
-  real against this repository's API at tip `577e621`
+  switching to a depth-1 checkout, deleting the `head_sha` probe, pinning the full-window flag to
+  false, and changing the ERROR verdict word each failed exactly its own test and nothing else. It
+  was then run for real against this repository's API at tip `577e621`
   (`outputs/cert-e4b4e86/gate-before-ga-finished.json`), where it resolved Linux run
   `35439343387`, K8s `35439344924` and the soak `35439341789` to `c52dcb9` 9 commits back and
   classified all three INHERITED, and returned **FAIL** because the only GA run within reach was
   `34128117668` at `901013a4`, 61 commits back and `RECERTIFICATION_REQUIRED` — the strict GA run
   for `c52dcb9` was still executing. The refusal was correct and the reason was named; it is the
   §25 open item, not a new one.
+  **Re-run after that GA round went green, the same code returned PASS** for the final tip
+  `118fd43`: Linux `35439343387`, K8s `35439344924`, GA `35445391334` and the soak `35439341789`
+  all resolved to `c52dcb9` at distance 14 and classified INHERITED, `failures: []`
+  (`outputs/cert-e4b4e86/gate-at-final-tip.json`). Both verdicts came from the same execution of
+  the same code, so the gate is demonstrated in each direction rather than only in the one that
+  flatters it.
 
   **The job-set rule measured against history, not argued.** Applied to the last 60 completed runs
   of `cap-linux-certification.yml` (`outputs/cert-e4b4e86/gate-job-set-scan.json`), 21 of them
@@ -725,6 +736,16 @@ its documentation and a home that collects it.
   suite "runs on every push" — it runs in `full-certification` (push to `main`, or any dispatch but
   the PR layer) and in `cap-production-certification` (tag push or `layer: release` dispatch), so a
   release candidate's evidence comes from a dispatch and is resolved by `head_sha`.
+  **How far that sweep reached, so its boundary is stated rather than implied.** Every workflow
+  file and every markdown file in the repository was searched for sentences asserting that a job,
+  gate or check is required, mandatory, depended-on or blocking: 146 candidate sentences, each then
+  read in context and checked against the job graph or test that would have to implement it. Two
+  asserted enforcement that did not exist or misdescribed it — the F-21 comment and GA-GATE 33's
+  parenthetical, both corrected above; the rest of the workflow, release and deployment prose holds.
+  The phase reports and ADRs use the same words as design statements about intended behaviour
+  ("recipient allowlisting is mandatory", "a production adapter must translate…"), which this pass
+  did not treat as enforcement claims — several are the requirements the §12/§13 tests do enforce,
+  and the rest are labelled as future or out-of-scope work in their own text.
 
 **MEDIUM — open, recorded, not papered over**
 - F-4 Migration/schema naming drift: constraints and indexes renamed relative to what the revisions
