@@ -72,6 +72,7 @@ jobs:
             --ignore=backend/tests/test_phase_28_5_sandbox_image.py \
             --deselect=tests/test_phase_28_2_500_benchmark.py::test_500_runs_durable_no_loss_no_duplicate \
             --timeout=300 --timeout-method=thread \
+            --junitxml=junit-backend.xml \
             --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=90
       - name: Validate Alembic head
         run: uv run --project backend alembic -c backend/alembic.ini heads | tee alembic-head.txt
@@ -79,8 +80,13 @@ jobs:
         if: always()
         with:
           name: backend-evidence
+          # Machine-readable evidence, not log text: scripts/quality/audit_junit.py
+          # turns these two into the pass/fail and skip tables the release
+          # certification report cites, so the report's numbers are generated
+          # from the run that produced them.
           path: |
             coverage.xml
+            junit-backend.xml
             alembic-head.txt
 
   frontend:

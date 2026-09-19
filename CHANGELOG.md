@@ -119,7 +119,12 @@ published release contents are immutable.
   job owns its strictness policy, so it never fails a build, it only refuses to let a
   skip be anonymous. Until now both tables were assembled by hand from ad-hoc queries,
   which is how "132 skipped" reached a report without naming the twelve object-store
-  skips inside it.
+  skips inside it. CI's unit job now writes that evidence itself: it passes
+  ``--junitxml=junit-backend.xml`` and uploads the file beside ``coverage.xml`` in the
+  ``backend-evidence`` artifact, and `test_quality_gate_parity.py` binds generation to
+  upload -- every machine-readable report a job's own command produces has to appear in
+  an ``upload-artifact`` path of the same job, because a file nobody uploads is evidence
+  that does not exist.
 - Release evidence now binds itself to a commit. The Linux certification artifact records
   the SHA it certified (`GITHUB_SHA`, or `git rev-parse HEAD` locally), and the
   release-layer gate refuses an artifact that records no commit, records `"unknown"`, or

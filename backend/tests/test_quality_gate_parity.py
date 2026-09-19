@@ -189,3 +189,36 @@ def test_the_deselected_benchmark_names_where_it_actually_runs() -> None:
             f"{node} is deselected everywhere: it runs in no CI job and make test "
             "no longer collects it"
         )
+
+
+def test_evidence_a_ci_job_generates_is_actually_uploaded() -> None:
+    """A report a job writes and never uploads is evidence that does not exist.
+
+    The release certification report cites CI's own pass/fail, skip and coverage
+    numbers, and ``scripts/quality/audit_junit.py`` builds those tables from the
+    unit job's JUnit and coverage XML. Both files are produced inside the job and
+    vanish with the runner unless the artifact step names them, so the pair is
+    bound here: every machine-readable report a ``run:`` step generates has to
+    appear in an ``upload-artifact`` path of the same job.
+    """
+    offenders: list[str] = []
+    for job_name, job in (CI.get("jobs") or {}).items():
+        generated: set[str] = set()
+        uploaded: set[str] = set()
+        for step in job.get("steps") or []:
+            run = step.get("run")
+            if isinstance(run, str):
+                patterns = (
+                    r"--junitxml=(\S+)",
+                    r"--cov-report=xml:(\S+)",
+                    r"--tee=(\S+)",
+                )
+                for pattern in patterns:
+                    generated |= set(re.findall(pattern, run))
+            if "upload-artifact" in str(step.get("uses") or ""):
+                paths = str((step.get("with") or {}).get("path") or "")
+                uploaded |= {p.strip().rsplit("/", 1)[-1] for p in paths.splitlines() if p.strip()}
+        for name in sorted(generated):
+            if name.rsplit("/", 1)[-1] not in uploaded:
+                offenders.append(f"{job_name}: generates {name}, uploads no such file")
+    assert not offenders, "; ".join(offenders)
