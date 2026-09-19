@@ -50,6 +50,24 @@ published release contents are immutable.
   answering a run that never asked, naming the wrong gate, and the permission
   mapping.
 
+- `deployment/third-party-images.json` locks the containers and binaries that the
+  deployment and certification surfaces pull (MinIO server, Postgres, `mc`, `kind`)
+  with registry, tag, digest, provenance evidence and an upgrade procedure.
+  `backend/tests/test_third_party_image_lock.py` fails when a reference site and the
+  lock disagree, when a bootstrap installs a binary without verifying a published
+  checksum, or when the retirement note explaining the pin is deleted -- with
+  negative controls proving the checker rejects drift *and* accepts the locked
+  coordinate.
+- `backend/tests/test_compose_env_contract.py` keeps the three lists that have to
+  agree for `docker compose config` to succeed: the `${VAR:?...}` carriers compose
+  requires, the env block the CI packaging job supplies, and the keys `.env.example`
+  documents.
+- `backend/tests/test_zap_api_key_contract.py` holds the README's promise about
+  `CAP_ZAP_API_KEY` against the code: the secret resolves when configured, the
+  documented `SECRET_NOT_FOUND` failure happens when it is not, compose forwards it to
+  the API, the chart mounts it through the `cap-runtime` Secret, and a placeholder
+  value is rejected in production.
+
 ### Fixed
 
 - `npm run build` was broken by this audit's own new fixture. The build
@@ -83,6 +101,16 @@ published release contents are immutable.
   docker-compose step the test process inherited that file's proxy secret and
   database URL, and three shipped API tests failed with a bare 401. `tests/conftest.py`
   now pins the configuration before the app is imported.
+- Test-suite reproducibility, root-caused. Pinning a list of keys was whack-a-mole,
+  and two more leaked through it on this line: `CAP_ZAP_API_KEY` (a developer `.env`
+  provisioned ZAP inside the incident-plane tests, so a credential-bearing run and a
+  clean run tested different systems) and `APP_VERSION` (a `.env` left at the previous
+  release made `/health` report `1.0.5` on a tree whose 16 version carriers all said
+  `1.0.6-rc1`). `conftest.py` now clears `env_file` on the `Settings` class before any
+  app module is imported, so the suite sees process environment plus declared defaults
+  only -- which is exactly what a container gets in deployment -- and
+  `test_settings_dotenv_hermeticity.py` proves it with a poisoned `.env` plus a
+  negative control.
 - Audit attribution for API callers. Rejected requests were recorded with
   `operator="api-user"`, and `Asset.deleted_by` was written as the same literal,
   so the trail that exists to answer "who did this" named a shared placeholder
@@ -143,6 +171,25 @@ published release contents are immutable.
   (invented event IDs, evidence references and fixed timestamps) to the live
   API as if they were operational data, and hardcoded a scenario count that the
   fetched result already provides.
+
+- Object-store certification could not start. The MinIO vendor archived the
+  open-source server and stopped serving community release files: `dl.min.io` returns
+  HTTP 410 Gone and the image now fails on Docker Hub with `pull access denied` --
+  verified working from GitHub runners on 2026-08-22 (`_ci_logs/cert_run8_full.log`)
+  and failing on every certification job since 2026-09-13. The nightly soak, GA, Linux
+  and K8s jobs therefore died before any gate ran, and `docker-compose.yml` shipped the
+  same unreachable coordinate. Every reference now pulls the *identical* bytes
+  (`RELEASE.2025-04-22T22-12-26Z`,
+  `sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e`) from the
+  official MinIO organisation on quay.io, pinned by digest because the tag belongs to a
+  vendor that no longer maintains it. The GA bootstrap failed the same way silently:
+  `curl` without `-f` wrote an HTML error page to `/usr/local/bin/mc`, so `mc` is now
+  installed from the pinned GitHub release asset and verified against its published
+  `sha256sum` before use.
+- CI's compose gate regressed when `APP_VERSION` became a required carrier: the
+  `packaging` job supplied the other eight required variables but not that one, so
+  `docker compose config --quiet` failed on the candidate. It now resolves the value
+  from the canonical `VERSION` file instead of hardcoding one.
 
 ## [1.0.5] - 2026-09-07
 

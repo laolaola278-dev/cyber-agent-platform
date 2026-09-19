@@ -1,4 +1,4 @@
-# Known Issues for 1.0.5
+# Known Issues for 1.0.6-rc1
 
 > Supersedes the `1.0.1-rc1` set. Items closed by later releases are removed
 > here and recorded in [`CHANGELOG.md`](../CHANGELOG.md) and
@@ -12,18 +12,22 @@ None carried from v1.0.0: Phase 28.7 GA Reliability Certification passed 40/40
 gates under `CAP_GA_STRICT=1` at certified commit
 `b22b7be57f89cd0ef0cf9df8b289ec1f5e74b2b3` (v1.0.0-rc4).
 
-**Current release.** `1.0.5` is the released version (tag `v1.0.5`), certified at
-anchor `901013a`: strict GA 40/40 gates PASS with `full_ga_certified: true`, plus
-a 7200s reliability soak (run `34116570119`, 480/480 healthy ticks, 0 HTTP
-errors, 0 downtime, 48 pod-kill recoveries). Released versions on this line are
-v1.0.0, v1.0.1, v1.0.2, v1.0.3, v1.0.4 and v1.0.5.
+**Current published release.** `1.0.5`: tag `v1.0.5` -> commit
+`32ec298951485633c7019f83a18108a2bcddcb76`, GitHub Release created
+2026-09-07T14:59:44Z. Certified at anchor `901013a`: strict GA 40/40 gates PASS
+with `full_ga_certified: true`, plus a 7200s reliability soak (run
+`34116570119`, 480/480 healthy ticks, 0 HTTP errors, 0 downtime, 48 pod-kill
+recoveries). Released versions on this line are v1.0.0 through v1.0.5.
 
-**Unreleased work.** The `## [Unreleased]` section of the changelog lists
-post-1.0.5 fixes (CI image provenance, a stale committed `vite.config.js` that
-shadowed the console build config, the broken `make lint` target, and several
-Console error-state and dead-control defects). Under the version policy these
-require a new RC (`1.0.6-rc1`) and a fresh runtime certification before release;
-they are not part of the shipped v1.0.5 assets.
+**Under certification, not released.** `1.0.6-rc1` (anchor commit `2030192`,
+candidate branch `release/1.0.6-rc1`) carries the post-1.0.5 fixes listed under
+`## [Unreleased]` in the changelog plus the certification repairs found while
+preparing it. `scripts/release/classify_diff.py` classifies the line as
+runtime-affecting, so v1.0.5's certification cannot be inherited: this line earns
+its own. Nothing is published for it -- no tag, no GitHub Release, no image push --
+until the runtime certification below is green and publication is authorised.
+The readiness verdict and the exact candidate SHA are recorded in
+`docs/quality/`.
 
 ## Operational limitations
 
@@ -39,15 +43,31 @@ they are not part of the shipped v1.0.5 assets.
 - **The Web Console has no router.** Navigation is a state switch in `App.tsx`, so
   per-page state (investigation and acquisition results, filters, selections) is
   discarded on every menu click.
-- **The Web Console has no automated test suite.** Its CI gate is TypeScript
-  typecheck + ESLint + production build; API contracts are covered by the backend
-  suite, but no test drives a console user flow.
+- **Console coverage is component-level, not browser-level.** 29 Vitest tests
+  drive the operator flows (approval centre, incident assignment, acquisition run
+  lifecycle, the platform's three error payload shapes) over a real axios adapter
+  in jsdom, and CI gates on them with typecheck + ESLint + production build. No CI
+  test drives the *built* console in a real browser against a live backend; that
+  verification is performed per release and recorded in the certification report.
 - OpenTelemetry spans are not exported when `OTEL_EXPORTER_ENDPOINT` is empty.
 - Metrics and API docs are public application paths; production networks must restrict metrics, while API docs default to disabled.
 - The Web Console defaults to `read-only` for local Compose. It is not a production identity solution.
-- The console entry chunk is ~578 kB (183 kB gzipped) after route-level code
-  splitting and still trips the 550 kB warning. This is the antd core shared by
-  most views; it is a size warning, not a correctness defect.
+- The console entry chunk is ~487 kB (157 kB gzipped) after route-level code
+  splitting, under the 550 kB threshold. The antd core shared by most views is why
+  it cannot shrink much further; the remaining page code is lazy-loaded.
+- **The object store's upstream is archived.** MinIO stopped maintaining the
+  open-source server, client and KES: `dl.min.io` returns HTTP 410 Gone for every
+  community release asset, and `minio/minio` is gone from Docker Hub (pulled fine
+  from GitHub runners on 2026-08-22, `pull access denied` on every certification job
+  since 2026-09-13). CAP now pins the last certified release by digest from the
+  official MinIO organisation on quay.io (`RELEASE.2025-04-22T22-12-26Z`,
+  `sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e`) and
+  installs `mc` from a pinned GitHub release asset verified against its published
+  checksum. That makes the dependency reproducible, **not patched**: no further CVE
+  fixes will arrive for this image, so a deployment must compensate with network
+  isolation, its own mirror, and a migration plan. Provenance, the verification gap
+  that remains, and the upgrade procedure are in
+  `deployment/third-party-images.json`.
 
 ## Response Plane — production provider status
 
@@ -210,6 +230,16 @@ GA_REPORT_DIR=outputs/ga-dr-<this-run> pytest \
 Do not "fix" the failure by relaxing `verify_backup_manifest.py` or by skipping
 the gate when the directory exists -- that is the check that proves a backup is
 restorable.
+
+The suite is also hermetic against an untracked `.env`: `Settings` resolves
+`env_file=".env"` against the working directory, so a developer file used to be
+able to reconfigure tests -- a stale proxy secret (bare 401s), a real
+`CAP_ZAP_API_KEY` (ZAP provisioned inside incident-plane tests), or an
+`APP_VERSION` one release behind (`/health` reported `1.0.5` while all 16
+carriers said `1.0.6-rc1`). `backend/tests/conftest.py` clears `env_file` before
+any app module is imported, so tests see process environment plus declared
+defaults, exactly like a container; `test_settings_dotenv_hermeticity.py` holds
+that invariant.
 
 ## Closed items (do NOT re-list)
 
