@@ -399,11 +399,13 @@ after the execution-lease heartbeat fix (run `35434491797`), and at the certifie
 | Linux `full-certification` + `cap-production-certification` (12 gates each, incl. the 500-run OCI correctness benchmark, the 100-run kill-9 HA gate, the adversarial security suite and the 28.1–28.5 regression) | `35439343387` | **success**, artifacts in §13 |
 | PostgreSQL version matrix 15 / 16 / 17 | same run | **success** ×3 (§6) |
 | K8s certification, GATE 1..33 | `35439344924` | **33/33**, 0 not_run (§14) |
+| GA reliability soak, 7200 s with chaos | `35439341789` (`reliability-evidence`) | **success**: 480/480 healthy ticks, 480 runs created, 48 cancelled, 1440 pagination requests, **0 HTTP errors**, **0 downtime seconds**, 11 worker pods killed mid-run, RSS samples 176–538 KB with no monotonic growth, upgrade-under-load 6.1 s and rollback-under-load 0.5 s both with 0 errors, 5 tests / 0 failures over 7297 s |
 | Local authoritative suite + migration catalogue + secret scan + skip/coverage audit tables | this host | §3, §5, §20, §21, §22 |
 
-**In flight when this was written:** the 2-hour GA reliability soak (`35439341789`, dispatched at
-`c52dcb9`) and the strict GA certification that consumes its artifact. §25 states what is not yet
-closed because of them.
+**In flight when this was written:** the strict FULL-GA certification dispatched on the certified
+SHA through the `cert/1.0.6-rc1` pointer branch (run `35445391334`, `ga_strict=true`). It resolves
+its soak evidence by `head_sha`, which is why it runs on the certified commit and not on the
+docs-only tip. §25 states what is not yet closed because of it.
 
 **Why the earlier green rounds are history, not this candidate's certificate**
 
@@ -433,7 +435,10 @@ assertions (worker `SANDBOX_PROVIDER=kubernetes-sandbox`, in-chart egress proxy,
 present, no `APP_ENVIRONMENT=development`, `resources.requests` intact). Upgrade itself is
 certified on live clusters: K8s GATE 18 *rolling update* and GATE 19 *version skew
 compatibility*, `test_phase_28_7_ga_tier2_cluster.py` asserting exactly one new Helm revision
-after upgrade, and GA-GATE 34 performing a Helm upgrade **during sustained load** inside the soak.
+after upgrade, and GA-GATE 34 performing a Helm upgrade **during sustained load** inside the soak
+— measured on the certified candidate at the 2400 s mark of the 7200 s window: upgrade
+**6.1 s** with 0 HTTP errors, rollback at the 4800 s mark from revision 2 **0.5 s** with 0 HTTP
+errors, against a live claim/execute loop (`ga-dr/soak-context.json`, `transitions`).
 `deployment/helm/cap/values.schema.json` rejects a malformed override before it reaches a cluster.
 
 ## 18. Rollback — what is actually true
