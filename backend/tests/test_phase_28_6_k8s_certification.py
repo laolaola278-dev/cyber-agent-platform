@@ -1854,14 +1854,25 @@ def console_port() -> int:
     than "the pod became ready", which proves the process started.
     """
     global _CONSOLE_PF
+    import tempfile
+
     _require_cluster()
+    service = "svc/cap-cap-frontend"
+    # The Service publishes .Values.frontend.service.port (80 in the shipped
+    # chart), not the container's 8080, so ask the cluster which port to map:
+    # a guessed one fails as "unreachable" with nothing to show why.
+    service_port = _kubectl(
+        ["get", service, "-n", NAMESPACE, "-o", "jsonpath={.spec.ports[0].port}"]
+    ).strip()
+    assert service_port.isdigit(), f"{service} exposes no numeric port: {service_port!r}"
     port = 18081
+    error_log = tempfile.TemporaryFile(mode="w+")
     _CONSOLE_PF = subprocess.Popen(
-        ["kubectl", "port-forward", "-n", NAMESPACE, "svc/cap-cap-frontend", f"{port}:8080"],
+        ["kubectl", "port-forward", "-n", NAMESPACE, service, f"{port}:{service_port}"],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=error_log,
     )
-    deadline = time.monotonic() + 90
+    deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         try:
             if httpx.get(f"http://127.0.0.1:{port}/", timeout=3).status_code == 200:
@@ -1871,12 +1882,18 @@ def console_port() -> int:
                     if _CONSOLE_PF is not None:
                         _CONSOLE_PF.terminate()
                         _CONSOLE_PF.wait(timeout=10)
+                    error_log.close()
                 return
         except Exception:  # noqa: BLE001 -- tunnel not up yet
             time.sleep(0.5)
     if _CONSOLE_PF is not None:
         _CONSOLE_PF.terminate()
-    pytest.fail("console nginx not reachable via port-forward")
+    error_log.seek(0)
+    detail = error_log.read()[-600:]
+    error_log.close()
+    pytest.fail(
+        f"console nginx not reachable via port-forward to {service}:{service_port}: {detail}"
+    )
 
 
 def _script_sources(html: str) -> list[str]:
@@ -1923,7 +1940,9 @@ def test_gate33_console_serves_the_built_app_through_real_nginx(console_port: in
     # And the proxy really is in front of the API for unknown paths: the response
     # must be the application's 404, not the SPA fallback swallowing it.
     missing = httpx.get(f"{base}/api/acquisitions/does-not-exist", timeout=30)
-    assert missing.status_code == 404, (missing.status_code, missing.text[:200])
+    # 404 from the handler or 422 from request validation (the path parameter is a
+    # UUID) both prove the request reached the application; index.html would not.
+    assert missing.status_code in (404, 422), (missing.status_code, missing.text[:200])
     assert "text/html" not in missing.headers.get("content-type", ""), (
         "an unknown /api/ path was answered with index.html -- the proxy location "
         "is not matching, and the browser would see a JSON parse error"
