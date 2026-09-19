@@ -25,6 +25,14 @@ import shutil as _shutil
 # checkout on any machine -- except DATABASE_URL, which is deliberately forced
 # to the in-memory SQLite the fixtures build: a test process must never be able
 # to dial the deployment database named in a .env.
+#
+# That pin is total, so DATABASE_URL is not available as an escape hatch either:
+# a test that genuinely needs a real server reads a dedicated name and asserts
+# its shape first (CAP_PG_TEST_DSN, CAP283_PG_DSN, CAP283_S3_ENDPOINT). The
+# "authoritative PostgreSQL" heartbeat variant used to read DATABASE_URL, got
+# the SQLite pinned here, and died on `no such table: workers` in the strict GA
+# job (run 35429972509) -- see test_settings_dotenv_hermeticity, which now
+# forbids that read pattern outright.
 _TEST_CONFIG = {
     "APP_ENVIRONMENT": "development",
     "DEBUG": "false",

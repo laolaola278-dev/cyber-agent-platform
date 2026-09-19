@@ -229,6 +229,11 @@ jobs:
         env:
           CAP_PG_TEST: "1"
           DATABASE_URL: postgresql+asyncpg://cap:cap@127.0.0.1:15432/cap_hbtest
+          # tests/conftest.py pins DATABASE_URL to in-memory SQLite for every
+          # test process, so a variant that needs the real server reads this
+          # dedicated name instead. CAP_PG_TEST=1 without it fails the test --
+          # an unreachable "authoritative PostgreSQL" gate is a gap, not a pass.
+          CAP_PG_TEST_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:15432/cap_hbtest
         run: |
           # JUnit goes to the REPO ROOT outputs dir (the generator reads it there)
           mkdir -p ../outputs/cap-cert-ga

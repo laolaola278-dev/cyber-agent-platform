@@ -108,3 +108,51 @@ def test_reported_version_tracks_the_canonical_file(
     monkeypatch.chdir(tmp_path)
 
     assert Settings().app_version == canonical
+
+
+#: The other half of the pin: ``DATABASE_URL`` is forced to in-memory SQLite for
+#: every test process, so a test that wants a real server must read a dedicated
+#: variable (``CAP_PG_TEST_DSN``, ``CAP283_PG_DSN``, ``CAP_CERT_PG_DSN`` ...).
+_ENV_DATABASE_URL_READS = ('environ["DATABASE_URL"]', "environ.get(\"DATABASE_URL\"")
+
+
+def _database_url_readers() -> list[str]:
+    tests_dir = Path(__file__).resolve().parent
+    readers = []
+    for path in sorted(tests_dir.glob("*.py")):
+        if path.name == Path(__file__).name:
+            continue  # this file names the pattern it forbids
+        text = path.read_text("utf-8")
+        if any(pattern in text for pattern in _ENV_DATABASE_URL_READS):
+            readers.append(path.name)
+    return readers
+
+
+def test_no_test_reads_DATABASE_URL_as_a_server_it_may_dial() -> None:
+    """A pinned variable cannot also be an escape hatch.
+
+    ``test_phase_28_7_ga_heartbeat_invariant``'s "authoritative PostgreSQL"
+    variant took its DSN from ``DATABASE_URL``, so it got the SQLite the
+    conftest pins, and in-memory SQLite + NullPool means the create_all
+    connection and the session's connection are two different empty databases:
+    ``no such table: workers``. The strict GA job found it the moment the job
+    ran at all (run 35429972509) -- a gate that cannot reach its backend is
+    worse than no gate, because the artifact says it passed.
+    """
+    assert not _database_url_readers(), (
+        f"{_database_url_readers()} take a server DSN from DATABASE_URL, which "
+        "conftest pins to in-memory SQLite; use a dedicated variable and assert "
+        "its shape before connecting"
+    )
+
+
+def test_the_database_url_scan_is_not_vacuous() -> None:
+    """Positive control: both forbidden shapes must still be matched."""
+    planted = [
+        "url = os.environ[\"DATABASE_URL\"]\n",
+        "url = os.environ.get(\"DATABASE_URL\", \"\")\n",
+    ]
+    for text in planted:
+        assert any(pattern in text for pattern in _ENV_DATABASE_URL_READS), (
+            f"the scan no longer matches {text.strip()}"
+        )
