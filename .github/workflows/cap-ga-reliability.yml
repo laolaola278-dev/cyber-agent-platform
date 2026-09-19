@@ -25,7 +25,12 @@ permissions:
 
 concurrency:
   group: ga-reliability-${{ github.ref }}
-  cancel-in-progress: true
+  # One run per ref (two kind clusters on the same ref would fight), but a run in
+  # flight is NOT cancelled by a later push: certification produces an artifact
+  # bound to the SHA it ran, and cancelling mid-flight yields evidence for nothing.
+  # A push during a certification run queues behind it instead. `ci.yml` keeps
+  # cancel-in-progress because a superseded unit-test run has no evidence value.
+  cancel-in-progress: false
 
 env:
   CAP_K8S_STRICT: "1"

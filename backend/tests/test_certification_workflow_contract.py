@@ -172,3 +172,37 @@ def test_prefix_is_sanitised_where_the_names_are_built() -> None:
         "scripts/certification/setup.sh must sanitise CAP_CERT_PREFIX before "
         "building container and network names from it"
     )
+
+#: The workflows whose purpose is producing a signed-for artifact, as opposed to
+#: fast feedback on a diff.
+CERTIFICATION_WORKFLOWS = (
+    "cap-linux-certification.yml",
+    "cap-k8s-certification.yml",
+    "cap-ga-certification.yml",
+    "cap-ga-reliability.yml",
+)
+
+
+@pytest.mark.parametrize("name", CERTIFICATION_WORKFLOWS)
+def test_a_push_cannot_cancel_an_in_flight_certification(name: str) -> None:
+    """Certification produces an artifact bound to the SHA that ran.
+
+    Cancellation on new activity is right for CI -- a superseded unit run has no
+    value -- but a run killed 17 minutes into the release layer (which is what
+    happened at ad91e0e, when the candidate branch took another commit) leaves no
+    evidence for any SHA, and on the soak it destroys two hours of real work.
+    """
+    concurrency = WORKFLOWS[name].get("concurrency") or {}
+    assert concurrency.get("cancel-in-progress") is False, (
+        f"{name} still cancels an in-flight certification run on a new push"
+    )
+    assert isinstance(concurrency.get("group"), str) and concurrency["group"], (
+        f"{name} lost its concurrency group; two runs on one ref would fight over "
+        "the same kind cluster and docker network names"
+    )
+
+
+def test_ci_still_cancels_superseded_runs() -> None:
+    """The other half of the exemption: it must not spread to the feedback loop."""
+    doc = yaml.safe_load((WORKFLOW_DIR / "ci.yml").read_text("utf-8"))
+    assert (doc.get("concurrency") or {}).get("cancel-in-progress") is True

@@ -102,6 +102,14 @@ published release contents are immutable.
   file, in `.env.example` and in known-issues -- and if the mount is ever removed,
   the sentences that promise it fail the test, so prose cannot outlive the code.
 
+- The four certification workflows cancelled an in-flight run whenever the
+  candidate branch received another commit (`cancel-in-progress: true` on a per-ref
+  concurrency group), which destroyed a 17-minute release-layer run mid-flight and
+  would have destroyed a 2-hour soak. Certification produces an artifact bound to the
+  SHA that ran, so a cancelled run is evidence for nothing; they now queue instead.
+  `ci.yml` keeps cancellation -- superseded unit-test runs have no evidence value --
+  and `test_certification_workflow_contract.py` pins both halves.
+
 ### Fixed
 
 - `npm run build` was broken by this audit's own new fixture. The build
