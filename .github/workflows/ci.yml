@@ -43,14 +43,26 @@ jobs:
         # Exclude the Linux/container certification suite (network/reaper/
         # resources/secrets/sandbox_image): those tests need the cap-sandbox-*
         # images + cap-sandbox-egress network that only the CAP certification
-        # workflow provisions. The 28.2 SQLite durability benchmark is also
-        # excluded (single-writer lock serializes it to 20+ min on a contended
-        # runner); its 500-run correctness is re-certified in the release-tag
-        # benchmark job. --timeout=300 catches any hang with a thread stack dump
-        # instead of letting the whole job time out. Coverage is gated at 90%:
-        # the 95% figure assumed the container/PG infra tests contribute
-        # coverage, which they cannot in this infra-less job (they run, with
-        # coverage, in the CAP certification workflow instead).
+        # workflow provisions. --timeout=300 catches any hang with a thread stack
+        # dump instead of letting the whole job time out.
+        #
+        # Coverage is gated at 90% and measured on THIS job alone. The earlier
+        # note here claimed the infra suites contribute coverage inside the CAP
+        # certification workflow; they do not -- no certification pytest invocation
+        # passes --cov, so lines that only execute in a container (worker_main,
+        # acquisition gc, sandboxed_browser, the OCI shim/reaper, reconcile_cli)
+        # appear in no denominator anywhere. Treat this number as the unit-suite
+        # figure, list the low modules from
+        # outputs/cert-<sha>/coverage-low-modules.json, and do not read it as the
+        # product's executed share.
+        #
+        # The 28.2 SQLite durability benchmark is deselected because SQLite's
+        # single-writer lock serializes it to 20+ min on a contended runner. It is
+        # NOT re-certified by the release-tag benchmark job, contrary to the earlier
+        # comment: that step runs the 28.4 500-run OCI/PG durability gate, and the
+        # certification layer deselects 28.2 too. Its home is `make test` (the
+        # developer gate, which passes no --deselect) plus the per-release local
+        # audit, whose run the release report records.
         run: |
           uv run --project backend pytest backend/tests -p no:cacheprovider \
             --ignore=backend/tests/test_phase_28_5_linux_network.py \
@@ -97,6 +109,59 @@ jobs:
         with:
           name: frontend-dist
           path: frontend/dist
+
+  migration:
+    # The migration chain against a real PostgreSQL server, on every push. The
+    # unit suite runs on SQLite and cannot see a broken upgrade path, and "no
+    # file under backend/alembic changed" is not a proof either: models and the
+    # migrated schema can drift apart silently and the next deployment that runs
+    # `alembic upgrade head` finds out first.
+    #
+    # Not gated on `alembic check`: autogenerate today reports ~60 operations of
+    # *known* divergence (an orphan nullable column `agents.runtime_image`,
+    # indexes that exist only in the schema, unique constraints the models express
+    # as unique indexes). A gate that is red on the day it is added gets deleted
+    # within a release; test_migration_catalogue.py pins the drift list instead, so
+    # it is visible, attributed, and can only shrink.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: {POSTGRES_USER: cap, POSTGRES_PASSWORD: cap, POSTGRES_DB: capmigrate}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cap" --health-interval 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql+asyncpg://cap:cap@localhost:5432/capmigrate
+      # alembic's env.py imports app.config/app.database, and the repo root is not
+      # on sys.path when it runs from here.
+      PYTHONPATH: backend
+      # The catalogue tests create and drop their own throwaway databases, so they
+      # certify a fresh install without disturbing this one.
+      CAP283_PG_ADMIN_DSN: postgresql://cap:cap@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.13"}
+      - name: Install locked dependencies
+        run: uv sync --project backend --frozen --extra dev
+      - name: Fresh install to head
+        run: |
+          set -euo pipefail
+          uv run --project backend alembic -c backend/alembic.ini upgrade head
+          uv run --project backend alembic -c backend/alembic.ini current | tail -1
+      - name: Catalogue, drift and data-preservation assertions
+        run: |
+          set -euo pipefail
+          uv run --project backend pytest backend/tests/test_migration_catalogue.py \
+            -p no:cacheprovider -q --timeout=1500
+      - name: Teardown and rebuild (downgrade base, upgrade head)
+        run: |
+          set -euo pipefail
+          uv run --project backend alembic -c backend/alembic.ini downgrade base
+          uv run --project backend alembic -c backend/alembic.ini upgrade head
 
   packaging:
     runs-on: ubuntu-latest

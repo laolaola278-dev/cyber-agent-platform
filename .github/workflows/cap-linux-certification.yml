@@ -220,11 +220,14 @@ jobs:
     env:
       CAP_CERTIFICATION_STRICT: "1"
       CAP_CERT_OUT: outputs/cap-cert
-      CAP_CERT_PREFIX: capcert-rel-${{ github.ref_name }}
+      # run_id, not ref_name: a branch called release/1.0.6-rc1 puts a slash in
+      # every container and network alias the prefix feeds, and Docker rejects the
+      # name (`Invalid container name (capcert-rel-release/1.0.6-rc1-egress)`).
+      CAP_CERT_PREFIX: capcert-rel-${{ github.run_id }}
       CAP_SANDBOX_NETWORK: cap-sandbox-egress
       CAP_SANDBOX_IMAGE: cap-sandbox-http:latest
       CAP_SANDBOX_BROWSER_IMAGE: cap-sandbox-browser:latest
-      EGRESS_PROXY_URL: http://capcert-rel-${{ github.ref_name }}-egress:8080
+      EGRESS_PROXY_URL: http://capcert-rel-${{ github.run_id }}-egress:8080
       CAP284_BENCH_N: "500"
       CAP_CERT_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
       CAP283_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
@@ -320,3 +323,79 @@ jobs:
 # Production releases MUST depend on cap-production-certification
 # (the release.yml workflow includes this file via workflow_call and lists it
 # as a required job before publishing artifacts).
+
+  # ---------------------------------------------------------------------
+  # PostgreSQL version matrix (release-certification section 6)
+  #
+  # "Certified on PostgreSQL" has to say *which* PostgreSQL. Neither compose nor
+  # the chart pins a server version an operator must match -- both point at a
+  # managed instance -- so the migration chain is executed here against the three
+  # major versions a deployment is likely to run. fail-fast is off deliberately: a
+  # matrix that stops at the first failure reports one version instead of all
+  # three.
+  postgres-version-matrix:
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'workflow_dispatch' && inputs.layer != 'pr')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15-alpine", "16-alpine", "17-alpine"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env: {POSTGRES_USER: cap, POSTGRES_PASSWORD: cap, POSTGRES_DB: capmatrix}
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cap" --health-interval 5s --health-retries 12
+    env:
+      CAP_CERTIFICATION_STRICT: "1"
+      DATABASE_URL: postgresql+asyncpg://cap:cap@localhost:55432/capmatrix
+      PYTHONPATH: backend
+      CAP283_PG_ADMIN_DSN: postgresql://cap:cap@localhost:55432/postgres
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.13"}
+      - name: Install locked dependencies
+        run: uv sync --project backend --frozen --extra dev
+      - name: Record the server under test
+        run: |
+          set -euo pipefail
+          mkdir -p outputs/cap-cert
+          uv run --project backend python - <<'PY' > outputs/cap-cert/pg-matrix-server.txt
+          import os
+          from sqlalchemy import create_engine, text
+          with create_engine(os.environ["DATABASE_URL"]).connect() as conn:
+              print(os.environ.get("MATRIX_POSTGRES", ""))
+              print(conn.execute(text("SELECT version()")).scalar())
+              print("server_version_num", conn.execute(text("SHOW server_version_num")).scalar())
+          PY
+          cat outputs/cap-cert/pg-matrix-server.txt
+        env:
+          MATRIX_POSTGRES: ${{ matrix.postgres }}
+      - name: Fresh install to head
+        run: |
+          set -euo pipefail
+          uv run --project backend alembic -c backend/alembic.ini upgrade head
+      - name: Catalogue, drift and data-preservation assertions
+        run: |
+          set -euo pipefail
+          uv run --project backend pytest backend/tests/test_migration_catalogue.py \
+            -p no:cacheprovider -q --timeout=1500 \
+            --junitxml=outputs/cap-cert/junit-pg-matrix-${{ matrix.postgres }}.xml
+      - name: Teardown and rebuild (downgrade base, upgrade head)
+        run: |
+          set -euo pipefail
+          uv run --project backend alembic -c backend/alembic.ini downgrade base
+          uv run --project backend alembic -c backend/alembic.ini upgrade head
+      - name: Upload matrix evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg-matrix-${{ matrix.postgres }}
+          path: outputs/cap-cert/
+          if-no-files-found: warn

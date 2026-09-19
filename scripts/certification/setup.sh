@@ -7,7 +7,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-PREFIX="${CAP_CERT_PREFIX:-capcert}"
+# Sanitise: Docker names allow [a-zA-Z0-9_.-] and must start alphanumeric, and
+# the same prefix becomes a hostname in EGRESS_PROXY_URL. A caller that builds it
+# from a git ref gets slashes for its trouble, so the script fixes it rather than
+# trusting every caller.
+PREFIX="$(printf '%s' "${CAP_CERT_PREFIX:-capcert}" | tr -c 'A-Za-z0-9_.-' '-')"
+CAP_CERT_PREFIX="$PREFIX"  # keep the exported value consistent with what we use
 NET="${CAP_SANDBOX_NETWORK:-cap-sandbox-egress}"
 OUT_DIR="${CAP_CERT_OUT:-outputs/cap-cert}"
 mkdir -p "$OUT_DIR"
