@@ -31,7 +31,9 @@ WORKFLOW_DIR = PROJECT_ROOT / ".github" / "workflows"
 DOCKER_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
 #: Interpolations that can expand to a value containing a slash.
-REF_INTERPOLATION = re.compile(r"\$\{\{[^}]*\b(github\.(ref_name|ref|head_ref|base_ref))\b[^}]*\}\}")
+REF_INTERPOLATION = re.compile(
+    r"\$\{\{[^}]*\b(github\.(ref_name|ref|head_ref|base_ref))\b[^}]*\}\}"
+)
 
 
 def _workflows() -> dict[str, dict]:
@@ -65,7 +67,8 @@ def test_docker_identifiers_cannot_carry_a_git_ref(name: str) -> None:
         env = job.get("env") or {}
         for key, value in env.items():
             text = str(value)
-            if not any(marker in key.upper() for marker in ("PREFIX", "URL", "NAME", "CLUSTER", "IMAGE")):
+            markers = ("PREFIX", "URL", "NAME", "CLUSTER", "IMAGE")
+            if not any(marker in key.upper() for marker in markers):
                 continue
             if REF_INTERPOLATION.search(text):
                 offenders.append(f"{job_name}.env.{key} = {text}")
@@ -138,7 +141,11 @@ def test_every_download_that_becomes_an_executable_uses_curl_fail(name: str) -> 
                 if not stripped.startswith("curl") or " -o " not in stripped:
                     continue
                 tokens = stripped.split()
-                flags = [token for token in tokens if token.startswith("-") and not token.startswith("--")]
+                flags = [
+                    token
+                    for token in tokens
+                    if token.startswith("-") and not token.startswith("--")
+                ]
                 long_flags = [token for token in tokens if token.startswith("--")]
                 # `-sfL` bundles -s, -f and -L: a substring search for " -f" misses
                 # it, and the bundling form is the one the supply-chain job uses.
