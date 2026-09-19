@@ -287,3 +287,62 @@ def test_prerelease_plus_logic_change_fails_closed() -> None:
 def test_alias_is_version_only_change_matches() -> None:
     # backwards-compatible alias must behave identically
     assert is_version_only_change is is_release_metadata_only_change
+
+
+# -- git decoding (Windows platform-encoding regression) ----------------------
+
+
+class _Completed:
+    def __init__(self, stdout: bytes) -> None:
+        self.stdout = stdout
+        self.stderr = b""
+        self.returncode = 0
+
+
+def test_git_output_is_decoded_as_utf8_not_the_platform_encoding(monkeypatch) -> None:
+    """A diff with a non-ASCII byte must classify, not crash, on any platform.
+
+    The classifier used ``text=True``, so on a GBK-default Windows console the
+    reader thread raised UnicodeDecodeError, ``stdout`` came back as None and
+    ``build_report`` died with an AttributeError -- hit for real on 2026-09-19,
+    the first time this tool ran against a Windows working tree.
+    """
+    seen: dict = {}
+    payload = (
+        b"--- a/backend/app/config/settings.py\n"
+        b"+++ b/backend/app/config/settings.py\n"
+        b'-    app_version: str = "1.0.5"\n'
+        b'+    app_version: str = "1.0.6-rc1"  # \xe2\x80\x94 anchor\n'
+    )
+
+    def fake_run(args, **kwargs):
+        seen.update(kwargs)
+        return _Completed(payload)
+
+    monkeypatch.setattr(_mod.subprocess, "run", fake_run)
+    out = _mod._git(["git", "diff", "a..b", "--", "backend/app/config/settings.py"])
+
+    assert "\u2014" in out, "UTF-8 bytes must decode regardless of the console codepage"
+    assert "text" not in seen, "text=True decodes with the platform encoding"
+    assert "encoding" not in seen, "decoding must stay explicit and in-thread"
+
+
+def test_undecodable_git_output_fails_loudly(monkeypatch) -> None:
+    """Never degrade to "no changed lines" -- that would inherit a certification."""
+    monkeypatch.setattr(
+        _mod.subprocess, "run", lambda args, **kwargs: _Completed(b"\xff\xfenot utf-8")
+    )
+    with pytest.raises(SystemExit) as raised:
+        _mod._git(["git", "diff", "--name-only", "a..b"])
+    assert "UTF-8" in str(raised.value)
+
+
+def test_diff_helpers_route_through_the_decoder(monkeypatch) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(_mod, "_git", lambda args: calls.append(args) or "a.py\n")
+    assert _mod.git_changed_files("a", "b") == ["a.py"]
+    assert _mod.git_file_diff("a", "b", "a.py") == "a.py\n"
+    assert calls == [
+        ["git", "diff", "--name-only", "a..b"],
+        ["git", "diff", "a..b", "--", "a.py"],
+    ]

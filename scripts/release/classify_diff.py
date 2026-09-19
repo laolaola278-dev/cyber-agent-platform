@@ -256,20 +256,32 @@ def classify_path(path: str) -> str:
     return "production_runtime"
 
 
+def _git(args: list[str]) -> str:
+    """Run git and decode its bytes as UTF-8 in *this* thread.
+
+    ``text=True`` decodes with the platform encoding. On a GBK-default Windows
+    console a single non-ASCII byte in a diff (an em dash in a comment is
+    enough) kills the reader thread: ``stdout`` comes back as ``None`` and the
+    classifier dies later in ``_changed_lines`` with an ``AttributeError`` that
+    points nowhere near the cause -- and a future ``or ""`` would quietly turn
+    a real runtime diff into "no changed lines", i.e. an inherited
+    certification that was never earned. Git's own output is UTF-8, so decode it
+    as UTF-8 and name the invocation when a repository disagrees.
+    """
+    process = subprocess.run(args, capture_output=True, check=True)
+    try:
+        return (process.stdout or b"").decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise SystemExit(f"git output is not UTF-8 ({' '.join(args)}): {error}") from error
+
+
 def git_changed_files(certified: str, candidate: str) -> list[str]:
-    out = subprocess.run(
-        ["git", "diff", "--name-only", f"{certified}..{candidate}"],
-        capture_output=True, text=True, check=True,
-    )
-    return [line.strip() for line in out.stdout.splitlines() if line.strip()]
+    out = _git(["git", "diff", "--name-only", f"{certified}..{candidate}"])
+    return [line.strip() for line in out.splitlines() if line.strip()]
 
 
 def git_file_diff(certified: str, candidate: str, path: str) -> str:
-    out = subprocess.run(
-        ["git", "diff", f"{certified}..{candidate}", "--", path],
-        capture_output=True, text=True, check=True,
-    )
-    return out.stdout
+    return _git(["git", "diff", f"{certified}..{candidate}", "--", path])
 
 
 def classify_file(certified: str, candidate: str, path: str) -> FileClassification:
