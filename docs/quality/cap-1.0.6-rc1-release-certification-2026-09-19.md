@@ -1,6 +1,7 @@
 # CAP 1.0.6-rc1 — Final Release Certification Report
 
-Candidate: `1fc1c982d4a336cc71c0f528af9c6b045497a8f5` (short `1fc1c98`), branch `release/1.0.6-rc1`.
+Candidate: `c8c170fe2a2512949dd2e6fb429e7c83e04741db` (short `c8c170f`), branch `release/1.0.6-rc1`.
+Superseded by runtime changes during this pass, in order: `154f5b6` → `71dad6e` → `0b4e207` → `2b65368` → `ad91e0e` → `1fc1c98` → `c8c170f`. Each step is classified in §2, and every gate bound to an earlier SHA is labelled as such rather than silently reused.
 Prepared: 2026-09-19, from a Windows audit host plus GitHub-hosted Linux runners.
 Publication: **none performed** — no `v*` tag, no GitHub Release, no image pushed, no existing tag or image overwritten.
 
@@ -184,7 +185,7 @@ Repairs, all at this candidate:
 - object-store behaviour is certified by the gates that use it: 12 `object_store` tests (skipped
   without a server, executed in the Linux certification), K8s GATE 21 *object store outage
   blocks* and GATE 24/25 backup/restore + data-survives-restart, all PASS at `154f5b6` and
-  re-running at `8a8711f`/`1fc1c98` (**IN FLIGHT**).
+  re-running at `c8c170f` (**IN FLIGHT**, run `35429505106`).
 
 Provenance recorded honestly, including the gap: the Quay image's own labels carry
 `release=RELEASE.2025-04-22T22-12-26Z`, `vendor: MinIO Inc <dev@min.io>`, UBI9 base, built
@@ -224,7 +225,23 @@ client**, which is what proves `envsubst` filled `X-CAP-User` and `X-CAP-Proxy-S
 pod env (an unset secret yields an empty header and the middleware denies); and an unknown
 `/api/…` path returns the application's 404/422 rather than `index.html` — the SPA fallback
 swallowing an API path shows up in a browser as a JSON parse error and never in a readiness probe.
-Status **IN FLIGHT** at `8a8711f` (run `35427778399`); it took three dispatches to get here, each
+**Defect found and fixed here (F-13, HIGH).** The authorization map had no rule for
+`/acquisitions`, `/agents`, `/agent/*`, `/tasks`, `/workflow`, `/registry`, `/capabilities` or
+`/runtime`, so all of them inherited the fallback `platform.manage` — which the RBAC catalog
+itself labels "Operate *legacy* control-plane management APIs". The console's shipped identity is
+`read-only`, so `GET /api/acquisitions` answered `403 Permission required: platform.manage`: half
+the console's pages were unusable on a default deployment, and the only available workaround was
+granting the console user the whole platform — the escalation the map exists to prevent. K8S-GATE
+33 found it because it issues the console's own request, with no identity headers of its own; no
+unit test had ever asked as `read-only`. Each resource now has explicit read/execute (or write)
+permissions, SOC Analyst gains the analyst-plane actions it already performs, and `read-only` gains
+exactly the reads the console displays and no writes.
+`tests/test_rbac_permission_mapping.py` holds the line: every advertised endpoint must map to a
+defined permission, the `platform.manage` fallback is an explicit reviewed list
+(`POST /heartbeat`), and a negative control proves an unruled route still falls through — so the
+next console endpoint cannot silently inherit the platform again.
+
+Status **IN FLIGHT** at `c8c170f` (run `35429507835`); it took four dispatches to get here, each
 fixing the *gate* (assumed container port 8080 where the Service publishes 80; called
 `.strip()` on a `CompletedProcess`), which is worth recording: the routing behaviour itself has
 not been contradicted.
@@ -236,7 +253,7 @@ not been contradicted.
 (`cert-artifacts-main/`, `cert-artifacts-release/cap-28.5-linux-certification.json`), including
 the 500-run OCI correctness benchmark, 100-run kill-9 HA, full adversarial security and the
 28.1–28.5 regression. Environment recorded (Ubuntu 24.04.5, kernel 6.17.0-1022-azure, Docker
-info, cgroup, nft/iptables rulesets). Re-running at `1fc1c98` (**IN FLIGHT**, run `35428170976`)
+info, cgroup, nft/iptables rulesets). Re-running at `c8c170f` (**IN FLIGHT**, run `35429505106`)
 because the intervening `.env.example`/compose edits are runtime-affecting by policy.
 The artifact's `worker_control_plane_isolation` field is discussed in §23 (F-1): it was a
 substring grep and is now a structural, per-path fact.
@@ -394,6 +411,12 @@ skips, which is the point of that switch.
 - F-3 The object-store image and the `mc` download were both unreachable upstream, which had
   silently killed every certification job since 2026-09-13 (§10).
 
+- F-13 Console reads charged the whole platform: eight API prefixes fell through to
+  `platform.manage`, so the default `read-only` console 403s on Acquisitions/Agents/Tasks/
+  Workflow/Registry/Capabilities/Runtime and the workaround was a blanket grant. Fixed with
+  per-resource read/execute permissions plus a mapping test that makes an unmapped console
+  endpoint a failure (§7).
+
 **MEDIUM — open, recorded, not papered over**
 - F-4 Migration/schema naming drift: constraints and indexes renamed relative to what the revisions
   and models promise; enforcement verified intact; `alembic check` is not gated (§5). A real fix
@@ -443,11 +466,12 @@ dependency replaced with the same, provenance-documented bytes so the pipeline c
 **CAP v1.0.6-rc1 RELEASE BLOCKED — publication requires explicit authorization, and four
 certification runs must land green on the candidate first.**
 
-In flight when this was written: K8s certification (run `35427778399`, the console-routing gate),
-CI (run `35427771415`), Linux release layer (run `35428170976`), the 7200s reliability soak (run
-`35427697696`) and the strict GA certification that must follow it. **None of these results is
-asserted here as passing.** Once every one of them is green on `1fc1c98` (or its inherited
-equivalent, with the classifier output attached) and the §23 MEDIUM items are each either fixed or
+In flight when this was written, all bound to `c8c170f`: CI (run `35429478441`), the Linux
+release layer including the PG matrix (run `35429505106`), the K8s certification with the
+defect-finding console gate (run `35429507835`), the 7200s reliability soak (run
+`35429509771`) and the strict GA certification that must follow it. **None of these results is
+asserted here as passing.** Once every one of them is green on `c8c170f` (or a later
+candidate whose delta the classifier reports as inheritable, with that output attached) and the §23 MEDIUM items are each either fixed or
 formally accepted with an owner, the verdict becomes:
 
 > CAP v1.0.6-rc1 RELEASE READY — awaiting explicit publication authorization.
