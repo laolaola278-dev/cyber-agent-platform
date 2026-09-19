@@ -123,10 +123,15 @@ def audit_skips(junit_path: Path) -> dict[str, Any]:
 
 
 def low_coverage_modules(coverage_path: Path, threshold: float) -> dict[str, Any]:
-    """Per-module line coverage, lowest first, from a coverage.py XML report."""
+    """Per-module and per-file line coverage, lowest first, from coverage.py XML.
+
+    Both levels, because a directory average hides the one file inside it at 0%
+    that only a DR restore gate executes -- and that file is the actionable item.
+    """
     # input is this project's own CI evidence, never third-party XML
     root = ET.parse(coverage_path).getroot()
     totals: dict[str, list[int]] = {}
+    files: dict[str, list[int]] = {}
     for klass in root.iter("class"):
         filename = klass.get("filename") or ""
         module = filename.rsplit("/", 1)[0] or filename
@@ -135,16 +140,30 @@ def low_coverage_modules(coverage_path: Path, threshold: float) -> dict[str, Any
             continue
         hit = sum(1 for line in lines if int(line.get("hits", "0")) > 0)
         total = sum(1 for _ in lines)
-        bucket = totals.setdefault(module, [0, 0])
-        bucket[0] += hit
-        bucket[1] += total
-    rows = []
-    for module, (hit, total) in totals.items():
-        if not total:
-            continue
-        percent = round(100.0 * hit / total, 1)
-        rows.append({"module": module, "covered": hit, "statements": total, "percent": percent})
-    rows.sort(key=lambda row: (row["percent"], row["module"]))
+        for table, key in ((totals, module), (files, filename)):
+            bucket = table.setdefault(key, [0, 0])
+            bucket[0] += hit
+            bucket[1] += total
+
+    def _rows(table: dict[str, list[int]], key: str) -> list[dict[str, Any]]:
+        out = []
+        for name, (hit, total) in table.items():
+            if not total:
+                continue
+            out.append(
+                {
+                    key: name,
+                    "covered": hit,
+                    "statements": total,
+                    "percent": round(100.0 * hit / total, 1),
+                }
+            )
+        # lowest first; on a tie the bigger file is the more actionable one
+        out.sort(key=lambda row: (row["percent"], -row["statements"], row[key]))
+        return out
+
+    rows = _rows(totals, "module")
+    file_rows = _rows(files, "file")
     overall_hit = sum(row["covered"] for row in rows)
     overall_total = sum(row["statements"] for row in rows)
     return {
@@ -153,6 +172,10 @@ def low_coverage_modules(coverage_path: Path, threshold: float) -> dict[str, Any
         "overall_percent": round(100.0 * overall_hit / overall_total, 1) if overall_total else None,
         "modules_below_threshold": [row for row in rows if row["percent"] < threshold],
         "module_count": len(rows),
+        "worst_files_below_threshold": [
+            row for row in file_rows if row["percent"] < threshold
+        ][:20],
+        "file_count": len(file_rows),
         "note": (
             "line-weighted module coverage; the headline project percentage is "
             "weighted by statement count, so these rows are the actionable part"

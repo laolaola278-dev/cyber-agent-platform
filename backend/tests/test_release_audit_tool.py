@@ -142,6 +142,24 @@ def test_coverage_lists_the_modules_the_average_hides(tmp_path: Path) -> None:
     ], "lowest first, so an operator reads the worst module before the headline"
 
 
+def test_coverage_names_the_file_a_module_average_hides(tmp_path: Path) -> None:
+    """A directory rollup can bury a 0% file behind a healthy sibling.
+
+    ``app/sandbox`` at 0% is obvious here, but the real reports have modules where
+    one untested file sits inside an 85% directory; the file table is what makes
+    it addressable.
+    """
+    coverage_path = tmp_path / "coverage.xml"
+    coverage_path.write_text(COVERAGE, encoding="utf-8")
+    report = audit_junit.low_coverage_modules(coverage_path, threshold=80.0)
+    files = {row["file"]: row["percent"] for row in report["worst_files_below_threshold"]}
+    assert files["app/sandbox/oci.py"] == 0.0
+    assert "app/acquisition/service.py" not in files, "100% file must not appear"
+    assert report["file_count"] == 3
+    assert report["worst_files_below_threshold"][0]["statements"] == 8
+    assert len(report["worst_files_below_threshold"]) <= 20
+
+
 def test_the_tool_writes_both_files_and_exits_zero(junit_path: Path, tmp_path: Path) -> None:
     coverage_path = tmp_path / "coverage.xml"
     coverage_path.write_text(COVERAGE, encoding="utf-8")
