@@ -28,6 +28,7 @@ Each checked item must have an owner, execution date, environment, and evidence 
 ## Deployment
 
 - [ ] The sandbox and egress images the worker starts resolve to release artifacts, pinned by digest where possible: `release.yml` publishes `cap-sandbox-http`, `cap-sandbox-browser` and `cap-egress-proxy` under the release version (their digests are in `release-images-<version>.json`), and a self-built deployment can produce the same bytes with `CAP_SANDBOX_IMAGE_TAG=<version> bash backend/docker/build_sandbox_images.sh --with-browser`. The chart no longer defaults to any `:latest` coordinate (F-7); K8S-GATE 34 fails a deployment whose image set is not the released set.
+- [ ] The install is pinned to the certified bytes, not just to a version: install the chart with the `values-release-<version>.yaml` the release attaches, which sets `repository`, `tag` and `index_digest` for every image coordinate the chart declares -- all six, `worker.image` included. Without that file the chart's `repository` defaults (`ghcr.io/example/…`) are placeholders and must be overridden by hand.
 
 - [ ] Helm lint/template and cluster server-side dry run pass.
 - [ ] Startup/readiness/liveness probes, PDB, rolling update, resource requests/limits, and migration Job pass.

@@ -195,14 +195,16 @@ did.
 - `templates/_helpers.tpl` gained `cap.imageRef`, which composes `{repository, tag, digest}` and
   prefers the digest; an empty tag falls back to `Chart.AppVersion`, so the chart carries one
   version literal (already a version carrier) instead of six that can disagree.
-- `values.yaml` declares all five coordinates; `values.schema.json` requires a repository
+- `values.yaml` declares six image coordinates for the five CAP images (`backend.image` and
+  `worker.image` name the same artifact); `values.schema.json` requires a repository
   everywhere and, through `anyOf`, one of tag or digest.
 - `release-image-completeness` renders `values-release-<version>.yaml` from the **published
-  digests**, and `publish-release` attaches it to the GitHub Release beside the chart archive so
-  `helm upgrade -f values-release-<version>.yaml` installs the digests that were certified
-  (ARTIFACT-GATE: a released deployment can be pinned to what was certified). That attachment did
-  not exist when this section was first written — the file was uploaded into the release-assets
-  artifact and left out of `gh release create`'s file list, which is F-30.
+  digests** for every image coordinate the chart declares — six of them, because `worker.image` is a
+  second deployment of the backend artifact — and `publish-release` attaches it to the GitHub Release
+  beside the chart archive, so `helm upgrade -f values-release-<version>.yaml` installs the digests
+  that were certified. Two defects lived in this line when it was first written and are F-30 and
+  F-32: the file was uploaded but never attached, and it pinned five coordinates while the chart reads
+  six, which left the acquisitions-running worker deployment on the chart's placeholder registry.
 - K8S-GATE 34 (`test_gate34_deployed_image_set_is_the_released_set`) reads the images of every pod
   in the `cap` and `cap-sandbox` namespaces plus the worker's own sandbox coordinates, asserts no
   `:latest`, asserts the set equals the five released names at the tag the job built, and treats
@@ -362,6 +364,22 @@ _Filled in as each round finishes; nothing here is asserted before its run is gr
   not publishing: `test_every_uploaded_release_asset_is_attached_to_the_release` now compares every
   path `release-chart` uploads against the files the publish step attaches, and it fails on the
   pre-fix workflow (`MISSING: ['dist/values-release-*.yaml']`) — checked, not asserted.
+- **F-31** (found and closed inside this round) — the first Kubernetes round whose gate passed for
+  the new observed-image-set wrote it to `backend/outputs/cap-cert/k8s-image-set.json` while the
+  generator read `outputs/cap-cert/`: `CAP_CERT_OUT` is a *relative* path and the two processes start
+  in different directories, so the green run's artifact still said `not_observed`. The safe fallback
+  did its job — it declined to invent coordinates — but the fix was incomplete, and only inspecting
+  the published artifact (not the job's green tick) showed that. The gate now resolves the path
+  against the repository root and stamps the record with its commit, and the generator refuses a
+  record from another commit: searching several candidate directories is how this repository was once
+  certified by a stale junit, so the answer is a stamp, not another fallback path.
+- **F-32** (found and closed inside this round) — `values-release-<version>.yaml` pinned five image
+  coordinates and the production chart reads six. `worker.image` — the deployment that runs
+  acquisitions — was left at the chart's placeholder registry, `ghcr.io/example/cap-backend`, so
+  installing a released chart with the file written to prevent F-7 would still have failed to pull
+  the worker. The test that claimed to cover it listed the same five paths the renderer did, which is
+  how both agreed: the check now enumerates the coordinates out of `values.yaml` itself, and fails on
+  the pre-fix renderer with `release values leave chart coordinates unpinned: ['worker.image']`.
 - Still true from the previous round: registry digests, SBOM and provenance **attestations** exist
   only once images are pushed; the rollback exercise cannot exist before 1.0.6 does.
 

@@ -236,7 +236,19 @@ published release contents are immutable.
   with `test_certification_rounds_name_their_images_with_one_tag` refusing a
   literal that no job builds. Evidence gained `base_refs` resolved from the
   caller's `--build-arg` (a base that resolves to nothing fails the build instead
-  of recording an empty list), and the publication gate requires it.
+  of recording an empty list), and the publication gate requires it. Three more
+  came from reading what the green rounds *published* rather than noting that they
+  were green: the digest-pinned `values-release-<version>.yaml` was uploaded into
+  the release assets and never attached to the GitHub Release (F-30); the observed
+  image set K8S-GATE 34 writes landed under `backend/outputs/` while the generator
+  read `outputs/`, because `CAP_CERT_OUT` is relative and the two processes start in
+  different directories, so a passing round's own artifact still said `not_observed`
+  (F-31); and that rendered file pinned five image coordinates while the chart reads
+  six, leaving `worker.image` -- the deployment that runs acquisitions -- on the
+  chart's placeholder registry, with a test that listed the same five paths and so
+  agreed with the bug (F-32). The check now enumerates the coordinates out of
+  `values.yaml` itself.
+
 ### Fixed
 
 - **A healthy long-running acquisition could be cancelled under load.** The execution-lease

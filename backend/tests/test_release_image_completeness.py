@@ -919,16 +919,27 @@ def test_values_renderer_pins_every_image_the_chart_reads(
     rendered = yaml.safe_load(
         (tmp_path / "values-release-9.9.9-rc1.yaml").read_text("utf-8")
     )
+    #: Enumerated from the chart, not from a list written next to this assert:
+    #: the renderer's own mapping had five entries and the chart has six image
+    #: coordinates, and `worker.image` -- the deployment that runs acquisitions --
+    #: was the one left out. It would have installed from the placeholder
+    #: registry, which is F-7 surviving inside the file written to prevent it.
+    declared = sorted(
+        key.split(":", 1)[1] for key in chart_images() if key.startswith("values.yaml:")
+    )
+    assert declared, "the chart declares no image coordinates -- the scanner is broken"
+    missing = [dotted for dotted in declared if _lookup(rendered, dotted) is None]
+    assert not missing, f"release values leave chart coordinates unpinned: {missing}"
+    for dotted in declared:
+        block = _lookup(rendered, dotted)
+        assert isinstance(block, dict), f"{dotted}: rendered as {block!r}"
+        assert str(block.get("digest", "")).startswith("sha256:"), f"{dotted}: no digest"
+        assert block.get("tag") == "9.9.9-rc1", f"{dotted}: {block.get('tag')!r}"
+        repository = str(block.get("repository", ""))
+        assert repository.startswith("ghcr.io/") and "/example/" not in repository, (
+            f"{dotted}: {repository!r} is not a registry the release publishes to"
+        )
+        assert repository.split("/")[-1].startswith("cap-"), f"{dotted}: {repository!r}"
     values = _values()
-    coordinates = {
-        "backend.image": rendered["backend"]["image"],
-        "frontend.image": rendered["frontend"]["image"],
-        "worker.sandbox.image": rendered["worker"]["sandbox"]["image"],
-        "worker.sandbox.browserImage": rendered["worker"]["sandbox"]["browserImage"],
-        "egressProxy.image": rendered["egressProxy"]["image"],
-    }
-    assert len(coordinates) == len(cap_image_names(chart_images()))
-    for dotted, block in coordinates.items():
-        assert block["digest"].startswith("sha256:"), f"{dotted}: no digest in the release values"
-        assert block["tag"] == "9.9.9-rc1"
-        assert _lookup(values, dotted + ".repository"), f"{dotted} is not a chart value path"
+    for dotted in declared:
+        assert _lookup(values, dotted), f"{dotted} is not a chart value path"

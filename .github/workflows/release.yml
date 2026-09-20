@@ -681,16 +681,22 @@ jobs:
               path.read_text(encoding="utf-8")
               for path in pathlib.Path("outputs/release-images").glob("release-images-*.json")
           ))
-          #: where the chart reads each coordinate from
+          #: Every image coordinate the production chart reads -> the evidence
+          #: record that pins it. `worker.image` is a second deployment of the
+          #: backend artifact, and it has to appear here: the released values file
+          #: exists so `helm install -f` cannot land on the chart's placeholder
+          #: registry, and a missing entry would leave exactly that hole in the
+          #: pods that run acquisitions.
           PATHS = {
-              "backend": "backend.image",
-              "sandbox_http": "worker.sandbox.image",
-              "sandbox_browser": "worker.sandbox.browserImage",
-              "egress_proxy": "egressProxy.image",
-              "frontend": "frontend.image",
+              "backend.image": "backend",
+              "worker.image": "backend",
+              "frontend.image": "frontend",
+              "worker.sandbox.image": "sandbox_http",
+              "worker.sandbox.browserImage": "sandbox_browser",
+              "egressProxy.image": "egress_proxy",
           }
           tree: dict = {}
-          for key, dotted in PATHS.items():
+          for dotted, key in PATHS.items():
               record = merged["images"][key]
               parts = dotted.split(".")
               node = tree
