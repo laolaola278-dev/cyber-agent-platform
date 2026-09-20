@@ -96,11 +96,15 @@ _PF_PROC: subprocess.Popen | None = None
 """Module-level handle to the kubectl port-forward process (rebuilt on demand
 by _ensure_api after a node failure takes down its endpoint)."""
 
+_PF_PORT: int | None = None
+"""The port `_PF_PROC` forwards, so a later test can repair a stale tunnel
+without asking for the cluster."""
+
 
 @pytest.fixture(scope="module")
 def api_port() -> int:
     """kubectl port-forward to the CAP API service (tests run on the runner)."""
-    global _PF_PROC
+    global _PF_PROC, _PF_PORT
     _require_cluster()
     port = 18080
     proc = subprocess.Popen(
@@ -109,6 +113,7 @@ def api_port() -> int:
         stderr=subprocess.DEVNULL,
     )
     _PF_PROC = proc
+    _PF_PORT = port
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         try:
@@ -128,15 +133,41 @@ def api_port() -> int:
     pytest.fail("CAP API not reachable via port-forward")
 
 
+@pytest.fixture(autouse=True)
+def _rebind_stale_api_tunnel() -> None:
+    """Repair the module's tunnel before each gate that could use it.
+
+    `kubectl port-forward svc/...` binds ONE endpoint for the life of the process.
+    A gate that force-deletes the backend pods can leave that endpoint pointing at
+    a pod that is already gone, and the next gate then fails on the *tunnel*, not
+    on the cluster -- run 35506717889 lost gates 26, 28, 29, 32 and pregate E to
+    one dead process, four commits after F-28 taught the suite to wait for a
+    replacement pod. This rebuilds the tunnel when it has gone stale and does
+    nothing else: it cannot make a down API answer, so a gate whose subject is the
+    API being unavailable still reports that.
+    """
+    if _PF_PROC is None or _PF_PORT is None:
+        return  # no tunnel yet: this module's cluster-free tests, or the first gate
+    _ensure_api(_PF_PORT, timeout=45)
+
+
 def _ensure_api(port: int, timeout: float = 60.0) -> bool:
     """Rebuild the kubectl port-forward if the API endpoint became unreachable
     (e.g. the backend pod the tunnel pointed at was killed with its node).
-    Returns True once /health answers."""
+    Returns True once /health answers *twice*, a second apart.
+
+    The second answer is the point. During a rollout the endpoint a service
+    forward picked may be a pod that is terminating: it serves one request and
+    then the tunnel dies, so a single /health "proves" recovery to the gate that
+    waits on it and hands the next gate a closed socket.
+    """
     global _PF_PROC
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if _api_health(port):
-            return True
+            time.sleep(1.0)
+            if _api_health(port):
+                return True
         # tunnel may be dead -- restart it
         if _PF_PROC is not None:
             try:
@@ -392,6 +423,50 @@ def test_the_ready_pod_selector_skips_pods_that_cannot_serve() -> None:
     )
     assert _ready_pod_name([creating, not_ready, ready]) == "backend-serving"
     assert _ready_pod_name([]) is None
+
+
+def test_a_single_health_answer_is_not_a_recovered_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The third part of the restart lesson: *which tunnel* answered.
+
+    `kubectl port-forward svc/...` binds one endpoint for the life of the process.
+    Run 35506717889 deleted the backend pods, waited for a replacement pod set
+    (F-28's fix), saw `/health` answer through a forward still bound to one of the
+    pods it had just killed, declared recovery -- and gates 26, 28, 29, 32 and
+    pregate E then died on transport errors against a healthy cluster. So recovery
+    means two answers a second apart, and one answer means rebuild again.
+    """
+    import tests.test_phase_28_6_k8s_certification as mod
+
+    monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
+
+    class _FakeProc:
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    started: list[_FakeProc] = []
+    monkeypatch.setattr(
+        mod.subprocess,
+        "Popen",
+        lambda *a, **k: (started.append(_FakeProc()), started[-1])[1],
+    )
+
+    # one answer, then the endpoint the tunnel is bound to goes away for good
+    answers = iter([True, False])
+    monkeypatch.setattr(mod, "_api_health", lambda port: next(answers, False))
+    monkeypatch.setattr(mod, "_PF_PROC", _FakeProc())
+    assert mod._ensure_api(18080, timeout=0.2) is False, (
+        "a tunnel that answered once and fell silent was reported as recovered"
+    )
+    assert started, "the stale tunnel was never rebuilt"
+
+    # two answers in a row is what recovery looks like
+    monkeypatch.setattr(mod, "_api_health", lambda port: True)
+    assert mod._ensure_api(18080, timeout=5) is True
 
 
 def test_the_deployment_env_reader_parses_what_kubectl_returns(
