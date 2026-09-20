@@ -149,7 +149,15 @@ def _fake_bin(dest: Path) -> dict[str, str]:
     }
 
 
-def _repo(tmp_path: Path, script_text: str | None = None) -> Path:
+PROBE_DOCKERFILE = (
+    "ARG BASEIMAGE=example/base:1.2.3@sha256:" + "11" * 32 + "\n"
+    "FROM ${BASEIMAGE}\nRUN echo hello\n"
+)
+
+
+def _repo(
+    tmp_path: Path, script_text: str | None = None, dockerfile: str = PROBE_DOCKERFILE
+) -> Path:
     """A repository-shaped directory: the layout the script resolves around.
 
     `REPO_ROOT` comes out of the script's own location, so the copy has to sit
@@ -162,12 +170,7 @@ def _repo(tmp_path: Path, script_text: str | None = None) -> Path:
     script.write_text(text, encoding="utf-8", newline="\n")
     image_dir = root / "probe"
     image_dir.mkdir()
-    (image_dir / "Dockerfile").write_text(
-        "ARG BASEIMAGE=example/base:1.2.3@sha256:" + "11" * 32 + "\n"
-        "FROM ${BASEIMAGE}\nRUN echo hello\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    (image_dir / "Dockerfile").write_text(dockerfile, encoding="utf-8", newline="\n")
     (image_dir / "app.py").write_text("print('x')\n", encoding="utf-8", newline="\n")
     return root
 
@@ -176,9 +179,12 @@ BuildResult = subprocess.CompletedProcess
 
 
 def run_build(
-    tmp_path: Path, *extra: str, script_text: str | None = None
+    tmp_path: Path,
+    *extra: str,
+    script_text: str | None = None,
+    dockerfile: str = PROBE_DOCKERFILE,
 ) -> BuildResult:
-    root = _repo(tmp_path, script_text)
+    root = _repo(tmp_path, script_text, dockerfile)
     env = dict(os.environ, **_fake_bin(tmp_path / "fakebin"))
     out = tmp_path / "evidence.json"
     cmd = [
@@ -272,6 +278,47 @@ def test_the_local_driver_build_is_labelled_as_such(tmp_path: Path) -> None:
     assert re.search(r"^docker build ", calls, re.MULTILINE), calls
     assert "buildx build" not in calls, calls
     assert "--push" not in calls, calls
+
+
+#: The browser image's real shape: an ARG with no default, so the caller has to
+#: name the base and the evidence has to carry the name it used.
+NO_DEFAULT_BASE = "FROM ${SANDBOX_HTTP_BASE}\nRUN echo layered\n"
+
+
+def test_a_named_base_is_recorded_verbatim(tmp_path: Path) -> None:
+    """ARTIFACT-GATE 9's evidence side: the released browser image states its base.
+
+    `release.yml` hands the browser build
+    `ghcr.io/<owner>/cap-sandbox-http@sha256:<index digest>`. If the evidence
+    kept the `${SANDBOX_HTTP_BASE}` placeholder instead, nothing downstream could
+    tell which HTTP sandbox bytes the shipped image extends -- and that is the
+    question F-7 made unanswerable for the three images it never published.
+    """
+    base = "ghcr.io/cap-owner/cap-sandbox-http@sha256:" + "ab" * 32
+    proc = run_build(
+        tmp_path, "--push", "--registry", "ghcr.io/cap-owner",
+        "--build-arg", f"SANDBOX_HTTP_BASE={base}", dockerfile=NO_DEFAULT_BASE,
+    )
+    doc = evidence(proc)
+    assert doc["base_refs"] == [base], doc["base_refs"]
+    calls = docker_calls(proc)
+    assert f"--build-arg SANDBOX_HTTP_BASE={base}" in calls, calls
+
+
+def test_an_unresolvable_base_refuses_the_build(tmp_path: Path) -> None:
+    """No caller, no default: the build stops instead of recording an empty base.
+
+    The old behaviour was a warning line and `base_refs: []` -- an image that
+    built fine and could not say what it was built on, which is the same blind
+    spot as `FROM cap-sandbox-http:latest` wearing a different hat.
+    """
+    proc = run_build(tmp_path, dockerfile=NO_DEFAULT_BASE)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, (
+        f"a build with an unresolvable base reported success\n{combined[-1500:]}"
+    )
+    assert "SANDBOX_HTTP_BASE" in combined, combined[-800:]
+    assert not proc.evidence_path.exists(), "no evidence for a build that never ran"
 
 
 def test_a_missing_required_argument_is_refused(tmp_path: Path) -> None:

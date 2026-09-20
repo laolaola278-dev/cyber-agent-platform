@@ -520,6 +520,7 @@ jobs:
               "platform_digest_linux_amd64",
               "dockerfile_sha256",
               "context_sha256",
+              "base_refs",
               "source_revision",
           )
 

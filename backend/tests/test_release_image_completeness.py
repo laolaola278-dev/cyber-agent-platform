@@ -364,6 +364,95 @@ def test_every_release_image_is_built_with_version_revision_and_attestations() -
     )
 
 
+#: Workflows that build CAP images and deploy them to a throwaway cluster, and
+#: the test modules that read those images back. They have to agree on the tag:
+#: `kind load` refuses an image it does not have, and a helm install that falls
+#: back to the chart's release defaults deploys nothing the job ever built. Both
+#: happened in one round, and both surfaced as a wall of errors behind a single
+#: `:latest` that had no business being in a certification file.
+CERT_WORKFLOWS = (
+    "cap-k8s-certification.yml",
+    "cap-ga-certification.yml",
+    "cap-ga-reliability.yml",
+)
+CERT_TEST_MODULES = (
+    "test_phase_28_6_k8s_certification.py",
+    "test_phase_28_7_ga_certification.py",
+    "test_phase_28_7_ga_tier2_supply_chain.py",
+    "test_phase_28_7_ga_tier2_resilience.py",
+)
+
+_QUOTED_CAP_IMAGE = re.compile(r'["\'](cap-[a-z0-9-]+):([A-Za-z0-9._-]+)["\']')
+_HELM_IMAGE_TAG = re.compile(r"--set\s+[A-Za-z0-9_.]*image\.tag=([A-Za-z0-9._-]+)")
+_KIND_IMAGE = re.compile(r"(?<![\w{-])(cap-[a-z0-9-]+):([A-Za-z0-9._-]+)")
+
+
+def literal_cap_images(text: str) -> set[tuple[str, str]]:
+    """`(name, tag)` for every CAP image this text names with a literal tag."""
+    return {m for m in _QUOTED_CAP_IMAGE.findall(text)}
+
+
+def workflow_image_tags(text: str) -> set[str]:
+    """Every CAP image tag the workflow states literally."""
+    return {tag for _, tag in _KIND_IMAGE.findall(text)} | set(
+        _HELM_IMAGE_TAG.findall(text)
+    )
+
+
+def test_certification_rounds_name_their_images_with_one_tag() -> None:
+    """ARTIFACT-GATE 10's precondition, checked before a cluster is involved."""
+    tags: set[str] = set()
+    for name in CERT_WORKFLOWS:
+        text = (PROJECT_ROOT / ".github" / "workflows" / name).read_text("utf-8")
+        found = workflow_image_tags(text)
+        assert found, f"{name} builds or deploys no CAP image by name"
+        assert len(found) == 1, f"{name} uses more than one image tag: {sorted(found)}"
+        tags |= found
+
+    for module_name in CERT_TEST_MODULES:
+        text = (PROJECT_ROOT / "backend" / "tests" / module_name).read_text("utf-8")
+        literals = {
+            (image, tag)
+            for image, tag in literal_cap_images(text)
+            # f-strings interpolate the tag; a bare quoted ref is the drift.
+            if tag not in {"{IMAGE_TAG}", "{SANDBOX_IMAGE_TAG}"}
+        }
+        assert not literals, (
+            f"{module_name} names CAP images literally: {sorted(literals)} -- read "
+            "the tag from CAP_CERT_IMAGE_TAG, the variable the workflow exports"
+        )
+        obtained = "CAP_CERT_IMAGE_TAG" in text or "IMAGE_TAG" in text
+        assert obtained, (
+            f"{module_name} has no CAP_CERT_IMAGE_TAG (directly or imported) to "
+            "disagree with, so anything it names about images is a literal"
+        )
+
+    defaults = set()
+    for module_name in CERT_TEST_MODULES:
+        text = (PROJECT_ROOT / "backend" / "tests" / module_name).read_text("utf-8")
+        match = re.search(r'CAP_CERT_IMAGE_TAG",\s*"([^"]+)"', text)
+        if match:
+            defaults.add(match.group(1))
+    assert defaults, "no certification module declares the tag it expects any more"
+    assert defaults == tags, (
+        f"the certification jobs build {sorted(tags)} but the gates expect "
+        f"{sorted(defaults)}"
+    )
+
+
+def test_the_drift_guard_notices_a_stale_tag() -> None:
+    """The control: this is the exact text that broke the Kubernetes round."""
+    stale = 'images = ["cap-backend:ci", "cap-sandbox-http:latest"]'
+    assert ("cap-sandbox-http", "latest") in literal_cap_images(stale)
+    assert workflow_image_tags('kind load cap-sandbox-http:latest --name c') == {"latest"}
+    mixed = (
+        'kind load docker-image cap-backend:ci cap-x:latest --name c\n'
+        'helm install --set worker.sandbox.image.tag=ci\n'
+    )
+    assert workflow_image_tags(mixed) == {"ci", "latest"}
+    assert _QUOTED_CAP_IMAGE.findall('f"cap-backend:{IMAGE_TAG}"') == []
+
+
 def test_sandbox_browser_does_not_depend_on_a_mutable_local_tag() -> None:
     """ARTIFACT-GATE 9: the browser base is stated per build, never inherited.
 
@@ -463,6 +552,7 @@ def _record(name: str, version: str = "9.9.9-rc1", **overrides: object) -> dict:
         "platform_digest_linux_amd64": "sha256:" + "b" * 64,
         "dockerfile_sha256": "c" * 64,
         "context_sha256": "d" * 64,
+        "base_refs": ["python:3.13.12-slim-bookworm@sha256:" + "f" * 64],
         "source_revision": "e" * 40,
         "attestations": {"sbom": True, "provenance": True},
     }
@@ -536,11 +626,16 @@ def test_completeness_gate_refuses_a_record_without_a_digest_or_attestation(
     records[1] = {**records[1], "attestations": {"sbom": False, "provenance": True}}
     records[2] = {**records[2], "pushed": False}
     records[3] = {**records[3], "tag": "1.0.0-rc0"}
+    records[4] = {**records[4], "base_refs": []}
     code, merged = _exec_release_gate(tmp_path, monkeypatch, records)
     assert code == 1
     reasons = " ".join(merged["failures"])
     assert "index_digest" in reasons and "sbom" in reasons and "never published" in reasons
     assert "tagged '1.0.0-rc0'" in reasons
+    assert "base_refs" in reasons, (
+        "an image that cannot say what it was built on is unauditable: "
+        f"{reasons}"
+    )
 
 
 def test_completeness_gate_refuses_evidence_for_an_undeclared_image(

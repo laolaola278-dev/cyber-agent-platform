@@ -46,6 +46,12 @@ BACKUP_DIR = Path(
 REPORT_DIR = Path(os.environ.get("GA_REPORT_DIR", str(REPO_ROOT / "outputs" / "ga-dr")))
 PHASE_28_6_RUN = os.environ.get("PHASE_28_6_RUN", "32565459369")
 STRICT = os.environ.get("CAP_K8S_STRICT") == "1"
+#: Tag the certification jobs build, load into kind and deploy under. It is not
+#: `latest`: `build_sandbox_images.sh` is called with CAP_SANDBOX_IMAGE_TAG=ci so
+#: that a gate can tell "the image this job built" apart from "whatever a dev
+#: machine left behind" -- and the naming has to agree on both sides or `kind
+#: load` refuses and every gate in the module errors on the way in.
+IMAGE_TAG = os.environ.get("CAP_CERT_IMAGE_TAG", "ci")
 MINIO_USER = "capadmin"
 MINIO_PASSWORD = "capadmin123"
 PG_LOCAL_PORT = "15432"
@@ -563,8 +569,9 @@ def _dr_context() -> dict:
     _kubectl(["-n", "kube-system", "rollout", "status", "ds/cilium", "--timeout=300s"])
     ctx["timings"]["cluster_b_cilium_ready"] = datetime.now(UTC).isoformat()
 
-    images = ["cap-backend:ci", "cap-frontend:ci", "cap-sandbox-http:latest",
-              "cap-sandbox-browser:latest", "cap-egress-proxy:latest"]
+    images = [f"cap-backend:{IMAGE_TAG}", f"cap-frontend:{IMAGE_TAG}",
+              f"cap-sandbox-http:{IMAGE_TAG}", f"cap-sandbox-browser:{IMAGE_TAG}",
+              f"cap-egress-proxy:{IMAGE_TAG}"]
     _kind(["load", "docker-image", *images, "--name", CLUSTER], timeout=600)
 
     _run(["kubectl", "apply", "-f", "-"],
@@ -588,9 +595,18 @@ def _dr_context() -> dict:
 
     _helm(["install", "cap", "deployment/helm/cap", "--namespace", NAMESPACE,
            "--timeout", "600s",
-           "--set", "backend.image.repository=cap-backend", "--set", "backend.image.tag=ci",
-           "--set", "frontend.image.repository=cap-frontend", "--set", "frontend.image.tag=ci",
-           "--set", "worker.image.repository=cap-backend", "--set", "worker.image.tag=ci",
+           "--set", "backend.image.repository=cap-backend",
+           "--set", f"backend.image.tag={IMAGE_TAG}",
+           "--set", "frontend.image.repository=cap-frontend",
+           "--set", f"frontend.image.tag={IMAGE_TAG}",
+           "--set", "worker.image.repository=cap-backend",
+           "--set", f"worker.image.tag={IMAGE_TAG}",
+           "--set", "worker.sandbox.image.repository=cap-sandbox-http",
+           "--set", f"worker.sandbox.image.tag={IMAGE_TAG}",
+           "--set", "worker.sandbox.browserImage.repository=cap-sandbox-browser",
+           "--set", f"worker.sandbox.browserImage.tag={IMAGE_TAG}",
+           "--set", "egressProxy.image.repository=cap-egress-proxy",
+           "--set", f"egressProxy.image.tag={IMAGE_TAG}",
            "--set", "backend.replicaCount=3", "--set", "worker.replicaCount=2",
            "--set", "worker.sandbox.egressProxyUrl=http://cap-cap-egress-proxy.cap.svc:8080",
            "--set", "worker.sandbox.namespace=cap-sandbox"], timeout=900)

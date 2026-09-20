@@ -36,14 +36,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = Path(os.environ.get("CAP_GA_OUT", str(REPO_ROOT / "outputs/cap-cert-ga")))
 POLICY_PATH = REPO_ROOT / "scripts" / "certification" / "security_policy.json"
 SLI_PATH = REPO_ROOT / "scripts" / "certification" / "sli_definitions.json"
+#: Tag the certification job builds and loads these images under. Naming them
+#: with a literal here is how GA-GATE 20 came to be inspecting
+#: `cap-sandbox-http:latest` on a runner that only ever built `:ci`.
+IMAGE_TAG = os.environ.get("CAP_CERT_IMAGE_TAG", "ci")
 IMAGES = [
-    "cap-backend:ci",
-    "cap-frontend:ci",
-    "cap-sandbox-http:latest",
-    "cap-sandbox-browser:latest",
-    "cap-egress-proxy:latest",
+    f"cap-backend:{IMAGE_TAG}",
+    f"cap-frontend:{IMAGE_TAG}",
+    f"cap-sandbox-http:{IMAGE_TAG}",
+    f"cap-sandbox-browser:{IMAGE_TAG}",
+    f"cap-egress-proxy:{IMAGE_TAG}",
 ]
-SBOM_IMAGE = "cap-backend:ci"
+SBOM_IMAGE = f"cap-backend:{IMAGE_TAG}"
 
 STRICT = os.environ.get("CAP_GA_STRICT") == "1"
 

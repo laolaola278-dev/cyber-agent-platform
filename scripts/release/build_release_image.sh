@@ -83,18 +83,28 @@ REF="${REGISTRY:+${REGISTRY}/}${NAME}:${VERSION}"
 # What went in, before anything can be argued to have changed it.
 DOCKERFILE_SHA="$(sha256sum "$DOCKERFILE" | cut -d' ' -f1)"
 CONTEXT_SHA="$(find "$CONTEXT" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
-BASES="$(python3 - "$DOCKERFILE" "$REVISION" <<'PY'
+# A `FROM ${VAR}` base resolves from the Dockerfile's ARG default, and a caller's
+# --build-arg wins over that default: the release names the browser image's base
+# as the digest it just published, and the evidence has to record *that*.
+BASES="$(python3 - "$DOCKERFILE" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} <<'PY'
 import re
 import sys
-text = open(sys.argv[1], encoding="utf-8").read()
+
+dockerfile, *builder_args = sys.argv[1:]
+text = open(dockerfile, encoding="utf-8").read()
 args = dict(re.findall(r"^ARG\s+(\w+)=(\S+)", text, re.MULTILINE))
+for token in builder_args:
+    if token == "--build-arg" or "=" not in token:
+        continue
+    name, value = token.split("=", 1)
+    args[name] = value
 bases = []
 for ref in re.findall(r"^FROM\s+(\S+)", text, re.MULTILINE):
     if ref.startswith("${"):
         name = ref[2:-1]
         ref = args.get(name, "")
         if not ref:
-            print(f"UNRESOLVED {name}", file=sys.stderr)
+            sys.exit(f"{name} resolves nothing: this image's base has to be named")
     bases.append(ref)
 print("\n".join(bases))
 PY

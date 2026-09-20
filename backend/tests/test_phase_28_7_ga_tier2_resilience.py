@@ -32,6 +32,9 @@ from uuid import uuid4
 import pytest
 
 from tests.test_phase_28_7_ga_certification import (
+    IMAGE_TAG as SANDBOX_IMAGE_TAG,
+)
+from tests.test_phase_28_7_ga_certification import (
     INFRA_NS,
     NAMESPACE,
     STRICT,
@@ -477,7 +480,7 @@ def _egress_canary_probe(namespace: str = "cap-sandbox") -> str:
             "containers": [
                 {
                     "name": "sandbox",
-                    "image": "cap-sandbox-http:latest",
+                    "image": f"cap-sandbox-http:{SANDBOX_IMAGE_TAG}",
                     "imagePullPolicy": "IfNotPresent",
                     "command": ["python", "-m", "sandbox.shim", "--serve"],
                     "env": [

@@ -36,6 +36,10 @@ STRICT = os.environ.get("CAP_K8S_STRICT") == "1"
 NAMESPACE = os.environ.get("CAP_NAMESPACE", "cap")
 SANDBOX_NS = os.environ.get("CAP_SANDBOX_NAMESPACE", "cap-sandbox")
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+#: Tag the certification job builds, loads into kind and deploys under. It is
+#: never `latest`: a gate cannot tell "the image this job built" apart from
+#: "whatever the runner already had" when both carry the same name.
+IMAGE_TAG = os.environ.get("CAP_CERT_IMAGE_TAG", "ci")
 
 
 def _cluster_ready() -> bool:
@@ -344,7 +348,7 @@ def test_gate5_worker_sa_adversarial_attempts_denied() -> None:
 
 def _deployment_env(deployment: str, env_name: str) -> str:
     """One env value as the *rendered chart* set it, not as a test literal."""
-    spec = json.loads(_kubectl(["-n", NAMESPACE, "get", "deploy", deployment, "-o", "json"]))
+    spec = _json(["-n", NAMESPACE, "get", "deploy", deployment])
     for container in spec["spec"]["template"]["spec"]["containers"]:
         for pair in container.get("env") or []:
             if pair.get("name") == env_name:
@@ -360,6 +364,37 @@ def _sandbox_image_coordinate() -> str:
     with its own image name cannot notice the chart and the cluster disagreeing.
     """
     return _deployment_env("cap-cap-worker", "SANDBOX_IMAGE")
+
+
+def test_the_deployment_env_reader_parses_what_kubectl_returns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reader behind gates 6, 7, 10 and 34, exercised without a cluster.
+
+    It reached a Kubernetes run to fail: `json.loads` was handed the
+    CompletedProcess `_kubectl` returns instead of its stdout, so the four gates
+    that read a coordinate out of the live deployment died on a TypeError before
+    they could say anything about the deployment. Only a cluster has the value;
+    the *reading* does not need one, and that part is testable here.
+    """
+    doc = {
+        "spec": {"template": {"spec": {"containers": [{
+            "name": "worker",
+            "env": [{"name": "SANDBOX_IMAGE", "value": f"cap-sandbox-http:{IMAGE_TAG}"}],
+        }]}}}
+    }
+    monkeypatch.setattr(
+        "tests.test_phase_28_6_k8s_certification._kubectl",
+        lambda args, **kwargs: subprocess.CompletedProcess(
+            args, 0, json.dumps(doc), ""
+        ),
+    )
+    assert _deployment_env("cap-cap-worker", "SANDBOX_IMAGE") == (
+        f"cap-sandbox-http:{IMAGE_TAG}"
+    )
+    assert _sandbox_image_coordinate() == f"cap-sandbox-http:{IMAGE_TAG}"
+    with pytest.raises(AssertionError, match="renders no"):
+        _deployment_env("cap-cap-worker", "NOT_EXPORTED")
 
 
 def _create_sandbox_probe_pod(name: str) -> str:
@@ -2010,10 +2045,10 @@ def _cap_images_and_pull_errors(pods: list[dict]) -> tuple[set[str], list[str]]:
 
 def test_gate34_deployed_image_set_is_the_released_set() -> None:
     _require_cluster()
-    tag = os.environ.get("CAP_CERT_IMAGE_TAG", "ci")
+    tag = IMAGE_TAG
 
-    pods = json.loads(_kubectl(["-n", NAMESPACE, "get", "pods", "-o", "json"]))["items"]
-    pods += json.loads(_kubectl(["-n", SANDBOX_NS, "get", "pods", "-o", "json"]))["items"]
+    pods = _json(["-n", NAMESPACE, "get", "pods"])["items"]
+    pods += _json(["-n", SANDBOX_NS, "get", "pods"])["items"]
     images, pull_errors = _cap_images_and_pull_errors(pods)
     assert not pull_errors, "a CAP pod could not pull its image: " + "; ".join(pull_errors)
 
