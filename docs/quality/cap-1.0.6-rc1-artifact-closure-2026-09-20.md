@@ -330,7 +330,8 @@ published, the row quotes its own artifact rather than the tick.
 | [35505431617](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35505431617) | `8797a64` | **failure** — F-38: the `frontend` job's toast assertion raced antd's async mount on a commit that changed no frontend file. The other nine jobs, all five `release-image-builds` cells included, were green |
 | [35506705907](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506705907) | `b671f53` | **success** — all ten jobs, the console suite included; the six evidence records it uploaded are read below |
 | [35508682453](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35508682453) | `d30b4e7` | **success** — with the F-40 harness repair and GATE 11's new graph walk in the suite, so the tests that certify the release contract are themselves certified |
-| [35516542339](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35516542339) | `57c4a09` | **success** — the head this verdict was written into, and the first clean-runner run of `test_the_released_values_satisfy_the_chart_schema` (F-41). What sits above it on this line is documentation |
+| [35516542339](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35516542339) | `57c4a09` | **success** — the head when §11 was first written, and the first clean-runner run of `test_the_released_values_satisfy_the_chart_schema` (F-41) |
+| [35517891043](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35517891043) | `8d2110d` | **success** — all ten jobs at the delivered head, including the five clean-runner image builds whose records are quoted above |
 
 **Linux certification** (`cap-linux-certification.yml`, `layer: release`; GA-GATE 33's evidence):
 
@@ -410,7 +411,13 @@ it is (`cap-sandbox-http.prerequisite.json`, F-35), the two `cap-sandbox-http` r
 directory without lying about it: same inputs, one built by `docker` and one by `buildx`, which is why
 their `config_digest`s differ at the same commit. Read that pair across the two commits instead — same
 builder, same Dockerfile hash, same context hash, same base — and the digest still moves. That is
-F-39.
+F-39. CI repeated the reading at the delivered head (`8d2110d`, run 35517891043, all ten jobs green):
+the browser cell's artifact holds `cap-sandbox-browser.json` and `cap-sandbox-http.prerequisite.json`
+under the names that say which build wrote them, both records carry `platform: linux/amd64`, the browser
+one still names its base `cap-sandbox-http:1.0.6-rc1`, the staged-context hash is the same
+`1da56fbc05b4…` for the third commit running, and each record's `source_revision` is the commit that
+built it — which is the form of the claim that matters, because that commit is the one a tag would
+point at.
 
 **Inheritance.** `4aff814` would have been the certified SHA — `classify_diff.py 4aff814 <tip>` said
 `INHERITED (release_metadata_only=True)`, and CI, Linux and Kubernetes were green there. F-38 took it
