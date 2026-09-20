@@ -125,6 +125,17 @@ certification script and the release script, so a release image cannot be assemb
 different file list than the certified one — and `context_sha256` in each evidence record is what
 makes a difference visible instead of a matter of faith.
 
+Naming the base is only half of it; the release has to be able to *say* which base it used. The
+build script reads `FROM` lines out of the Dockerfile, and a `FROM ${VAR}` line resolved only
+against the Dockerfile's own `ARG` default — which for this image does not exist. The evidence
+therefore recorded `base_refs: []` for the browser image while printing `UNRESOLVED` to stderr and
+carrying on. Now the caller's `--build-arg` values are part of the resolution, so the record carries
+the exact `ghcr.io/…/cap-sandbox-http@sha256:…` the build consumed, and a base that resolves to
+nothing **fails the build** instead of recording an empty list. `base_refs` joined the publication
+gate's required fields for the same reason: an image that cannot name what it was built on cannot be
+re-built or audited, which is precisely the question F-7 left unanswerable. Both halves are executed
+by `test_a_named_base_is_recorded_verbatim` and `test_an_unresolvable_base_refuses_the_build`.
+
 ## 5. CI builds all five, without pushing
 
 `ci.yml` gained `release-image-builds`: a matrix over the five images, each built through

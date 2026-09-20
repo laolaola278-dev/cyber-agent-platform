@@ -35,3 +35,17 @@ image in `release-images-<version>.json`. `latest` is not a supported value
 anywhere in this chart: until F-7 the three images above that the release did
 not publish defaulted to `:latest`, so a default install could not survive its
 first acquisition.
+
+The `repository` default (`ghcr.io/example/…`) is a placeholder, not a pullable
+coordinate: no organisation named `example` serves these images. Set the owner,
+or install the release as it ships -- each release publishes
+`values-release-<version>.yaml` beside the chart archive, and it carries all six
+blocks with the publishing owner, the release tag and the digest the build
+recorded:
+
+```console
+helm upgrade --install cap cap-<version>.tgz -f values-release-<version>.yaml
+```
+
+That is the installable form of the release. `helm install cap cap-<version>.tgz`
+alone states the version correctly and the registry not at all.
