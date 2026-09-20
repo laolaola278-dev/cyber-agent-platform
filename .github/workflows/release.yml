@@ -693,6 +693,7 @@ jobs:
             --title "Cyber Agent Platform $GITHUB_REF_NAME" \
             --notes-file "${{ needs.validate-tag.outputs.notes_file }}" \
             release-assets/dist/*.tgz \
+            release-assets/dist/values-release-*.yaml \
             release-assets/CHANGELOG.md \
             "release-assets/${{ needs.validate-tag.outputs.notes_file }}" \
             release-assets/docs/known-issues.md

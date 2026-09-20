@@ -185,8 +185,11 @@ did.
 - `values.yaml` declares all five coordinates; `values.schema.json` requires a repository
   everywhere and, through `anyOf`, one of tag or digest.
 - `release-image-completeness` renders `values-release-<version>.yaml` from the **published
-  digests** and it ships beside the chart archive (ARTIFACT-GATE: a released deployment can be
-  pinned to what was certified with `helm upgrade -f values-release-<version>.yaml`).
+  digests**, and `publish-release` attaches it to the GitHub Release beside the chart archive so
+  `helm upgrade -f values-release-<version>.yaml` installs the digests that were certified
+  (ARTIFACT-GATE: a released deployment can be pinned to what was certified). That attachment did
+  not exist when this section was first written — the file was uploaded into the release-assets
+  artifact and left out of `gh release create`'s file list, which is F-30.
 - K8S-GATE 34 (`test_gate34_deployed_image_set_is_the_released_set`) reads the images of every pod
   in the `cap` and `cap-sandbox` namespaces plus the worker's own sandbox coordinates, asserts no
   `:latest`, asserts the set equals the five released names at the tag the job built, and treats
@@ -242,24 +245,27 @@ Dockerfiles, because a base image decides which OpenSSL ships in the artifact.
 
 ## 9. Certification runs on the closure tip
 
-Closure tip: **`3cc6579`** on `release/1.0.6-rc1` (`3eadfc4` F-7 graph, `d6a7f77` F-20 digest pins,
-`0b143ac` driver switch, `3cc6579` the unbound-variable fix §5). `c52dcb9`'s evidence is **not**
-inherited (§7), so every row below has to be green at this SHA.
+Closure tip: **`86e105d`** on `release/1.0.6-rc1`. `c52dcb9`'s evidence is **not** inherited (§7), so
+each round below has to be green at a SHA that reaches the tip through inheritable-only commits.
 
-| Round | Run | Result |
-| --- | --- | --- |
-| CI (push-triggered) | [35485625550](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485625550) | `release-image-builds` **all five cells success** on `3cc6579` (ARTIFACT-GATE 5/6); the run itself was superseded by the next push |
-| Linux layer=release + PostgreSQL matrix | [35485710392](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485710392) | **success** on `3cc6579` |
-| Kubernetes, first attempt | [35485711757](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485711757) | **failure** — F-27, gate 34's own reader |
-| FULL GA, first attempt | [35485715411](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485715411) | **failure** — F-27, the DR fixture's stale tags |
-| Reliability soak (7200 s) | [35485713552](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485713552) | running on `3cc6579` |
-| Kubernetes, re-dispatched after F-27 | [35488262094](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488262094) | pending |
-| FULL GA, strict (`CAP_GA_STRICT=1`, 40/40) | [35488263281](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488263281) | pending |
+| Round | Attempt | SHA | Conclusion |
+| --- | --- | --- | --- |
+| CI | [35484377542](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35484377542) | `0b143ac` | **failure** — F-26, the build script aborted after building |
+| CI | [35485625550](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485625550) | `3cc6579` | cancelled by the next push; **all five `release-image-builds` cells success** (ARTIFACT-GATE 5/6) |
+| CI | [35490251245](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35490251245) | `86e105d` | running |
+| Linux layer=release + PostgreSQL matrix | [35485710392](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485710392) | `3cc6579` | **success** |
+| Kubernetes | [35485711757](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485711757) | `3cc6579` | **failure** — F-27 |
+| Kubernetes | [35488262094](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488262094) | `c69d960` | **failure** — F-28 (GATE 34 itself passed) |
+| Kubernetes | [35489588677](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35489588677) | `b447436` | **success** — 34/34 gates, K8S-GATE 34 included (ARTIFACT-GATE 10) |
+| FULL GA, strict (`CAP_GA_STRICT=1`, 40/40) | [35485715411](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485715411) | `3cc6579` | **failure** — F-27 |
+| FULL GA, strict | [35488263281](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488263281) | `c69d960` | running |
+| Reliability soak (7200 s) | [35485713552](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485713552) | `3cc6579` | running |
 
-The Linux round's evidence sits on `3cc6579`, one inheritable commit behind the tip
-(`test_harness` / `ci_workflow` / `certification_generator` only — verified with
-`scripts/release/classify_diff.py 3cc6579 c69d960` → `INHERITED`). The two rounds that failed are
-running at the tip itself, because what failed was their own test code.
+Three of the four rounds reached their green state on `3cc6579`/`b447436`, and the commits between
+those SHAs and the tip are `test_harness`, `ci_workflow`, `certification_generator` and `docs` —
+checked with `scripts/release/classify_diff.py`, which reports `INHERITED` for each hop. A gate that
+errors is reported as a failure and re-run rather than read as close enough: the second Kubernetes
+attempt is in that table because it failed, even though the new gate inside it passed.
 
 _Filled in as each round finishes; nothing here is asserted before its run is green._
 
@@ -303,6 +309,46 @@ _Filled in as each round finishes; nothing here is asserted before its run is gr
   `test_certification_rounds_name_their_images_with_one_tag` refuses a literal CAP image tag in any
   certification module whose workflow builds a different one. Run against the pre-fix text it fails,
   so the guard is not decorative.
+- **F-28** (found and closed inside this round) — the second Kubernetes attempt got gate 34 green and
+  then failed GATE 25/26/28/29/32. GATE 25 force-deletes every backend pod and waits with
+  `_ensure_api`, which returns the moment `/health` answers — and a pod that is already terminating
+  answers. The wait ended on the endpoint the gate had itself deleted, the assertion fired about 0.3
+  seconds later, and every later gate that needed the API hit `httpx.ConnectError` while the
+  replacements were still starting. GATE 26's complaint was its own tell:
+  `backend logs are not structured`, quoting
+  `Error from server (BadRequest): container "backend" in pod "cap-cap-backend-…" is waiting to
+  start: ContainerCreating` — the log helpers read `pods[0]`, and during a restart `pods[0]` is
+  usually a pod that cannot serve. Fixed by waiting for a backend pod set that shares no name with
+  the deleted one before accepting health, and by a ready-pod selector (`Running` with every
+  container ready) in the log helpers. Both halves have cluster-free tests, because the difference
+  only becomes visible during a restart — the worst possible moment to be discovering how the probe
+  works. The third attempt (run 35489588677) is green with all 34 gates.
+- **F-29** (found and closed inside this round) — the strict GA round at `c69d960` ran 57 tests green
+  and still refused to certify, over one line of JSON. `scripts/certification/security_policy.json`
+  listed GA-GATE 22's Trivy targets with their own tags, three of them `:latest` — the fourth place
+  that tag list was duplicated, and the one the F-27 guard did not look at. `trivy image` could not
+  inspect a local image that did not exist, then tried `index.docker.io/library/cap-sandbox-http`,
+  got `UNAUTHORIZED`, and gate 22 failed; the artifact step then reported
+  `GA certification FAILED gates: ['GA-GATE 22']`, `total: 40, passed: 33`, and the verdict came from
+  the policy file rather than from any image. The policy now names images only, the round composes
+  the tag, and `test_certification_rounds_name_their_images_with_one_tag` compares the policy's
+  targets with the chart-derived set (with `test_the_policy_scan_target_check_is_sensitive` proving
+  the comparison can fail).
+  The same shape sat one file away: the Kubernetes artifact's `images` block was a literal table in
+  `generate_report_28_6.py` that still claimed `cap-sandbox-http:latest` after F-7 changed what the
+  jobs build — a passing round's own evidence describing a deployment that had not happened, in the
+  same family as F-21's unowned prose. K8S-GATE 34 now writes what it observed and the generator
+  copies it, writing `not_observed` when the record is missing instead of recalling a table; running
+  the generator as a process for those cases (`test_k8s_report_image_set.py`) also turned up that it
+  died outright when `kind` was not on PATH, which is now a recorded field rather than a crash.
+- **F-30** (found and closed inside this round) — the closure report says the digest-pinned
+  `values-release-<version>.yaml` ships beside the chart, and `release-chart` did upload it into the
+  release-assets artifact… but `publish-release`'s `gh release create` listed only the chart
+  archive, the changelog, the notes and the known-issues file. The one file that turns a released
+  chart into an installable pin was reachable only as a workflow artifact that expires. Uploading is
+  not publishing: `test_every_uploaded_release_asset_is_attached_to_the_release` now compares every
+  path `release-chart` uploads against the files the publish step attaches, and it fails on the
+  pre-fix workflow (`MISSING: ['dist/values-release-*.yaml']`) — checked, not asserted.
 - Still true from the previous round: registry digests, SBOM and provenance **attestations** exist
   only once images are pushed; the rollback exercise cannot exist before 1.0.6 does.
 

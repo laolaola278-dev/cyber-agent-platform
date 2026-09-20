@@ -481,6 +481,37 @@ def test_the_drift_guard_notices_a_stale_tag() -> None:
     assert _QUOTED_CAP_IMAGE.findall('f"cap-backend:{IMAGE_TAG}"') == []
 
 
+def test_every_uploaded_release_asset_is_attached_to_the_release() -> None:
+    """Nothing is "shipped" that the publish step does not actually attach.
+
+    `values-release-<version>.yaml` exists to make `helm upgrade -f` install the
+    digests this release recorded, and §6 of the closure report says it ships
+    beside the chart. It was uploaded into the release-assets artifact and then
+    left out of `gh release create`'s file list -- so the only copy an operator
+    could reach was a workflow artifact that expires. Uploading is not publishing.
+    """
+    doc = _release_doc()
+    upload = next(
+        step for step in doc["jobs"]["release-chart"]["steps"]
+        if str(step.get("uses", "")).startswith("actions/upload-artifact")
+    )
+    shipped = [
+        re.sub(r"\s+", " ", line.strip())
+        for line in str((upload.get("with") or {}).get("path", "")).splitlines()
+        if line.strip()
+    ]
+    assert shipped, "release-chart uploads no assets"
+    publish_run = " ".join(
+        re.sub(r"\s+", " ", str(step.get("run", "")))
+        for step in doc["jobs"]["publish-release"]["steps"]
+    )
+    assert "gh release create" in publish_run, "publish-release no longer creates a release"
+    missing = [path for path in shipped if path not in publish_run]
+    assert not missing, (
+        f"release assets uploaded but never attached to the GitHub Release: {missing}"
+    )
+
+
 def test_sandbox_browser_does_not_depend_on_a_mutable_local_tag() -> None:
     """ARTIFACT-GATE 9: the browser base is stated per build, never inherited.
 
