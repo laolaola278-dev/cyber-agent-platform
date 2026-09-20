@@ -330,6 +330,7 @@ published, the row quotes its own artifact rather than the tick.
 | [35505431617](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35505431617) | `8797a64` | **failure** — F-38: the `frontend` job's toast assertion raced antd's async mount on a commit that changed no frontend file. The other nine jobs, all five `release-image-builds` cells included, were green |
 | [35506705907](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506705907) | `b671f53` | **success** — all ten jobs, the console suite included; the six evidence records it uploaded are read below |
 | [35508682453](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35508682453) | `d30b4e7` | **success** — with the F-40 harness repair and GATE 11's new graph walk in the suite, so the tests that certify the release contract are themselves certified |
+| [35516542339](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35516542339) | `57c4a09` | **success** — the head this verdict was written into, and the first clean-runner run of `test_the_released_values_satisfy_the_chart_schema` (F-41). What sits above it on this line is documentation |
 
 **Linux certification** (`cap-linux-certification.yml`, `layer: release`; GA-GATE 33's evidence):
 
@@ -678,10 +679,12 @@ The basis, each line tied to a run or to a check that executes what the sentence
   against fabricated evidence and refuse the partial shapes; one (5) because five clean-runner builds
   succeeded on a pushed commit whose uploaded records were then read back — and disagreed with each
   other in ways that became F-34, F-35 and F-36.
-- **CI is green** at `d30b4e7` (run 35508682453), the last commit on this line that is not this
-  document; the commits above it change documentation only, and `classify_diff.py d30b4e7 <head>`
-  returns `INHERITED`, so CI's verdict travels. It also passed at `b671f53` (run 35506705907), whose
-  six evidence records §9 reads line by line.
+- **CI is green** at `d30b4e7` (run 35508682453) and at `57c4a09` (run 35516542339) — the latter is where
+  this round's last added test, the schema check F-41 describes, first ran on a clean runner rather than
+  only on the Windows audit host. Everything above `57c4a09` on this line is documentation, and
+  `classify_diff.py d30b4e7 <head>` returns `INHERITED` (`test_harness` + `docs`), so CI's verdict
+  travels to the delivered head. CI also passed at `b671f53` (run 35506705907), whose six evidence records
+  §9 reads line by line.
 - **Kubernetes certification** — run 35508689787 at `d30b4e7`: `gates: {total: 34, passed: 34, failed:
   0, not_run: 0}`, artifact `source: K8S-GATE 34`, five CAP images at the tag the job built, both
   sandbox coordinates present, `pull_errors: []` (ARTIFACT-GATE 10).
