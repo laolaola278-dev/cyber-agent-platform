@@ -286,12 +286,12 @@ artifact.
 | 2 | No production CAP image uses `:latest` | **PASS** | `test_no_production_chart_reference_is_latest`, `test_no_dockerfile_layers_on_a_cap_image_by_mutable_name`, K8S-GATE 34 at runtime |
 | 3 | All external Dockerfile FROM refs digest-pinned | **PASS** | `test_every_external_dockerfile_base_is_locked_and_digest_pinned` + §3 table |
 | 4 | Third-party lock covers every external base | **PASS** | `test_lock_base_entries_are_actually_used_by_a_dockerfile`, `test_locked_base_digests_carry_their_provenance`; §3's five rows compared field by field against the tracked `registry-base-digests.json` — 5/5 index digests, media types and amd64 children match, with `byte_identical_by_digest` and `digest_matches_recomputed` true for all five |
-| 5 | Clean runner builds all required images | **PASS** | CI run 35502404774 on `a79d29c`: five `release-image-builds` cells green inside a successful run on `ubuntu-latest`, push=false, one evidence artifact per image, and the uploaded records read back in §9. It took two red runs and one aborted-script bug to get here, all recorded in §5 and §10 |
+| 5 | Clean runner builds all required images | **PASS** | CI run 35508682453 on `d30b4e7`: five `release-image-builds` cells green inside a successful run on `ubuntu-latest`, push=false, one evidence artifact per image, and the six records read back below. The same was true at `a79d29c` (run 35502404774) and `b671f53` (run 35506705907); only the last two certify this line, because F-38 blocks inheritance below `b671f53`. It took two red runs and one aborted-script bug to get here, all recorded in §5 and §10 |
 | 6 | Trivy covers all release images | **PASS** | CI `release-image-builds` scans each matrix cell it builds (derived, cannot drift); `release-image-security` lists its five names by hand, so `test_every_published_image_is_scanned_in_the_release` now requires that list to equal both the published set and the chart-derived set, with a control that dropping a name breaks it. The two workflow scans use one policy (HIGH+CRITICAL, unfixed ignored, `exit-code: 1`); GA-GATE 22's `security_policy.json` blocks only fixable CRITICALs. That difference is deliberate and not a hole: for a release image the stricter workflow policy runs too, and the policy file governs the GA verdict, not publication |
 | 7 | SBOM enabled for all release images | **PASS** | `build_release_image.sh` adds `--sbom=true` only to a push build and records `attestations.sbom` from the flags it actually passed (`test_the_push_build_attests_and_records_the_platform_child`, `test_attestations_are_reported_from_the_build_that_ran`); `release-image-completeness` then refuses a record whose flag is false — executed by `test_completeness_gate_refuses_a_record_without_a_digest_or_attestation`, which sets `sbom: False` and expects the refusal |
 | 8 | Provenance enabled for all release images | **PASS** | as 7, with `REVISION` bound to the tag's target SHA and asserted from the same evidence (`--build-arg` + `REVISION` in `test_every_release_image_is_built_with_version_revision_and_attestations`) |
 | 9 | Browser image has an immutable internal base relationship | **PASS** | no-default `ARG SANDBOX_HTTP_BASE`; release passes `cap-sandbox-http@<index digest>`; `test_an_unresolvable_base_refuses_the_build` makes an unnamed base a build failure, and the browser record in §9 shows the field populated |
-| 10 | Fresh kind deployment has no missing image | **PASS** | Kubernetes certification run 35489588677 on `b447436` first reached 34/34 with K8S-GATE 34 included; run 35500709149 on `4aff814` is the round whose published artifact names what it observed — `source: K8S-GATE 34`, five images at the tag the job built, `worker_sandbox_coordinates` covering both sandboxes, `pull_errors: []` |
+| 10 | Fresh kind deployment has no missing image | **PASS** | Run 35489588677 on `b447436` was the first to reach 34/34 with K8S-GATE 34 included, and run 35500709149 on `4aff814` the first whose artifact named what it observed; neither certifies the delivered tip, because F-38's fix at `b671f53` blocks inheritance from both. The round that does is 35508689787 on `d30b4e7`: `gates: {total: 34, passed: 34, failed: 0, not_run: 0}`, `source: K8S-GATE 34`, five images at the tag the job built, `worker_sandbox_coordinates` covering both sandboxes, `pull_errors: []` — and it is the same run that proves F-40, since the five gates the stale tunnel killed at `b671f53` are green here |
 | 11 | Publication graph blocks a partial image release | **PASS** (statically enforced) | The gate's body is executed by `test_completeness_gate_refuses_a_missing_image` and its siblings; that the publication jobs must wait for it is a separate claim, and it is now executed too — `test_the_completeness_gate_is_in_front_of_everything_that_announces` walks `needs` transitively out of the parsed YAML (`release-chart` and `publish-release` both reach `release-image-completeness`, which reaches the two image jobs, the scan job, `validate-tag` and `verify-certification`), with `test_the_gate_graph_check_is_sensitive` cutting the edge to show the walk notices. A gate nobody is required to pass is a report |
 | 12 | Classifier / recertification decision truthful | **PASS** | §7: RECERTIFICATION_REQUIRED, no byte-identity claim, no classifier exception added |
 
@@ -318,6 +318,7 @@ published, the row quotes its own artifact rather than the tick.
 | [35502404774](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35502404774) | `a79d29c` | **success** — five `release-image-builds` cells green; its artifacts produced F-35 and F-36 and carried the F-34 verification (below) |
 | [35505431617](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35505431617) | `8797a64` | **failure** — F-38: the `frontend` job's toast assertion raced antd's async mount on a commit that changed no frontend file. The other nine jobs, all five `release-image-builds` cells included, were green |
 | [35506705907](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506705907) | `b671f53` | **success** — all ten jobs, the console suite included; the six evidence records it uploaded are read below |
+| [35508682453](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35508682453) | `d30b4e7` | **success** — with the F-40 harness repair and GATE 11's new graph walk in the suite, so the tests that certify the release contract are themselves certified |
 
 **Linux certification** (`cap-linux-certification.yml`, `layer: release`; GA-GATE 33's evidence):
 
@@ -342,9 +343,9 @@ published, the row quotes its own artifact rather than the tick.
 | [35496754931](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35496754931) | `9de9f0f` | **success**, `gates: 34/34` — and its artifact said `"source": "not_observed"`, i.e. F-31: a green round that could not name what it had deployed |
 | [35498709533](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35498709533) | `3c523f4` | **success** — `"source": "K8S-GATE 34"`, five images, `worker_sandbox_coordinates` both sandboxes, `pull_errors: []` |
 | [35500246776](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500246776) | `4aff814` | **success** |
-| [35500709149](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500709149) | `4aff814` | **success**, 34/34, same observed set — the round §8's GATE 10 cites |
+| [35500709149](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500709149) | `4aff814` | **success**, 34/34, same observed set — history now: F-38's fix blocks inheritance from this SHA |
 | [35506717889](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506717889) | `b671f53` | **failure** — F-40. Gates 26/28/29/32 and pregate E died on `Server disconnected` / `ConnectError` while K8S-GATE 34, which reads the cluster through `kubectl`, passed with the expected image set: a dead port-forward, not a dead deployment |
-| [35508689787](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35508689787) | `d30b4e7` | running — the round with the tunnel repair: two consecutive health answers before a restart counts, and a stale forward rebound before each gate |
+| [35508689787](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35508689787) | `d30b4e7` | **success** — `gates: 34/34` with the observed image set in its artifact and `pull_errors: []`. The five gates F-40's stale tunnel killed at `b671f53` are green here, which is the repair proven on a cluster rather than in a unit test; this is the round ARTIFACT-GATE 10 rests on |
 
 **Reliability soak** (`cap-ga-reliability.yml`, 7200 s — the only proof GA-GATE 24/25/26/34/35 get):
 
@@ -401,11 +402,15 @@ F-39.
 
 **Inheritance.** `4aff814` would have been the certified SHA — `classify_diff.py 4aff814 <tip>` said
 `INHERITED (release_metadata_only=True)`, and CI, Linux and Kubernetes were green there. F-38 took it
-away: the fix lands in `frontend/src/hooks/`, which the classifier charges as `production_runtime`, so
-nothing at or after `b671f53` can inherit a `4aff814` round. `scripts/release/classify_diff.py b671f53
-<tip>` therefore has to read `INHERITED` for the tip to carry the rounds above, and it does — docs and
-`test_harness` only, no runtime-affecting file. The classifier was not modified for this purpose, and
-no round in these tables is claimed as green before its run finished.
+away: that fix lands in `frontend/src/hooks/`, which the classifier charges as `production_runtime`, so
+nothing at or after `b671f53` can inherit a `4aff814` round. Two SHAs carry the delivered line now:
+`b671f53` (CI, the Linux release layer, the 7200 s soak, and the strict FULL GA round dispatched from a
+ref pinned at it) and `d30b4e7` — `b671f53` plus F-40's harness repair and GATE 11's graph walk — which
+carries CI and the Kubernetes round. Both hops were measured rather than assumed:
+`classify_diff.py b671f53 d30b4e7` and `classify_diff.py d30b4e7 <tip>` both return
+`runtime certification INHERITED (release_metadata_only=True)`, the files between them classified
+`docs` and `test_harness` and nothing else. The classifier was not modified for
+this purpose, and no round in these tables is claimed green before its run finished.
 
 ## 10. Remaining findings after this closure
 
