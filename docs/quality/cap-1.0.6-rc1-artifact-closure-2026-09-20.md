@@ -115,8 +115,9 @@ types, take `Docker-Content-Digest` (or the SHA-256 of the returned manifest byt
 ghcr requires because it omits the header), then **re-fetch by digest and require byte-identical
 manifest bytes**. Output:
 `docs/quality/artifacts/cap-1.0.6-rc1-artifact-closure/registry-base-digests.json`, which carries per
-base the registry, the index digest, the media type, the `linux/amd64` child, and the two flags that
-say the re-fetch happened (`byte_identical_by_digest`, `digest_matches_recomputed`). It is tracked for
+base the registry, the index digest, the media type, the `linux/amd64` child, the platforms each index
+serves, and the two flags that say the re-fetch happened (`byte_identical_by_digest`,
+`digest_matches_recomputed`), plus `verified_on_utc` carrying the day it was taken. It is tracked for
 the same reason as §1's snapshot: `deployment/third-party-images.json` points at it, and a pointer into
 a gitignored directory resolves only on the machine that ran the measurement (F-37).
 

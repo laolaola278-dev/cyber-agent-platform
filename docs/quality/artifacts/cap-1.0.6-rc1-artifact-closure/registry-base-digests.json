@@ -1,5 +1,5 @@
 {
-  "verified_on_utc": "see git commit date",
+  "verified_on_utc": "2026-09-20",
   "bases": [
     {
       "ref": "python:3.13-slim",
