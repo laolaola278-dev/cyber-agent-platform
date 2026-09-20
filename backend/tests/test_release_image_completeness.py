@@ -481,6 +481,56 @@ def test_the_drift_guard_notices_a_stale_tag() -> None:
     assert _QUOTED_CAP_IMAGE.findall('f"cap-backend:{IMAGE_TAG}"') == []
 
 
+def security_matrix(doc: dict | None = None) -> set[str]:
+    """The images `release.yml` scans after publishing them."""
+    doc = _release_doc() if doc is None else doc
+    job = doc["jobs"].get("release-image-security") or {}
+    return set(((job.get("strategy") or {}).get("matrix") or {}).get("image") or [])
+
+
+def test_every_published_image_is_scanned_in_the_release() -> None:
+    """ARTIFACT-GATE 6, on the release side rather than CI's.
+
+    `release-image-builds` scans a matrix derived from the same cells that build,
+    so it cannot drift. `release-image-security` lists its five names by hand,
+    which means the one place that scans *what an operator will actually pull*
+    is the place a new image can be forgotten: build it, publish it, certify it,
+    and never Trivy the artifact. Set equality with the chart's own image set is
+    what makes that impossible.
+    """
+    published = published_images()
+    scanned = security_matrix()
+    deployed = cap_image_names(chart_images())
+    assert scanned, "release.yml scans no published image"
+    assert scanned == published, (
+        f"the release publishes {sorted(published)} but scans {sorted(scanned)}"
+    )
+    assert scanned == deployed, (
+        f"the chart deploys {sorted(deployed)} but the release scans {sorted(scanned)}"
+    )
+    for name in sorted(scanned):
+        assert set(scanned) - {name} != deployed, (
+            f"removing {name} from the scan matrix changed nothing"
+        )
+    step_text = " ".join(
+        [str(step.get("run") or "") for step in doc_steps("release-image-security")]
+        + [json.dumps(step.get("with") or {}) for step in doc_steps("release-image-security")]
+    )
+    publish_run = re.sub(r"\s+", " ", step_text)
+    assert "HIGH,CRITICAL" in publish_run, (
+        "the release scan no longer blocks on the project's severity policy"
+    )
+    assert '"exit-code": "1"' in publish_run, "the release scan cannot fail the release"
+    assert '"ignore-unfixed": true' in publish_run, (
+        "the release scan no longer ignores unfixable noise"
+    )
+
+
+def doc_steps(job_name: str, doc: dict | None = None) -> list[dict]:
+    doc = _release_doc() if doc is None else doc
+    return (doc["jobs"].get(job_name) or {}).get("steps") or []
+
+
 def test_every_uploaded_release_asset_is_attached_to_the_release() -> None:
     """Nothing is "shipped" that the publish step does not actually attach.
 
