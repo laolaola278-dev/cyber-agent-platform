@@ -349,15 +349,25 @@ published, the row quotes its own artifact rather than the tick.
 | Attempt | SHA | Conclusion |
 | --- | --- | --- |
 | [35485715411](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485715411) | `3cc6579` | **failure** — F-27 |
-| [35488263281](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488263281) | `c69d960` | **failure** — F-29: 57 tests passed, `GA-GATE 22` refused over a `:latest` in `security_policy.json`, `total: 40, passed: 33` |
-| [35492392358](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35492392358) | `fdee042` | **failure** — the round's own log: `reliability soak run for fdee042…: <none>`. Dispatched without a soak at its SHA, so gates 24/25/26/34/35 had no evidence to consume and the strict meta-gate went red. That is the gate working, and it is why the soak and the GA round are ordered and matched below |
+| [35488263281](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488263281) | `c69d960` | **failure** — `{total: 40, passed: 33, failed: 2, planned: 5}` in its own artifact. `GA-GATE 22` is F-29: 57 tests green, the Trivy target list in `security_policy.json` naming `cap-sandbox-http:latest`, so the gate died on a policy file rather than on an image. `GA-GATE 33` failed alongside it for a second, unrelated reason — no Linux release-layer run existed at `c69d960` for it to find |
+| [35492392358](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35492392358) | `fdee042` | **failure**, and the artifact says why in its own fields: `mode: final-strict`, `full_ga_certified: false`, `gate_summary: {total: 40, passed: 35, planned: 5}` with `GA-GATE 24/25/26/34/35` the five. It was dispatched without a soak at its SHA, so the reliability evidence those five gates consume did not exist (`reliability soak run for fdee042…: <none>`), and the strict meta-gate went red instead of certifying on a partial record. That is the gate working — and it is why the soak and the GA round are ordered and matched below |
 | pending | `4aff814` | to be dispatched from a ref pinned at that commit once its soak is green: `workflow_dispatch` always runs a ref's *tip*, and the GA job resolves the soak by exact `head_sha` |
+
+One field in that artifact needs reading carefully: `baseline` is a *historical anchor* — Phase 28.6
+as it stood when 28.7 was written, `{"run": "32565459369", "gates": "32/32 PASS", "commit":
+"b905393…"}`, written as literals and asserted as literals by GA-GATE 1. It is not this round's
+Kubernetes result, which has 34 gates, its own run id and its own artifact (§9's Kubernetes table);
+reading `32/32` as the current 28.6 evidence would be the same mistake as F-21's unowned prose. What
+the round did observe about images is derived separately into `cap-cert-ga/images.json`, stamped with
+the commit it ran on.
 
 A gate that errors is reported as a failure and re-run rather than read as close enough: the second
 and third Kubernetes attempts and all three GA attempts are in these tables because they failed.
-Seven CI runs and one Linux run were superseded mid-flight by the next push (`c69d960`, `fb5fc17`,
-`0ce3b93`, `706996f`, `b447436`, `0c22e0e`, `d0ddf48`) and are left out for that reason; the
-certification workflows do not cancel, so no certification round was lost to a push.
+Seven CI runs were superseded mid-flight by the next push (`c69d960`, `fb5fc17`, `0ce3b93`, `706996f`,
+`b447436`, `0c22e0e`, `d0ddf48`) and are left out for that reason; the certification workflows those
+pushes triggered came back `skipped` by design — a `release/**` push runs no certification layer, which
+is why every round in these tables is a dispatch — and `cancel-in-progress: false` there means no
+certification round was ever lost to a push.
 
 **What the tip's own artifacts said.** From CI run 35502404774 at `a79d29c`, per-image evidence for
 all five images, read out of the uploaded files: every record carries `tag: 1.0.6-rc1`,
