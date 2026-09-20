@@ -366,14 +366,26 @@ _Filled in as each round finishes; nothing here is asserted before its run is gr
   path `release-chart` uploads against the files the publish step attaches, and it fails on the
   pre-fix workflow (`MISSING: ['dist/values-release-*.yaml']`) — checked, not asserted.
 - **F-31** (found and closed inside this round) — the first Kubernetes round whose gate passed for
-  the new observed-image-set wrote it to `backend/outputs/cap-cert/k8s-image-set.json` while the
-  generator read `outputs/cap-cert/`: `CAP_CERT_OUT` is a *relative* path and the two processes start
-  in different directories, so the green run's artifact still said `not_observed`. The safe fallback
-  did its job — it declined to invent coordinates — but the fix was incomplete, and only inspecting
-  the published artifact (not the job's green tick) showed that. The gate now resolves the path
+  the new observed-image-set still reported `not_observed` in its own artifact. The cause is three
+  lines of the same workflow: `CAP_CERT_OUT: outputs/cap-cert` is relative (line 24), the pytest step
+  runs with `working-directory: backend` and therefore writes its junit to `../outputs/cap-cert/`
+  explicitly (lines 256, 265), and the upload reads `outputs/cap-cert/` from the repository root
+  (line 293). Gate 34 resolved the relative variable against *its* working directory, so the record
+  landed in `backend/outputs/cap-cert/` — beside the tests, out of reach of the generator and of the
+  upload. The safe fallback did its job (it declined to invent coordinates); the fix resolves the path
   against the repository root and stamps the record with its commit, and the generator refuses a
-  record from another commit: searching several candidate directories is how this repository was once
-  certified by a stale junit, so the answer is a stamp, not another fallback path.
+  record from another commit rather than searching candidate directories — this repository has already
+  been certified once by a stale junit it found in its own `outputs/`.
+- **F-34** (found and closed inside this round) — `context_sha256`, described in §4 as the field that
+  makes a staging difference "visible instead of a matter of faith", was noise. CI run 35500219964
+  recorded `cap-sandbox-http`'s context as `8310b248…` in one matrix cell and `febcb187…` in another:
+  same commit, same four staged files. `find` on the absolute `mktemp -d` directory puts absolute
+  paths into `sha256sum`'s output, and that text is what got hashed. Two builds that had to agree did
+  not — so a build that genuinely differed in content could not be told apart from one that merely
+  got a different temporary directory. The hash is now computed from inside the context; two tests
+  hold both halves, because stability alone is not the claim (§4's sentence was written before
+  anything ever compared the field against anything — which is why no number of green runs could
+  have caught it).
 - **F-32** (found and closed inside this round) — `values-release-<version>.yaml` pinned five image
   coordinates and the production chart reads six. `worker.image` — the deployment that runs
   acquisitions — was left at the chart's placeholder registry, `ghcr.io/example/cap-backend`, so
