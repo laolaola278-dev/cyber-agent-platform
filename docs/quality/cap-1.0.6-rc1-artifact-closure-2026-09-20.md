@@ -1,14 +1,19 @@
 # CAP 1.0.6-rc1 — Artifact Completeness & Reproducible Build Closure Report
 
-Closure tip: `b447436` (branch `release/1.0.6-rc1`). Runtime certification anchor from the previous
-round: `c52dcb9` — and this round **cannot inherit it** (§7), because closing F-7 and F-20 changed
-build inputs. F-7 and F-20 landed in `3eadfc4`/`d6a7f77`; the closure then needed four code
-follow-ups (`0b143ac`, `3cc6579`, `c69d960`, `b447436`), each one produced by this round's own CI or
-re-certification run rather than by reading the code — see §5, §9 and §10. The commits between them
-carry this report and the register updates.
+Candidate line: **`release/1.0.6-rc1`**. The certified rounds sit on two commits — `b671f53` (CI, the
+Linux release layer, the 7200 s reliability soak and the strict FULL GA round) and `d30b4e7` (CI and
+the Kubernetes round); everything after them on this line is documentation, which the classifier reads
+as `docs` (§9's inheritance check). Runtime certification anchor from the previous round: `c52dcb9` —
+and this round **cannot inherit it** (§7), because closing F-7 and F-20 changed build inputs. F-7 and
+F-20 landed in `3eadfc4`/`d6a7f77`; the eighteen code commits after them — eleven fixes, six test-only,
+one feature — are what those two changes turned up, and each of them was produced by a run that failed
+or by an artifact that did not say what a sentence claimed, not by reading the code (§5, §9 and §10 keep
+the two apart).
 Prepared: 2026-09-20, from a Windows audit host plus GitHub-hosted Linux runners.
-Publication: **none performed** — no `v*` tag, no GitHub Release, no image pushed, no existing tag
-or image overwritten.
+Publication: **none performed** — no `v*` tag, no GitHub Release, no image pushed, no existing tag or
+image overwritten, no push to `main`. The refs this round created are the candidate branch itself and
+two pins (`cert/ga-strict-4aff814`, `cert/ga-strict-b671f53`) whose only purpose is to let a
+`workflow_dispatch` run at the commit whose soak it consumes.
 
 > Scope of this document: F-7 (the release published two of the five images the production chart
 > deploys) and F-20 (Dockerfile base images named by mutable tag). F-4, F-5, F-6, F-9 and F-19 are
@@ -370,7 +375,7 @@ published, the row quotes its own artifact rather than the tick.
 | [35485715411](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485715411) | `3cc6579` | **failure** — F-27 |
 | [35488263281](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488263281) | `c69d960` | **failure** — `{total: 40, passed: 33, failed: 2, planned: 5}` in its own artifact. `GA-GATE 22` is F-29: 57 tests green, the Trivy target list in `security_policy.json` naming `cap-sandbox-http:latest`, so the gate died on a policy file rather than on an image. `GA-GATE 33` failed alongside it for a second, unrelated reason — no Linux release-layer run existed at `c69d960` for it to find |
 | [35492392358](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35492392358) | `fdee042` | **failure**, and the artifact says why in its own fields: `mode: final-strict`, `full_ga_certified: false`, `gate_summary: {total: 40, passed: 35, planned: 5}` with `GA-GATE 24/25/26/34/35` the five. It was dispatched without a soak at its SHA, so the reliability evidence those five gates consume did not exist (`reliability soak run for fdee042…: <none>`), and the strict meta-gate went red instead of certifying on a partial record. That is the gate working — and it is why the soak and the GA round are ordered and matched below |
-| pending | `b671f53` | to be dispatched from `cert/ga-strict-b671f53`, a ref pinned at that commit: `workflow_dispatch` always runs a ref's *tip*, the GA job resolves its soak by exact `head_sha`, and this line keeps moving forward while the soak runs |
+| [35512844679](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35512844679) | `b671f53` | **success — FULL GA CERTIFIED**, quoted from the artifact rather than the tick (F-33): `mode: "final-strict"`, `full_ga_certified: true`, `commit: "b671f53747011b25b1be6808ec1521270bfad00d"` (equal to the run's `head_sha`, which is the binding F-33 asks for), `version: "1.0.6-rc1"`, `gate_summary: {total: 40, passed: 40, failed: 0, not_run: 0, skipped: 0, planned: 0}`, `release_status: "FULL GA CERTIFIED -- awaiting explicit release authorization"`. `implemented: 38` is not a contradiction: every one of the 40 is `PASS`, and the two outside the test map are the suite-level evidence gates — GA-GATE 33 (the Linux security re-certification resolved by exact SHA, which is why the dispatch pairing matters) and GA-GATE 40 (merged JUnit zero-skip report). Ran 13:12:58Z → 14:10:15Z from `cert/ga-strict-b671f53`, the ref pinned at the commit whose soak and Linux release-layer rounds it consumes |
 
 One field in that artifact needs reading carefully: `baseline` is a *historical anchor* — Phase 28.6
 as it stood when 28.7 was written, `{"run": "32565459369", "gates": "32/32 PASS", "commit":
@@ -664,5 +669,64 @@ this purpose, and no round in these tables is claimed green before its run finis
 
 ## 11. Verdict
 
-_Same rule as the previous round: the gates above are only worth what their runs say. Stated at the
-end of §9's rounds._
+**CAP v1.0.6-rc1 — ARTIFACT-COMPLETE RELEASE READY — awaiting explicit publication authorization.**
+
+The basis, each line tied to a run or to a check that executes what the sentence claims:
+
+- **ARTIFACT-GATE 1..12 are PASS** (§8). Two of them (1, 11) hold because tests *run* the release gates
+  against fabricated evidence and refuse the partial shapes; one (5) because five clean-runner builds
+  succeeded on a pushed commit whose uploaded records were then read back — and disagreed with each
+  other in ways that became F-34, F-35 and F-36.
+- **CI is green** at `d30b4e7` (run 35508682453), the last commit on this line that is not this
+  document; the commits above it change documentation only, and `classify_diff.py d30b4e7 <head>`
+  returns `INHERITED`, so CI's verdict travels. It also passed at `b671f53` (run 35506705907), whose
+  six evidence records §9 reads line by line.
+- **Kubernetes certification** — run 35508689787 at `d30b4e7`: `gates: {total: 34, passed: 34, failed:
+  0, not_run: 0}`, artifact `source: K8S-GATE 34`, five CAP images at the tag the job built, both
+  sandbox coordinates present, `pull_errors: []` (ARTIFACT-GATE 10).
+- **Reliability soak** — run 35506714369 at `b671f53`, 11:02:21Z → 13:12:05Z (2 h 10 m), 7200 s inside:
+  480/480 healthy ticks, availability 1.0, zero downtime, zero HTTP errors, `non_terminal_runs: []`,
+  upgrade 8.3 s and rollback 0.8 s under load with no errors during either.
+- **FULL GA, final-strict** — run 35512844679 at `b671f53`, quoted from its artifact because the
+  publication gate cannot tell a strict round from a development one (F-33): `mode: "final-strict"`,
+  `full_ga_certified: true`, `gate_summary: {total: 40, passed: 40, failed: 0, not_run: 0, skipped: 0,
+  planned: 0}`, `commit` equal to the run's `head_sha`, `version: "1.0.6-rc1"`.
+- **F-7 and F-20 are closed.** F-4, F-5, F-6, F-9 and F-19 are untouched by design (§30).
+
+What the verdict does **not** claim:
+
+- **That a release has run.** `release.yml` triggers on a `v*` tag and publication is not authorized, so
+  `--push`, registry authentication, the stored attestations and the index-digest hand-off between the
+  two sandbox jobs remain verified by reading and by dry builds only (F-25). The first real run is where
+  that half gets its proof, and there `release-image-completeness` refuses a partial set rather than
+  publishing one.
+- **That these images are reproducible by digest.** F-39 measured it on this round's own builds: same
+  Dockerfile hash, same staged-context hash, same pinned base, different digests. The release contract
+  pins the published digest, so what an operator deploys is exact; "rebuild and compare" is not a check
+  that works today. §7 refuses the stronger byte-identity claim for the same reason.
+- **Anything about the compose stack.** Five third-party services there are still pulled by mutable tag
+  (F-24); the chart is the supported production path and every gate above measures it.
+- **That every evidence pointer resolves from a clean clone.** The five inside
+  `deployment/third-party-images.json` still name `outputs/` paths (F-37).
+- **That the chart's schema is uniform.** Four image coordinates accept a tag or a digest; the API's and
+  the worker's require a tag, so a digest-only pin is illegal for exactly those two (F-41). The released
+  values file is validated against the schema as it stands; the asymmetry is the open half.
+
+Publishing, in the order that keeps every gate in front of it — the operator's decision, not this
+round's:
+
+1. confirm the candidate head, and that CI, the Linux release layer, Kubernetes, the soak and the strict
+   GA round are the runs §9 names — the GA one read by its artifact fields, per F-33;
+2. `git tag v1.0.6-rc1 <head> && git push origin v1.0.6-rc1`, which runs `quality-gates` (CI itself,
+   console suite included) → `validate-tag` → `verify-certification` → the five image builds →
+   `release-image-security` → `release-image-completeness` → `release-chart` → `publish-release`;
+3. install with the released `values-release-1.0.6-rc1.yaml` — the asset F-30's fix attaches, which is
+   what turns the chart into those exact digests — and re-run K8S-GATE 34's check against the pulled
+   digests. If a step in that chain fails after some images have pushed, the tag stays and the run
+   reports publication incomplete; nothing here deletes and re-pushes a tag (§27).
+
+Nothing was published on anyone's behalf: no tag, no image push, no GitHub Release, no push to `main`,
+no ref moved backwards, and no gate was loosened to make any of the above true — the classifier, the
+completeness gate, the strict GA meta-gate and the skip-zero report are the same code they were when
+this round started, and the six findings this line could not close (F-24, F-25, F-33, F-37, F-39,
+F-41) are recorded with their prices rather than edited out of the register.
