@@ -57,7 +57,7 @@ egress-proxy deployment spelled its image inside the template, so an operator se
 | --- | --- | --- | --- | --- |
 | `release-images` | `cap-backend`, `cap-frontend`, `cap-sandbox-http`, `cap-egress-proxy` (matrix, `include` entries with explicit `dockerfile` + `context`/`role`) | yes | SBOM + provenance, per image | `validate-tag`, `verify-certification` |
 | `release-sandbox-browser` | `cap-sandbox-browser` | yes | SBOM + provenance | `release-images` (takes the HTTP sandbox image's **index digest** as `SANDBOX_HTTP_BASE`) |
-| `release-image-security` | — | — | Trivy HIGH/CRITICAL, unfixed ignored, exit 1 | each of the five published refs |
+| `release-image-security` | — | — | Trivy HIGH/CRITICAL, unfixed ignored, exit 1, **plus a per-image scan record** derived from the Trivy JSON report | each of the five published refs |
 | `release-image-completeness` | — | — | validates the five evidence records, renders `values-release-<version>.yaml` | all of the above |
 | `release-chart` | chart package + the rendered values file | — | — | `release-image-completeness` |
 | `publish-release` | GitHub Release | — | — | `release-image-completeness`, `release-chart` |
@@ -67,7 +67,20 @@ Each build passes `VERSION=<validated version>` and `REVISION=<tag target SHA>`,
 linux/amd64 child digest, the Dockerfile SHA, the hash of the staged build context and the source
 revision. `release-image-completeness` fails the release if any of those is missing, if a record is
 tagged something other than the validated version, if an image was not pushed, if an attestation is
-absent, or if evidence arrives for an image the release does not declare.
+absent, if the published image was never scanned, or if evidence arrives for an image the release
+does not declare.
+
+The scan is evidence, not a green tick: `release-image-security` asks Trivy for a JSON report and
+derives a record from it (`ref`, policy, `blocking_findings`, `verdict`), so a clean scan of some
+other artifact cannot satisfy the gate and a step that produced no report fails rather than
+recording a pass. The completeness gate merges that record into the release evidence, which is what
+makes the §25 shape — tag, index digest, platform digest, SBOM, provenance, **trivy** — answerable
+from one file after publication. All of it is executed in
+`test_release_image_completeness.py`: `test_the_scan_record_is_derived_from_the_trivy_report`,
+`test_the_scan_record_refuses_a_report_with_findings`,
+`test_the_scan_record_cannot_be_written_without_a_report`, and three gate refusals
+(`…_refuses_an_unscanned_published_image`, `…_refuses_a_scan_of_some_other_artifact`,
+`…_refuses_a_scan_that_found_something`).
 
 **No partial release:** `publish-release` does not depend on `release-images` at all — it depends on
 the gate that requires all five. If `cap-sandbox-browser` fails while the other four publish, the

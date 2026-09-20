@@ -480,6 +480,79 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+          format: json
+          output: /tmp/trivy-${{ matrix.image }}.json
+      - name: Record the scan of ${{ matrix.image }}
+        env:
+          IMAGE: ${{ matrix.image }}
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+          REPORT: /tmp/trivy-${{ matrix.image }}.json
+        run: |
+          python3 - <<'SCAN_RECORD_PY'
+          import json
+          import os
+          import pathlib
+          import sys
+          from datetime import datetime, timezone
+
+          image = os.environ["IMAGE"]
+          owner = os.environ["OWNER"]
+          version = os.environ["VERSION"]
+          # The ref the scan is *about*: an operator pulls this string, so a
+          # record of some other build proves nothing about it.
+          ref = f"ghcr.io/{owner}/{image}:{version}"
+          path = pathlib.Path(os.environ["REPORT"])
+          if not path.is_file():
+              print(
+                  f"{image}: trivy wrote no report at {path}. The gate refuses a "
+                  "scan it cannot read rather than taking the green step as proof.",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          doc = json.loads(path.read_text(encoding="utf-8"))
+          blocked = []
+          total = 0
+          for result in doc.get("Results") or []:
+              target = result.get("Target") or image
+              for vuln in result.get("Vulnerabilities") or []:
+                  total += 1
+                  blocked.append(
+                      f"{target}:{vuln.get('PkgName')}:{vuln.get('VulnerabilityID')}"
+                  )
+          record = {
+              "image": image,
+              "ref": ref,
+              "scanner": "trivy",
+              "policy": {
+                  "severities": ["HIGH", "CRITICAL"],
+                  "ignore_unfixed": True,
+                  "exit_code": "1",
+              },
+              "findings_total": total,
+              "blocking_findings": blocked,
+              "verdict": "PASS" if not blocked else "FAIL",
+              "scanned_at": datetime.now(timezone.utc).isoformat(),
+          }
+          out = pathlib.Path("security")
+          out.mkdir(exist_ok=True)
+          (out / f"{image}.json").write_text(
+              json.dumps(record, indent=2) + "\n", encoding="utf-8"
+          )
+          if blocked:
+              # `exit-code: "1"` above should have stopped the job already; this
+              # is the same claim checked against the report rather than the step.
+              print(f"{image}: {len(blocked)} blocking findings", file=sys.stderr)
+              for item in blocked[:20]:
+                  print(f"  * {item}", file=sys.stderr)
+              raise SystemExit(1)
+          print(json.dumps(record, indent=2))
+          SCAN_RECORD_PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-${{ matrix.image }}
+          path: security/
+          if-no-files-found: error
 
   release-image-completeness:
     needs: [validate-tag, release-images, release-sandbox-browser, release-image-security]
@@ -491,9 +564,15 @@ jobs:
           pattern: release-image-*
           path: release-image-evidence
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: security-*
+          path: release-image-security
+          merge-multiple: true
       - name: Require a complete, attested, digest-recorded image set
         env:
           VERSION: ${{ needs.validate-tag.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
         run: |
           python3 - <<'ARTIFACT_GATE_PY'
           import json
@@ -529,6 +608,11 @@ jobs:
               data = json.loads(path.read_text("utf-8"))
               records[data.get("image") or path.stem] = data
 
+          scans: dict[str, dict] = {}
+          for path in sorted(pathlib.Path("release-image-security").glob("*.json")):
+              data = json.loads(path.read_text("utf-8"))
+              scans[data.get("image") or path.stem] = data
+
           failures: list[str] = []
           for name in sorted(EXPECTED):
               record = records.get(name)
@@ -545,6 +629,25 @@ jobs:
               for kind in ("sbom", "provenance"):
                   if not (record.get("attestations") or {}).get(kind):
                       failures.append(f"{name}: no {kind} attestation")
+              # The scan of the published ref, not of a CI build of the same
+              # source: §25 lists trivy beside the digests and the attestations,
+              # and a release that cannot show the scan of what an operator pulls
+              # is not auditable after the fact.
+              scan = scans.get(name)
+              expected_ref = f"ghcr.io/{os.environ['OWNER']}/{name}:{VERSION}"
+              if scan is None:
+                  failures.append(f"{name}: no Trivy scan record for the published image")
+              else:
+                  if scan.get("ref") != expected_ref:
+                      failures.append(
+                          f"{name}: scan is about {scan.get('ref')!r}, not {expected_ref!r}"
+                      )
+                  if scan.get("verdict") != "PASS" or scan.get("blocking_findings"):
+                      failures.append(
+                          f"{name}: Trivy found blocking findings: "
+                          f"{(scan.get('blocking_findings') or [])[:5]}"
+                      )
+                  record["trivy"] = scan
           unexpected = sorted(set(records) - set(EXPECTED))
           if unexpected:
               failures.append(f"evidence for images the release does not declare: {unexpected}")

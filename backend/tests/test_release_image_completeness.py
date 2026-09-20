@@ -644,8 +644,10 @@ COMPLETENESS_HEREDOC = ("ARTIFACT_GATE_PY", )
 RENDER_HEREDOC = ("VALUES_PY", )
 
 
-def _release_gate_body(step_name: str, heredoc: str) -> str:
-    steps = _release_doc()["jobs"]["release-image-completeness"]["steps"]
+def _release_gate_body(
+    step_name: str, heredoc: str, job: str = "release-image-completeness"
+) -> str:
+    steps = _release_doc()["jobs"][job]["steps"]
     run = next(step["run"] for step in steps if step.get("name") == step_name)
     opener = f"python3 - <<'{heredoc}'\n"
     return run[run.index(opener) + len(opener) : run.rindex(f"\n{heredoc}")]
@@ -669,6 +671,22 @@ def _record(name: str, version: str = "9.9.9-rc1", **overrides: object) -> dict:
     return record
 
 
+def _scan_record(name: str, version: str = "9.9.9-rc1", **overrides: object) -> dict:
+    """What `release-image-security` writes for one published image."""
+    scan = {
+        "image": name,
+        "ref": f"ghcr.io/o/{name}:{version}",
+        "scanner": "trivy",
+        "policy": {"severities": ["HIGH", "CRITICAL"], "ignore_unfixed": True,
+                   "exit_code": "1"},
+        "findings_total": 0,
+        "blocking_findings": [],
+        "verdict": "PASS",
+    }
+    scan.update(overrides)
+    return scan
+
+
 def _write_records(tmp_path: Path, records: list[dict], version: str = "9.9.9-rc1") -> Path:
     evidence = tmp_path / "release-image-evidence"
     evidence.mkdir(parents=True, exist_ok=True)
@@ -680,11 +698,29 @@ def _write_records(tmp_path: Path, records: list[dict], version: str = "9.9.9-rc
     return evidence
 
 
-def _exec_release_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, records: list[dict],
-                       version: str = "9.9.9-rc1") -> tuple[int, dict | None]:
+def _write_scans(tmp_path: Path, scans: list[dict]) -> None:
+    out = tmp_path / "release-image-security"
+    out.mkdir(parents=True, exist_ok=True)
+    for scan in scans:
+        (out / f"{scan['image']}.json").write_text(
+            json.dumps(scan, indent=2), encoding="utf-8"
+        )
+
+
+def _exec_release_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    records: list[dict],
+    version: str = "9.9.9-rc1",
+    scans: list[dict] | None = None,
+) -> tuple[int, dict | None]:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("VERSION", version)
+    monkeypatch.setenv("OWNER", "o")
     _write_records(tmp_path, records, version)
+    _write_scans(tmp_path, scans if scans is not None else [
+        _scan_record(record["image"], version) for record in records
+    ])
     code = 0
     try:
         exec(  # noqa: S102 -- executing the product's own publication gate
@@ -706,6 +742,73 @@ def _all_five() -> list[dict]:
     )]
 
 
+SCAN_STEP = "Record the scan of ${{ matrix.image }}"
+
+
+def _exec_scan_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, report: dict | None
+) -> tuple[int, dict | None]:
+    """Run the release job's scan-recording heredoc against a trivy report."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("IMAGE", "cap-backend")
+    monkeypatch.setenv("OWNER", "cap-owner")
+    monkeypatch.setenv("VERSION", "9.9.9-rc1")
+    path = tmp_path / "trivy-cap-backend.json"
+    if report is None:
+        monkeypatch.setenv("REPORT", str(path / "missing.json"))
+    else:
+        path.write_text(json.dumps(report), encoding="utf-8")
+        monkeypatch.setenv("REPORT", str(path))
+    code = 0
+    try:
+        exec(  # noqa: S102 -- executing the product's own release step
+            compile(_release_gate_body(SCAN_STEP, "SCAN_RECORD_PY",
+                                       job="release-image-security"),
+                    "<scan record>", "exec"),
+            {"__name__": "cap_release_scan_record"},
+        )
+    except SystemExit as exit_info:
+        code = exit_info.code if isinstance(exit_info.code, int) else 1
+    written = tmp_path / "security" / "cap-backend.json"
+    return code, json.loads(written.read_text("utf-8")) if written.exists() else None
+
+
+def test_the_scan_record_is_derived_from_the_trivy_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Clean report: a PASS record naming the published ref."""
+    code, record = _exec_scan_record(tmp_path, monkeypatch, {"Results": []})
+    assert code == 0, record
+    assert record["verdict"] == "PASS" and record["blocking_findings"] == []
+    assert record["ref"] == "ghcr.io/cap-owner/cap-backend:9.9.9-rc1", (
+        "the record has to be about the artifact an operator pulls"
+    )
+    assert record["policy"]["severities"] == ["HIGH", "CRITICAL"]
+
+
+def test_the_scan_record_refuses_a_report_with_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hit is recorded *and* fails the step; the gate never sees a clean PASS."""
+    code, record = _exec_scan_record(tmp_path, monkeypatch, {"Results": [
+        {"Target": "usr/lib/libssl.so.3",
+         "Vulnerabilities": [{"PkgName": "openssl", "VulnerabilityID": "CVE-2026-00002",
+                              "Severity": "CRITICAL", "FixedVersion": "3.0.9"}]}
+    ]})
+    assert code == 1
+    assert record["verdict"] == "FAIL"
+    assert record["blocking_findings"] == ["usr/lib/libssl.so.3:openssl:CVE-2026-00002"], record
+
+
+def test_the_scan_record_cannot_be_written_without_a_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No report, no record: a green action step is not evidence of a scan."""
+    code, record = _exec_scan_record(tmp_path, monkeypatch, None)
+    assert code == 1
+    assert record is None
+
+
 def test_completeness_gate_accepts_five_complete_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -715,6 +818,53 @@ def test_completeness_gate_accepts_five_complete_records(
     assert set(merged["images"]) == {
         "backend", "frontend", "sandbox_http", "sandbox_browser", "egress_proxy"
     }
+    # §25: the release record carries the scan beside the digests, so "was the
+    # published artifact scanned" is answerable from one file after the fact.
+    for key, record in merged["images"].items():
+        assert record.get("trivy", {}).get("verdict") == "PASS", (key, record.get("trivy"))
+
+
+def test_completeness_gate_refuses_an_unscanned_published_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Four scans and five pushes is a partial security gate."""
+    records = _all_five()
+    scans = [_scan_record(r["image"]) for r in records[:-1]]
+    code, merged = _exec_release_gate(tmp_path, monkeypatch, records, scans=scans)
+    assert code == 1
+    assert any("Trivy scan record" in reason for reason in merged["failures"]), merged
+
+
+def test_completeness_gate_refuses_a_scan_of_some_other_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clean scan of the wrong bytes is not evidence about these bytes."""
+    records = _all_five()
+    scans = [_scan_record(r["image"]) for r in records]
+    scans[0] = {**scans[0], "ref": "ghcr.io/o/cap-backend:1.0.5"}
+    code, merged = _exec_release_gate(tmp_path, monkeypatch, records, scans=scans)
+    assert code == 1
+    reasons = " ".join(merged["failures"])
+    assert "scan is about" in reasons and "1.0.5" in reasons, reasons
+
+
+def test_completeness_gate_refuses_a_scan_that_found_something(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = _all_five()
+    scans = [_scan_record(r["image"]) for r in records]
+    scans[2] = {
+        **scans[2],
+        "verdict": "FAIL",
+        "findings_total": 1,
+        "blocking_findings": ["usr/lib/x86_64-linux-gnu/libssl.so.3:openssl:CVE-2026-00001"],
+    }
+    code, merged = _exec_release_gate(tmp_path, monkeypatch, records, scans=scans)
+    assert code == 1
+    assert any("blocking findings" in reason for reason in merged["failures"]), merged
+    assert "CVE-2026-00001" in " ".join(merged["failures"]), (
+        "the refusal should name what it refused on"
+    )
 
 
 def test_completeness_gate_refuses_a_missing_image(
