@@ -232,14 +232,15 @@ runtime-affecting** —
 **Byte-identity was the alternative, and it is not available** (§18): to inherit, the base that the
 certified build resolved at `c52dcb9` would have to be provably the same digest this round pins. The
 round that certified it recorded `base_digest: null` for exactly that reason — that missing field
-*was* F-20 — and a tag resolved five days ago cannot be reconstructed from a registry that has
-since served other bytes. Claiming equality here would have been the cheapest possible way to skip
-a re-certification, so it is not claimed: the Dockerfile digest change is treated as
-runtime-affecting, `c52dcb9` is **not** inherited, and a new certified SHA is established by
-re-running CI, the Linux release layer with its PostgreSQL matrix, the Kubernetes suite (now 34
-gates), the 7200 s reliability soak and the strict FULL GA round on the closure tip. §20's rule was
-respected in the making: no "metadata-only" exception was added to the classifier for pinned
-Dockerfiles, because a base image decides which OpenSSL ships in the artifact.
+*was* F-20 — and a tag a registry resolved the previous morning cannot be reconstructed afterwards:
+the registry answers "what is `python:3.13-slim` now?", and no log records what it was then. Claiming
+equality here would have been the cheapest possible way to skip a re-certification, so it is not
+claimed: the Dockerfile digest change is treated as runtime-affecting, `c52dcb9` is **not** inherited,
+and a new certified SHA is established by re-running CI, the Linux release layer with its PostgreSQL
+matrix, the Kubernetes suite (now 34 gates), the 7200 s reliability soak and the strict FULL GA round
+on the closure tip. §20's rule was respected in the making: no "metadata-only" exception was added to
+the classifier for pinned Dockerfiles, because a base image decides which OpenSSL ships in the
+artifact.
 
 ## 8. ARTIFACT-GATE matrix
 
