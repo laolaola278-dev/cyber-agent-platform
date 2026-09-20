@@ -236,6 +236,26 @@ listed so that an import name is not mistaken for a working capability.
 3. **Cancel vs. terminal-state race (Low).** A restrictive policy can finalize
    a run as BLOCKED before a cancel request lands; the cancel API is idempotent
    for already-terminal runs.
+4. **Compose-path third-party services are still pulled by mutable tag (F-24).**
+   `redis:7-alpine`, `prom/prometheus:v2.55.1`, `grafana/grafana:11.3.1`,
+   `dpage/pgadmin4:8` and `postgres:16-alpine` come from `docker-compose.yml`,
+   not from a Dockerfile, so the base-image lock and its digest gate do not reach
+   them -- and the chart does not deploy them either. Consequence: a compose
+   deployment can receive different bytes for the same tag on different days, and
+   `deployment/third-party-images.json` says nothing about them. Closing this
+   means either extending the lock to compose services and rewriting
+   `docker-compose.yml` to digest references, or dropping the compose stack in
+   favour of the chart; both are larger than the artifact-closure scope and were
+   left alone deliberately rather than half-done.
+5. **The release image graph has never run (F-25).** `release.yml` builds and
+   publishes all five CAP images, and its completeness gate refuses a partial
+   set, but the workflow triggers only on a `v*` tag and publication is not
+   authorised. What a clean runner did prove: the same script builds all five
+   (CI `release-image-builds`), and the defect that would have broken the first
+   real release -- the evidence block aborting after a successful build -- was
+   found by that dry build and fixed. What is still verified only by reading:
+   `--push`, registry authentication, the stored SBOM/provenance attachments and
+   the index-digest hand-off between the two sandbox jobs.
 
 ## Live verification against a real PostgreSQL server
 
