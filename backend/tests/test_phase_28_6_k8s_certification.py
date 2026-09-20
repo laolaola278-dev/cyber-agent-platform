@@ -342,6 +342,26 @@ def test_gate5_worker_sa_adversarial_attempts_denied() -> None:
 # -- GATE 6: sandbox ServiceAccount token absent ------------------------------
 
 
+def _deployment_env(deployment: str, env_name: str) -> str:
+    """One env value as the *rendered chart* set it, not as a test literal."""
+    spec = json.loads(_kubectl(["-n", NAMESPACE, "get", "deploy", deployment, "-o", "json"]))
+    for container in spec["spec"]["template"]["spec"]["containers"]:
+        for pair in container.get("env") or []:
+            if pair.get("name") == env_name:
+                return str(pair.get("value") or "")
+    raise AssertionError(f"{deployment} renders no {env_name} env var")
+
+
+def _sandbox_image_coordinate() -> str:
+    """The sandbox image the chart told the worker to use.
+
+    Reading it out of the live deployment is the point. This test used to hardcode
+    `cap-sandbox-http:latest` -- the coordinate F-7 made impossible -- and a test
+    with its own image name cannot notice the chart and the cluster disagreeing.
+    """
+    return _deployment_env("cap-cap-worker", "SANDBOX_IMAGE")
+
+
 def _create_sandbox_probe_pod(name: str) -> str:
     """Create a probe Pod in cap-sandbox with the sandbox image (no token)."""
     body = {
@@ -355,10 +375,10 @@ def _create_sandbox_probe_pod(name: str) -> str:
             "containers": [
                 {
                     "name": "probe",
-                    "image": "cap-sandbox-http:latest",
-                    # kind has no registry; 'latest' defaults to pullPolicy
-                    # Always, which would ImagePullBackOff. Loaded local images
-                    # must use IfNotPresent.
+                    "image": _sandbox_image_coordinate(),
+                    # kind has no registry, so a floating tag would default to
+                    # pullPolicy Always and ImagePullBackOff; loaded local images
+                    # have to be pulled IfNotPresent.
                     "imagePullPolicy": "IfNotPresent",
                     "command": ["python", "-m", "sandbox.shim", "--serve"],
                 }
@@ -1947,3 +1967,79 @@ def test_gate33_console_serves_the_built_app_through_real_nginx(console_port: in
         "an unknown /api/ path was answered with index.html -- the proxy location "
         "is not matching, and the browser would see a JSON parse error"
     )
+
+
+# ---------------------------------------------------------------------------
+# K8S-GATE 34 -- the release image set is sufficient for a fresh install
+#
+# F-7 in Kubernetes terms: the chart deployed five CAP images, the release
+# published two, and everything the cluster pulled came from a `:latest` someone
+# had built on the runner. "33/33 PASS" therefore described a deployment nobody
+# could reproduce. This gate looks at the coordinates the running workloads
+# actually carry, checks them against the images this job built and loaded, and
+# treats a pull failure as the evidence it is.
+# ---------------------------------------------------------------------------
+
+#: The CAP images `release.yml` publishes, by name.
+CAP_RELEASE_IMAGES = (
+    "cap-backend",
+    "cap-frontend",
+    "cap-sandbox-http",
+    "cap-sandbox-browser",
+    "cap-egress-proxy",
+)
+
+
+def _cap_images_and_pull_errors(pods: list[dict]) -> tuple[set[str], list[str]]:
+    images: set[str] = set()
+    errors: list[str] = []
+    for pod in pods:
+        status = pod.get("status") or {}
+        for field in ("containerStatuses", "initContainerStatuses"):
+            for container in status.get(field) or []:
+                if container.get("image"):
+                    images.add(str(container["image"]))
+                waiting = (container.get("state") or {}).get("waiting") or {}
+                if waiting.get("reason") in {"ImagePullBackOff", "ErrImagePull"}:
+                    errors.append(
+                        f"{pod['metadata']['name']}: {waiting['reason']} {container.get('image')}"
+                        f" {waiting.get('message', '')}"
+                    )
+    return images, errors
+
+
+def test_gate34_deployed_image_set_is_the_released_set() -> None:
+    _require_cluster()
+    tag = os.environ.get("CAP_CERT_IMAGE_TAG", "ci")
+
+    pods = json.loads(_kubectl(["-n", NAMESPACE, "get", "pods", "-o", "json"]))["items"]
+    pods += json.loads(_kubectl(["-n", SANDBOX_NS, "get", "pods", "-o", "json"]))["items"]
+    images, pull_errors = _cap_images_and_pull_errors(pods)
+    assert not pull_errors, "a CAP pod could not pull its image: " + "; ".join(pull_errors)
+
+    # The sandbox images have no pod until an acquisition runs, but the worker
+    # carries their coordinates and that is exactly what a sandbox Pod will use.
+    coordinates = {
+        _deployment_env("cap-cap-worker", "SANDBOX_IMAGE"),
+        _deployment_env("cap-cap-worker", "SANDBOX_BROWSER_IMAGE"),
+    }
+    deployed_cap = {
+        image for image in images if image.split("/")[-1].startswith("cap-")
+    }
+    every = deployed_cap | coordinates
+
+    for image in sorted(every):
+        assert not image.endswith(":latest"), (
+            f"{image}: a production deployment cannot rest on a mutable tag"
+        )
+    names = {image.split("/")[-1].split(":")[0] for image in every}
+    assert names == set(CAP_RELEASE_IMAGES), (
+        f"the cluster runs {sorted(names)} but the release set is "
+        f"{sorted(CAP_RELEASE_IMAGES)}"
+    )
+    for name in CAP_RELEASE_IMAGES:
+        refs = [image for image in every if image.split("/")[-1].split(":")[0] == name]
+        assert refs, f"{name} is named by neither a pod nor the worker"
+        assert all(ref.endswith(f":{tag}") for ref in refs), (
+            f"{name} runs as {sorted(refs)}, not the {tag} this job built and loaded"
+        )

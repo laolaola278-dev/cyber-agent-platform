@@ -262,22 +262,6 @@ jobs:
         # the next release and corrupt SBOM/upgrade attribution.
         id: version
         run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
-      - name: Build backend image
-        uses: docker/build-push-action@v6
-        with:
-          context: backend
-          push: false
-          load: true
-          tags: cap-backend:ci
-          build-args: VERSION=${{ steps.version.outputs.version }}
-      - name: Build frontend image
-        uses: docker/build-push-action@v6
-        with:
-          context: frontend
-          push: false
-          load: true
-          tags: cap-frontend:ci
-          build-args: VERSION=${{ steps.version.outputs.version }}
       - name: Scan repository filesystem
         # trivy-action v0.36.0 (pinned by commit SHA for supply-chain integrity)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
@@ -287,19 +271,95 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      - name: Scan backend image
+      # The two scans that used to sit here covered the only two images the
+      # release published. Image scanning now happens in `release-image-builds`,
+      # once per image the release actually ships -- and a build there is the
+      # same script `release.yml` calls, so "CI was green" also means "all five
+      # images build on a clean runner".
+
+  # ---------------------------------------------------------------------
+  # ARTIFACT-GATE 5/6/7/8 evidence, before any release exists: build every
+  # image the release would publish, on a clean runner, through the same
+  # script release.yml calls, and scan each one. This is the step that would
+  # have failed F-7: the release graph published two of the five images built
+  # here, and CI is where a build that only works on a machine with local
+  # state gets caught. No push happens from CI -- `--push` is release.yml's.
+  # ---------------------------------------------------------------------
+  release-image-builds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: cap-backend
+            dockerfile: backend/Dockerfile
+            context: backend
+          - image: cap-frontend
+            dockerfile: frontend/Dockerfile
+            context: frontend
+          - image: cap-sandbox-http
+            dockerfile: backend/docker/sandbox-http/Dockerfile
+            role: http
+          - image: cap-sandbox-browser
+            dockerfile: backend/docker/sandbox-browser/Dockerfile
+            role: browser
+            base-image: cap-sandbox-http
+          - image: cap-egress-proxy
+            dockerfile: backend/docker/egress-proxy/Dockerfile
+            role: egress-proxy
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - name: Resolve release version
+        id: version
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+      - name: Build ${{ matrix.image }}
+        env:
+          IMAGE: ${{ matrix.image }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          CONTEXT: ${{ matrix.context }}
+          ROLE: ${{ matrix.role }}
+          BASE_IMAGE: ${{ matrix.base-image }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$BASE_IMAGE" ]]; then
+            # The browser image layers on the HTTP sandbox image. On a clean
+            # runner that base does not exist, which is the point: build it
+            # here from this same workflow and name it, instead of inheriting
+            # whatever `:latest` a developer machine happened to keep.
+            bash scripts/release/build_release_image.sh \
+              --name "$BASE_IMAGE" --role http \
+              --dockerfile backend/docker/sandbox-http/Dockerfile \
+              --version "$VERSION" --revision "$GITHUB_SHA" \
+              --out "outputs/ci-release-images/$BASE_IMAGE.json"
+          fi
+          args=(--name "$IMAGE" --dockerfile "$DOCKERFILE"
+                --version "$VERSION" --revision "$GITHUB_SHA"
+                --out "outputs/ci-release-images/$IMAGE.json")
+          if [[ -n "$ROLE" ]]; then
+            args+=(--role "$ROLE")
+          else
+            args+=(--context "$CONTEXT")
+          fi
+          if [[ -n "$BASE_IMAGE" ]]; then
+            args+=(--build-arg "SANDBOX_HTTP_BASE=$BASE_IMAGE:$VERSION")
+          fi
+          bash scripts/release/build_release_image.sh "${args[@]}"
+      - name: Show what was built
+        run: cat "outputs/ci-release-images/${{ matrix.image }}.json"
+      - name: Scan ${{ matrix.image }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: image
-          image-ref: cap-backend:ci
+          image-ref: ${{ matrix.image }}:${{ steps.version.outputs.version }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      - name: Scan frontend image
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          scan-type: image
-          image-ref: cap-frontend:ci
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
+          name: ci-release-image-${{ matrix.image }}
+          path: outputs/ci-release-images/
+          if-no-files-found: error

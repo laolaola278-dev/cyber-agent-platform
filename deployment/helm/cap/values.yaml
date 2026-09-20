@@ -28,6 +28,7 @@ backend:
   image:
     repository: ghcr.io/example/cap-backend
     tag: "1.0.6-rc1"
+    digest: ""
     pullPolicy: IfNotPresent
   service:
     port: 8000
@@ -77,6 +78,7 @@ worker:
   image:
     repository: ghcr.io/example/cap-backend
     tag: "1.0.6-rc1"
+    digest: ""
     pullPolicy: IfNotPresent
   existingSecret: cap-runtime
   command: ["python", "-m", "app.acquisition.worker_main"]
@@ -104,8 +106,19 @@ worker:
   sandbox:
     provider: kubernetes-sandbox
     namespace: cap-sandbox
-    image: cap-sandbox-http:latest
-    browserImage: cap-sandbox-browser:latest
+    # The two sandbox images the worker creates Pods from. These are CAP release
+    # images, not infrastructure: `release.yml` publishes them under this chart's
+    # version, and `:latest` was never a coordinate anybody could pull (F-7).
+    # Set `digest` (from release-images-<version>.json) to pin bytes instead of a
+    # tag; an empty tag means the chart's own appVersion.
+    image:
+      repository: ghcr.io/example/cap-sandbox-http
+      tag: "1.0.6-rc1"
+      digest: ""
+    browserImage:
+      repository: ghcr.io/example/cap-sandbox-browser
+      tag: "1.0.6-rc1"
+      digest: ""
     shimPort: "8080"
     podReadyTimeoutSeconds: "90"
     # v1.0.1: the worker now FAILS FAST in production without enforced egress.
@@ -138,6 +151,7 @@ frontend:
   image:
     repository: ghcr.io/example/cap-frontend
     tag: "1.0.6-rc1"
+    digest: ""
     pullPolicy: IfNotPresent
   service:
     port: 80
@@ -181,3 +195,15 @@ migration:
 serviceAccount:
   create: true
   name: ""
+
+# The controlled egress proxy the sandbox Pods route through. It is a CAP image
+# (backend/docker/egress-proxy/Dockerfile) and the release publishes it under the
+# same version; the template used to spell it as `cap-egress-proxy:latest`, which
+# no artifact ever satisfied.
+egressProxy:
+  image:
+    repository: ghcr.io/example/cap-egress-proxy
+    tag: "1.0.6-rc1"
+    digest: ""
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}

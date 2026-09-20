@@ -43,7 +43,7 @@ spec:
       terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       containers:
         - name: worker
-          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          image: {{ include "cap.imageRef" (dict "image" .Values.worker.image "defaultTag" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
           command: {{ toYaml .Values.worker.command | nindent 12 }}
           securityContext:
@@ -80,9 +80,9 @@ spec:
             - name: SANDBOX_NAMESPACE
               value: {{ .Values.worker.sandbox.namespace | quote }}
             - name: SANDBOX_IMAGE
-              value: {{ .Values.worker.sandbox.image | quote }}
+              value: {{ include "cap.imageRef" (dict "image" .Values.worker.sandbox.image "defaultTag" .Chart.AppVersion) | quote }}
             - name: SANDBOX_BROWSER_IMAGE
-              value: {{ .Values.worker.sandbox.browserImage | quote }}
+              value: {{ include "cap.imageRef" (dict "image" .Values.worker.sandbox.browserImage "defaultTag" .Chart.AppVersion) | quote }}
             - name: SANDBOX_SHIM_PORT
               value: {{ .Values.worker.sandbox.shimPort | quote }}
             - name: SANDBOX_POD_READY_TIMEOUT_SECONDS

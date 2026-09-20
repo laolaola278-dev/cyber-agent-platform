@@ -31,7 +31,7 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: migrate
-          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          image: {{ include "cap.imageRef" (dict "image" .Values.backend.image "defaultTag" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           command: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
           env:

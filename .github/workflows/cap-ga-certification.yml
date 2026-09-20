@@ -104,10 +104,23 @@ jobs:
         run: |
           docker build -t cap-backend:ci -f backend/Dockerfile backend/
           docker build -t cap-frontend:ci -f frontend/Dockerfile frontend/
-          bash backend/docker/build_sandbox_images.sh --with-browser
+          CAP_SANDBOX_IMAGE_TAG="ci" bash backend/docker/build_sandbox_images.sh --with-browser
           kind load docker-image cap-backend:ci cap-frontend:ci \
-            cap-sandbox-http:latest cap-sandbox-browser:latest cap-egress-proxy:latest \
+            cap-sandbox-http:ci cap-sandbox-browser:ci cap-egress-proxy:ci \
             --name "$KIND_CLUSTER"
+
+      - name: Record the built CAP image identities
+        # ARTIFACT-GATE 10 evidence: the five images this job loads into kind are
+        # the ones the install below names, by ID. Without it "the deployment came
+        # up" cannot be distinguished from "it came up off an image the cluster
+        # already had", which is the hole F-7 certified through.
+        run: |
+          set -euo pipefail
+          docker image inspect \
+            cap-backend:ci cap-frontend:ci \
+            cap-sandbox-http:ci cap-sandbox-browser:ci cap-egress-proxy:ci \
+            --format '{{.Id}} {{.RepoTags}}' | tee /tmp/cap-image-ids.txt
+          test "$(wc -l < /tmp/cap-image-ids.txt)" -eq 5
 
       - name: Deploy PostgreSQL + MinIO + CAP on Cluster A
         run: |
@@ -187,6 +200,12 @@ jobs:
             --set worker.image.repository=cap-backend --set worker.image.tag=ci \
             --set backend.replicaCount=3 \
             --set worker.replicaCount=2 \
+            --set worker.sandbox.image.repository=cap-sandbox-http \
+            --set worker.sandbox.image.tag=ci \
+            --set worker.sandbox.browserImage.repository=cap-sandbox-browser \
+            --set worker.sandbox.browserImage.tag=ci \
+            --set egressProxy.image.repository=cap-egress-proxy \
+            --set egressProxy.image.tag=ci \
             --set worker.sandbox.egressProxyUrl=http://cap-cap-egress-proxy.cap.svc:8080 \
             --set worker.sandbox.namespace=cap-sandbox
           kubectl -n cap rollout status deploy/cap-cap-backend --timeout=600s
@@ -421,7 +440,7 @@ jobs:
         run: |
           docker build -t cap-backend:ci -f backend/Dockerfile backend/
           docker build -t cap-frontend:ci -f frontend/Dockerfile frontend/
-          bash backend/docker/build_sandbox_images.sh --with-browser
+          CAP_SANDBOX_IMAGE_TAG="ci" bash backend/docker/build_sandbox_images.sh --with-browser
 
       - name: "Run supply-chain gates (GA-GATE 20..23 + 29)"
         working-directory: backend

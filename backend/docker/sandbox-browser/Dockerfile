@@ -5,7 +5,18 @@
 # own PID/network namespaces; the container IS the sandbox (--no-sandbox is
 # safe here because there is no host exposure).
 
-FROM cap-sandbox-http:latest
+# The HTTP sandbox image this one layers on, passed in by the caller:
+#
+#   backend/docker/build_sandbox_images.sh   local + certification builds
+#   scripts/release/build_release_image.sh   release build (the sandbox-http
+#                                            digest published in the same run)
+#
+# There is deliberately no default. `FROM cap-sandbox-http:latest` built
+# successfully against whatever the machine already had and could not say which
+# bytes the published image started from, so an unset base now fails at the FROM
+# line -- loudly, at build time, instead of quietly in the artifact.
+ARG SANDBOX_HTTP_BASE
+FROM ${SANDBOX_HTTP_BASE}
 
 # Switch back to root for installation (the http sandbox ends with USER capuser).
 # We need root to install system packages and pip packages globally.

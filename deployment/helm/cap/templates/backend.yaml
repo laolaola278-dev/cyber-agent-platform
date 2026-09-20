@@ -37,7 +37,7 @@ spec:
         {{- toYaml .Values.tolerations | nindent 8 }}
       containers:
         - name: backend
-          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          image: {{ include "cap.imageRef" (dict "image" .Values.backend.image "defaultTag" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}

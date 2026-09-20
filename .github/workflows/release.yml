@@ -343,12 +343,44 @@ jobs:
           path: outputs/cap-cert-release/
           if-no-files-found: error
 
+  # ---------------------------------------------------------------------
+  # F-7: the release publishes every CAP image the production chart can run.
+  #
+  # The chart deploys five (backend, frontend, the two sandbox images and the
+  # egress proxy); this used to publish two, and the other three were referenced
+  # as `:latest` -- coordinates that only ever existed on a machine that had
+  # built them, so a default install died at its first acquisition. The set is
+  # enforced twice: `test_release_image_completeness.py` compares the chart's
+  # derived image set with this graph in CI (and a tag cannot publish past red
+  # CI, because `quality-gates` is the first job), and `release-image-completeness`
+  # below refuses to let a partial or unattested set reach `publish-release`.
+  #
+  # Four images are independent and build from a matrix cell. The browser image
+  # layers on cap-sandbox-http, so it is its own job taking that image's
+  # published digest -- a matrix cannot express a dependency, and a `:latest`
+  # base could never say which bytes shipped.
+  # ---------------------------------------------------------------------
   release-images:
     needs: [validate-tag, verify-certification]
     runs-on: ubuntu-latest
     strategy:
+      # A partial image set is refused downstream either way, and the operator
+      # needs to know which of the five could not be produced.
+      fail-fast: false
       matrix:
-        component: [backend, frontend]
+        include:
+          - image: cap-backend
+            dockerfile: backend/Dockerfile
+            context: backend
+          - image: cap-frontend
+            dockerfile: frontend/Dockerfile
+            context: frontend
+          - image: cap-sandbox-http
+            dockerfile: backend/docker/sandbox-http/Dockerfile
+            role: http
+          - image: cap-egress-proxy
+            dockerfile: backend/docker/egress-proxy/Dockerfile
+            role: egress-proxy
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v3
@@ -357,39 +389,292 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - name: Build and publish ${{ matrix.image }}
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+          IMAGE: ${{ matrix.image }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          CONTEXT: ${{ matrix.context }}
+          ROLE: ${{ matrix.role }}
+        run: |
+          set -euo pipefail
+          args=(--name "$IMAGE" --dockerfile "$DOCKERFILE"
+                --registry "ghcr.io/$OWNER" --version "$VERSION"
+                --revision "$GITHUB_SHA"
+                --out "outputs/release-images/$IMAGE.json" --push)
+          if [[ -n "$ROLE" ]]; then
+            args+=(--role "$ROLE")
+          else
+            args+=(--context "$CONTEXT")
+          fi
+          bash scripts/release/build_release_image.sh "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          context: ${{ matrix.component }}
-          push: true
-          provenance: true
-          sbom: true
-          tags: ghcr.io/${{ github.repository_owner }}/cap-${{ matrix.component }}:${{ needs.validate-tag.outputs.version }}
-          build-args: |
-            VERSION=${{ needs.validate-tag.outputs.version }}
-            REVISION=${{ github.sha }}
+          name: release-image-${{ matrix.image }}
+          path: outputs/release-images/
+          if-no-files-found: error
 
-  release-chart:
-    needs: [validate-tag, verify-certification]
+  release-sandbox-browser:
+    needs: [validate-tag, verify-certification, release-images]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-image-cap-sandbox-http
+          path: outputs/release-images
+      - name: Build and publish cap-sandbox-browser on the released HTTP sandbox
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          # The base is the digest this release published, not a tag: the browser
+          # image then states which bytes it extends, and a later rebuild of
+          # cap-sandbox-http cannot silently change what shipped.
+          BASE_DIGEST="$(python3 -c 'import json;print(json.load(open("outputs/release-images/cap-sandbox-http.json"))["index_digest"])')"
+          test -n "$BASE_DIGEST"
+          bash scripts/release/build_release_image.sh \
+            --name cap-sandbox-browser \
+            --dockerfile backend/docker/sandbox-browser/Dockerfile \
+            --registry "ghcr.io/$OWNER" --version "$VERSION" --revision "$GITHUB_SHA" \
+            --role browser \
+            --build-arg "SANDBOX_HTTP_BASE=ghcr.io/$OWNER/cap-sandbox-http@${BASE_DIGEST}" \
+            --out outputs/release-images/cap-sandbox-browser.json --push
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-image-cap-sandbox-browser
+          path: outputs/release-images/
+          if-no-files-found: error
+
+  release-image-security:
+    # The published refs, not only a CI build of the same source: the tag an
+    # operator pulls is the artifact. Same policy as the CI job (HIGH/CRITICAL,
+    # unfixed ignored, exit 1 on a hit).
+    needs: [validate-tag, release-images, release-sandbox-browser]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [cap-backend, cap-frontend, cap-sandbox-http, cap-sandbox-browser, cap-egress-proxy]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ needs.validate-tag.outputs.version }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  release-image-completeness:
+    needs: [validate-tag, release-images, release-sandbox-browser, release-image-security]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-image-*
+          path: release-image-evidence
+          merge-multiple: true
+      - name: Require a complete, attested, digest-recorded image set
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          python3 - <<'ARTIFACT_GATE_PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          VERSION = os.environ["VERSION"]
+          #: The five images the production chart can run. Their names are derived
+          #: from the chart itself by test_release_image_completeness.py in CI; this
+          #: list is what the published artifacts are checked against, so a matrix
+          #: cell that produced nothing cannot pass by omission.
+          EXPECTED = {
+              "cap-backend": "backend",
+              "cap-frontend": "frontend",
+              "cap-sandbox-http": "sandbox_http",
+              "cap-sandbox-browser": "sandbox_browser",
+              "cap-egress-proxy": "egress_proxy",
+          }
+          #: A release image missing any of these is not auditable afterwards.
+          REQUIRED_FIELDS = (
+              "tag",
+              "index_digest",
+              "platform_digest_linux_amd64",
+              "dockerfile_sha256",
+              "context_sha256",
+              "source_revision",
+          )
+
+          records: dict[str, dict] = {}
+          for path in sorted(pathlib.Path("release-image-evidence").glob("*.json")):
+              data = json.loads(path.read_text("utf-8"))
+              records[data.get("image") or path.stem] = data
+
+          failures: list[str] = []
+          for name in sorted(EXPECTED):
+              record = records.get(name)
+              if record is None:
+                  failures.append(f"{name}: no build evidence uploaded at all")
+                  continue
+              if record.get("tag") != VERSION:
+                  failures.append(f"{name}: tagged {record.get('tag')!r}, expected {VERSION!r}")
+              if not record.get("pushed"):
+                  failures.append(f"{name}: built but never published")
+              for field in REQUIRED_FIELDS:
+                  if not record.get(field):
+                      failures.append(f"{name}: evidence is missing {field}")
+              for kind in ("sbom", "provenance"):
+                  if not (record.get("attestations") or {}).get(kind):
+                      failures.append(f"{name}: no {kind} attestation")
+          unexpected = sorted(set(records) - set(EXPECTED))
+          if unexpected:
+              failures.append(f"evidence for images the release does not declare: {unexpected}")
+
+          payload = {
+              "version": VERSION,
+              "commit": os.environ.get("GITHUB_SHA"),
+              "images": {EXPECTED[k]: records[k] for k in sorted(EXPECTED) if k in records},
+              "failures": failures,
+              "verdict": "PASS" if not failures else "FAIL",
+          }
+          out = pathlib.Path("outputs/release-images")
+          out.mkdir(parents=True, exist_ok=True)
+          (out / f"release-images-{VERSION}.json").write_text(
+              json.dumps(payload, indent=2) + "\n", "utf-8"
+          )
+          if failures:
+              print("PUBLICATION BLOCKED -- release image set incomplete:", file=sys.stderr)
+              for reason in failures:
+                  print(f"  * {reason}", file=sys.stderr)
+              sys.exit(1)
+          print(f"release image set complete: {', '.join(sorted(EXPECTED))}")
+          ARTIFACT_GATE_PY
+      - name: Render the digest-pinned values file
+        run: |
+          python3 - <<'VALUES_PY'
+          import json
+          import pathlib
+
+          merged = json.loads(next(
+              path.read_text(encoding="utf-8")
+              for path in pathlib.Path("outputs/release-images").glob("release-images-*.json")
+          ))
+          #: where the chart reads each coordinate from
+          PATHS = {
+              "backend": "backend.image",
+              "sandbox_http": "worker.sandbox.image",
+              "sandbox_browser": "worker.sandbox.browserImage",
+              "egress_proxy": "egressProxy.image",
+              "frontend": "frontend.image",
+          }
+          tree: dict = {}
+          for key, dotted in PATHS.items():
+              record = merged["images"][key]
+              parts = dotted.split(".")
+              node = tree
+              for part in parts[:-1]:
+                  node = node.setdefault(part, {})
+              node[parts[-1]] = {
+                  "repository": record["ref"].rsplit(":", 1)[0],
+                  "tag": record["tag"],
+                  "digest": record["index_digest"],
+              }
+
+          def render(node: dict, depth: int = 0) -> list:
+              lines: list[str] = []
+              for name, value in node.items():
+                  pad = "  " * depth
+                  if isinstance(value, dict):
+                      lines.append(pad + name + ":")
+                      lines.extend(render(value, depth + 1))
+                  else:
+                      text = str(value)
+                      if name == "tag":
+                          text = '"' + text + '"'
+                      lines.append(pad + name + ": " + text)
+              return lines
+
+          header = [
+              "# Generated by release.yml at publish time -- do not edit.",
+              "# Every CAP image the chart deploys, with the manifest-list digest this",
+              "# release recorded. F-7 is the reason: three of these five defaulted to",
+              "# `:latest`, a coordinate no artifact served, so a default install died at",
+              "# its first acquisition. helm upgrade -f values-release.yaml reinstalls",
+              "# the bytes that were certified, not a moving tag.",
+              "# version: " + merged["version"],
+              "# commit: " + str(merged.get("commit")),
+              "",
+          ]
+          target = pathlib.Path("values-release-" + merged["version"] + ".yaml")
+          target.write_text("\n".join(header + render(tree)) + "\n", encoding="utf-8")
+          print(target.read_text(encoding="utf-8"))
+          VALUES_PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cap-${{ needs.validate-tag.outputs.version }}-release-images
+          path: |
+            outputs/release-images/
+            values-release-*.yaml
+          if-no-files-found: error
+
+  release-chart:
+    # The chart archive becomes a release asset, so it waits for the images it
+    # points at: shipping a chart whose images are missing is how a fresh
+    # install turns into ImagePullBackOff.
+    needs: [validate-tag, verify-certification, release-image-completeness]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: cap-${{ needs.validate-tag.outputs.version }}-release-images
+          path: release-image-evidence
       - uses: azure/setup-helm@v4
         with:
           version: v3.17.3
       - run: |
           helm lint deployment/helm/cap
           helm package deployment/helm/cap --destination dist
+          # the digest-pinned values file rendered from the published digests,
+          # shipped beside the chart it was generated for
+          cp release-image-evidence/values-release-*.yaml dist/
       - uses: actions/upload-artifact@v4
         with:
           name: cap-${{ needs.validate-tag.outputs.version }}-release-assets
           path: |
             dist/*.tgz
+            dist/values-release-*.yaml
             CHANGELOG.md
             ${{ needs.validate-tag.outputs.notes_file }}
             docs/known-issues.md
 
   publish-release:
-    needs: [validate-tag, verify-certification, release-images, release-chart]
+    # Not `release-images`: that would let four of five images, or four of five
+    # attestations, publish a release nobody can install.
+    needs:
+      - validate-tag
+      - verify-certification
+      - release-image-completeness
+      - release-chart
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

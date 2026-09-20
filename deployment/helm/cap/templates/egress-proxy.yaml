@@ -31,7 +31,7 @@ spec:
         {{- toYaml .Values.tolerations | nindent 8 }}
       containers:
         - name: egress-proxy
-          image: "cap-egress-proxy:latest"
+          image: {{ include "cap.imageRef" (dict "image" .Values.egressProxy.image "defaultTag" .Chart.AppVersion) | quote }}
           imagePullPolicy: IfNotPresent
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}

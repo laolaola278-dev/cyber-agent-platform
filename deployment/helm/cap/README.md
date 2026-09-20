@@ -13,3 +13,25 @@ helm upgrade --install cap deployment/helm/cap --namespace cap --create-namespac
 ```
 
 Never commit a rendered Secret or pass secret values through shared shell history. Use an external secret manager in production.
+
+## Image coordinates
+
+Every CAP image this chart can deploy is named in `values.yaml` as a
+`{repository, tag, digest}` block, and the templates compose them through
+`cap.imageRef`:
+
+| value path | image |
+| --- | --- |
+| `backend.image` / `worker.image` | `cap-backend` |
+| `frontend.image` | `cap-frontend` |
+| `worker.sandbox.image` | `cap-sandbox-http` |
+| `worker.sandbox.browserImage` | `cap-sandbox-browser` |
+| `egressProxy.image` | `cap-egress-proxy` |
+
+An empty `tag` falls back to this chart's `appVersion`, so installing the chart
+as released pulls the version it was cut with. Setting `digest` wins over the
+tag and is how you pin the exact manifest list -- `release.yml` records one per
+image in `release-images-<version>.json`. `latest` is not a supported value
+anywhere in this chart: until F-7 the three images above that the release did
+not publish defaulted to `:latest`, so a default install could not survive its
+first acquisition.

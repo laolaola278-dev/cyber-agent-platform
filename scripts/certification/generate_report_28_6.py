@@ -51,6 +51,7 @@ TEST_GATES: dict[str, list[str]] = {
     "test_gate31_security_baseline": ["K8S-GATE 31"],
     "test_gate32_overall_health_no_stale": ["K8S-GATE 32"],
     "test_gate33_console_serves_the_built_app_through_real_nginx": ["K8S-GATE 33"],
+    "test_gate34_deployed_image_set_is_the_released_set": ["K8S-GATE 34"],
 }
 
 # gates certified by evidence OUTSIDE this run (historical / separately
@@ -60,9 +61,10 @@ BASELINE_GATES = {
     "K8S-GATE 1": "PASS",  # 28.5-RC2 certified baseline (705bdd2, 14/14)
 }
 
-# 33 gates: 1..32 from the Phase 28.6 suite, 33 added by the v1.0.6-rc1
+# 34 gates: 1..32 from the Phase 28.6 suite, 33 added by the v1.0.6-rc1
+# certification round and 34 by F-7 (the release image set must be enough to install)
 # certification pass (the console's real nginx routing had never been executed).
-ALL_GATES = [f"K8S-GATE {i}" for i in range(1, 34)]
+ALL_GATES = [f"K8S-GATE {i}" for i in range(1, 35)]
 
 
 def _commit() -> str:
