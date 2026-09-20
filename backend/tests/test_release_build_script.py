@@ -46,6 +46,7 @@ REQUIRED_EVIDENCE_FIELDS = (
     "index_digest",
     "config_digest",
     "platform_digest_linux_amd64",
+    "platform",
     "build_driver",
     "dockerfile",
     "dockerfile_sha256",
@@ -122,9 +123,9 @@ def _fake_bin(dest: Path) -> dict[str, str]:
         {
             "mediaType": "application/vnd.oci.image.index.v1+json",
             "manifests": [
-                {"digest": FAKE_AMD64_CHILD, "platform": {"os": "linux", "architecture": "amd64"}},
                 {"digest": "sha256:" + "12" * 32,
                  "platform": {"os": "linux", "architecture": "arm64"}},
+                {"digest": FAKE_AMD64_CHILD, "platform": {"os": "linux", "architecture": "amd64"}},
             ],
         }
     )
@@ -241,6 +242,10 @@ def test_the_buildx_dry_build_writes_complete_evidence(tmp_path: Path) -> None:
         "evidence satisfy the publication gate"
     )
     assert doc["platform_digest_linux_amd64"] is None, "nothing was pushed to inspect"
+    assert doc["platform"] == "linux/amd64", (
+        "a dry buildx build loads into the store, so its platform is knowable; the "
+        "docker-driver record states it and a reader compares the two side by side"
+    )
     assert doc["tag"] == "1.0.6-rc1" and doc["image"] == "cap-probe"
     assert doc["base_refs"] == ["example/base:1.2.3@sha256:" + "11" * 32], (
         "the resolved base, including an ARG default, is what makes the build replayable"
@@ -260,6 +265,10 @@ def test_the_push_build_attests_and_records_the_platform_child(tmp_path: Path) -
     assert doc["index_digest"] == FAKE_INDEX_DIGEST
     assert doc["platform_digest_linux_amd64"] == FAKE_AMD64_CHILD, (
         "the amd64 child has to be read from the pushed manifest, not guessed later"
+    )
+    assert doc["platform"] == "linux/amd64", (
+        "the record names the platform whose child digest it claims; the served "
+        "manifest also holds an arm64 entry, so a wrong pick is invisible otherwise"
     )
     assert doc["attestations"] == {"sbom": True, "provenance": True}
     calls = docker_calls(proc)

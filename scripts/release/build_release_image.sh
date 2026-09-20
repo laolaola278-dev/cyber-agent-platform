@@ -143,24 +143,40 @@ else
     --metadata-file "$META" "$CONTEXT"
   INDEX_DIGEST="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" "$META")"
   CONFIG_DIGEST="$(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(d.get('containerimage.config.digest',''))" "$META")"
+  if [[ "$PUSH" != "1" ]]; then
+    # `--load` put these bytes in the local store, so the platform is knowable here
+    # exactly as it is for the docker driver. Leaving it blank made two records of
+    # the same commit disagree about a field a reader compares side by side.
+    PLATFORM_NAME="$(docker image inspect "$REF" --format '{{.Os}}/{{.Architecture}}')"
+  fi
 fi
 
 if [[ "$PUSH" == "1" ]]; then
   # The child manifest for the platform this project supports. The index digest
   # pins the image; the platform digest is what a node actually pulls, and a
-  # single-arch child must be recorded as such rather than guessed later.
-  PLATFORM_DIGEST="$(docker buildx imagetools inspect "$REF" --format '{{json .Manifest}}' \
-    | python3 -c '
+  # single-arch child must be recorded as such rather than guessed later. The
+  # same read names the platform it picked: a released record that states a
+  # digest but leaves `platform` blank while a dry record fills it is a field
+  # whose meaning depends on which path built it.
+  MANIFEST_JSON="$(docker buildx imagetools inspect "$REF" --format '{{json .Manifest}}')"
+  PARSED_PLATFORM="$(printf '%s' "$MANIFEST_JSON" | python3 -c '
 import json, sys
 manifest = json.loads(sys.stdin.read())
 entries = manifest.get("manifests") or []
 if not entries:
-    print("SINGLE_MANIFEST")
+    print("SINGLE_MANIFEST\t")
 else:
     wanted = [e for e in entries if (e.get("platform") or {}).get("os") == "linux"
               and (e.get("platform") or {}).get("architecture") == "amd64"]
-    print(wanted[0]["digest"] if wanted else "NO_AMD64_CHILD")
+    if wanted:
+        child = wanted[0]
+        platform = child.get("platform") or {}
+        print("%s\t%s/%s" % (child["digest"], platform.get("os"), platform.get("architecture")))
+    else:
+        print("NO_AMD64_CHILD\t")
 ')"
+  PLATFORM_DIGEST="${PARSED_PLATFORM%%$'\t'*}"
+  PLATFORM_NAME="${PARSED_PLATFORM#*$'\t'}"
 fi
 
 mkdir -p "$(dirname "$OUT")"
