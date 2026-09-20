@@ -34,6 +34,13 @@ set -euo pipefail
 NAME="" ROLE="" DOCKERFILE="" CONTEXT="" REGISTRY="" VERSION="" REVISION="" OUT=""
 PUSH=0
 LOCAL_DOCKER=0
+INDEX_DIGEST="" CONFIG_DIGEST="" CONTEXT_SHA="" DOCKERFILE_SHA="" BASES=""
+# Both build drivers leave this empty unless they actually resolved a child
+# manifest, and `set -u` makes "unless" load-bearing: the buildx path has no
+# other assignment, so omitting the default crashed every non-local build
+# (CI saw it as `PLATFORM_DIGEST: unbound variable` on the http base build).
+PLATFORM_DIGEST=""
+PLATFORM_NAME=""
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -103,11 +110,10 @@ if [[ "$LOCAL_DOCKER" == "1" ]]; then
   # the only way a browser image can be built here on top of an HTTP sandbox image
   # that exists nowhere but this runner. No attestation, no push, no index digest:
   # what this mode proves is buildability, and it says so in its own evidence.
-  docker build --build-arg "VERSION=${VERSION}" --build-arg "REVISION=${REVISION}" \
-    "${BUILD_ARGS[@]}" --tag "$REF" --file "$DOCKERFILE" "$CONTEXT"
+  docker build "${BUILD_ARGS[@]}" --tag "$REF" --file "$DOCKERFILE" "$CONTEXT"
   INDEX_DIGEST=""
   CONFIG_DIGEST="$(docker image inspect "$REF" --format '{{.Id}}')"
-  PLATFORM_DIGEST="$(docker image inspect "$REF" --format '{{.Os}}/{{.Architecture}}')"
+  PLATFORM_NAME="$(docker image inspect "$REF" --format '{{.Os}}/{{.Architecture}}')"
   echo "built $REF locally with the docker driver ($CONFIG_DIGEST)"
 else
   if [[ "$PUSH" == "1" ]]; then
@@ -124,8 +130,6 @@ else
   CONFIG_DIGEST="$(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(d.get('containerimage.config.digest',''))" "$META")"
 fi
 
-PLATFORM_DIGEST_VALUE="$PLATFORM_DIGEST"
-PLATFORM_DIGEST=""
 if [[ "$PUSH" == "1" ]]; then
   # The child manifest for the platform this project supports. The index digest
   # pins the image; the platform digest is what a node actually pulls, and a
@@ -134,7 +138,6 @@ if [[ "$PUSH" == "1" ]]; then
     | python3 -c '
 import json, sys
 manifest = json.loads(sys.stdin.read())
-media = manifest.get("mediaType", "")
 entries = manifest.get("manifests") or []
 if not entries:
     print("SINGLE_MANIFEST")
@@ -151,16 +154,18 @@ CAP_EVIDENCE_REGISTRY="$REGISTRY" CAP_EVIDENCE_TAG="$VERSION" CAP_EVIDENCE_PUSHE
 CAP_EVIDENCE_INDEX="$INDEX_DIGEST" CAP_EVIDENCE_CONFIG="$CONFIG_DIGEST" \
 CAP_EVIDENCE_PLATFORM="$PLATFORM_DIGEST" CAP_EVIDENCE_DOCKERFILE="$DOCKERFILE" \
 CAP_EVIDENCE_DRIVER="$([[ "$LOCAL_DOCKER" == "1" ]] && echo docker || echo buildx)" \
-CAP_EVIDENCE_PLATFORM_NAME="$PLATFORM_DIGEST_VALUE" \
-CAP_EVIDENCE_DOCKERFILE_SHA="$DOCKERFILE_SHA" CAP_EVIDENCE_CONTEXT="$CONTEXT" \
+CAP_EVIDENCE_PLATFORM_NAME="$PLATFORM_NAME" \
+CAP_EVIDENCE_DOCKERFILE_SHA="$DOCKERFILE_SHA" \
 CAP_EVIDENCE_CONTEXT_SHA="$CONTEXT_SHA" CAP_EVIDENCE_BASES="$(printf '%s\n' "$BASES")" \
 CAP_EVIDENCE_REVISION="$REVISION" \
+CAP_EVIDENCE_BUILD_ARGS="${BUILD_ARGS[*]}" \
 python3 - <<'PY'
 import json
 import os
 
 env = os.environ
 pushed = env["CAP_EVIDENCE_PUSHED"] == "1"
+build_args = env.get("CAP_EVIDENCE_BUILD_ARGS", "").split()
 evidence = {
     "image": env["CAP_EVIDENCE_NAME"],
     "ref": env["CAP_EVIDENCE_REF"] if pushed else f"{env['CAP_EVIDENCE_NAME']}:dry-build",
@@ -178,7 +183,10 @@ evidence = {
     "context_sha256": env["CAP_EVIDENCE_CONTEXT_SHA"],
     "base_refs": [line for line in env["CAP_EVIDENCE_BASES"].splitlines() if line],
     "source_revision": env["CAP_EVIDENCE_REVISION"],
-    "attestations": {"sbom": pushed, "provenance": pushed},
+    "attestations": {
+        "sbom": "--sbom=true" in build_args,
+        "provenance": "--provenance=true" in build_args,
+    },
 }
 path = env["CAP_EVIDENCE_OUT"]
 with open(path, "w", encoding="utf-8") as handle:

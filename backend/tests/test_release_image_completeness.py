@@ -338,8 +338,8 @@ def test_every_release_image_is_built_with_version_revision_and_attestations() -
     # for -- and the evidence must say which driver produced it, or a dry build
     # could be read as an attested release artifact.
     assert "--local-docker" in script, "the dry-build driver switch is gone"
-    assert '"attestations": {"sbom": pushed, "provenance": pushed}' in script, (
-        "attestations must be derived from the build actually having pushed"
+    assert '"attestations": {' in script and "CAP_EVIDENCE_BUILD_ARGS" in script, (
+        "attestations must be recorded from the flags the build actually passed"
     )
     ci_build_scripts = ci_job_scripts("release-image-builds")
     assert ci_build_scripts, "ci.yml defines no release-image-builds steps"
