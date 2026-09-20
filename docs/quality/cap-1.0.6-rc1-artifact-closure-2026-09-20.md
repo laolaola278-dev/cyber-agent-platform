@@ -231,11 +231,18 @@ inherited (§7), so every row below has to be green at this SHA.
 
 | Round | Run | Result |
 | --- | --- | --- |
-| CI (push-triggered) | [35485625550](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485625550) | `release-image-builds` all five cells **success** (ARTIFACT-GATE 5/6); rest of the run recorded below when it closes |
-| Linux layer=release + PostgreSQL matrix | [35485710392](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485710392) | pending |
-| Kubernetes (34 gates, incl. the fresh-install image audit) | [35485711757](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485711757) | pending |
-| Reliability soak (7200 s) | [35485713552](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485713552) | pending |
-| FULL GA, strict (`CAP_GA_STRICT=1`, 40/40) | [35485715411](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485715411) | pending |
+| CI (push-triggered) | [35485625550](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485625550) | `release-image-builds` **all five cells success** on `3cc6579` (ARTIFACT-GATE 5/6); the run itself was superseded by the next push |
+| Linux layer=release + PostgreSQL matrix | [35485710392](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485710392) | **success** on `3cc6579` |
+| Kubernetes, first attempt | [35485711757](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485711757) | **failure** — F-27, gate 34's own reader |
+| FULL GA, first attempt | [35485715411](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485715411) | **failure** — F-27, the DR fixture's stale tags |
+| Reliability soak (7200 s) | [35485713552](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485713552) | running on `3cc6579` |
+| Kubernetes, re-dispatched after F-27 | [35488262094](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488262094) | pending |
+| FULL GA, strict (`CAP_GA_STRICT=1`, 40/40) | [35488263281](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488263281) | pending |
+
+The Linux round's evidence sits on `3cc6579`, one inheritable commit behind the tip
+(`test_harness` / `ci_workflow` / `certification_generator` only — verified with
+`scripts/release/classify_diff.py 3cc6579 c69d960` → `INHERITED`). The two rounds that failed are
+running at the tip itself, because what failed was their own test code.
 
 _Filled in as each round finishes; nothing here is asserted before its run is green._
 
@@ -264,6 +271,21 @@ _Filled in as each round finishes; nothing here is asserted before its run is gr
   it, and `test_release_build_script.py` now executes the script against a stubbed `docker` to keep it
   local. It never reached a published artifact: the script was introduced by this closure, and the
   bug is fixed in the same round at `3cc6579`.
+- **F-27** (found and closed inside this round) — re-certifying the closure tip failed the Kubernetes
+  and GA rounds for two reasons, both in code this round had just written. The new
+  `_deployment_env` reader passed the `CompletedProcess` that `_kubectl` returns into `json.loads`,
+  so gates 6, 7, 10 and the brand-new gate 34 raised `TypeError` before asserting anything — a gate
+  that cannot run reports nothing, which is the one outcome worse than a failure. And the DR fixture
+  plus the supply-chain gates still named `cap-sandbox-http:latest`,
+  `cap-sandbox-browser:latest`, `cap-egress-proxy:latest` while the jobs had moved to building them
+  as `ci`: `kind load` refused (`ERROR: image "cap-sandbox-http:latest" not present locally`),
+  GA-GATE 20/22/23 died on `No such image`, and the cluster-B install silently fell back to the
+  chart's release defaults for images that cluster had never been given — after which everything
+  downstream (rollout status, port 18080, the runbook gates) was cascade. Both sides now read one
+  `CAP_CERT_IMAGE_TAG`, gate 34's reader has a cluster-free test of its own, and
+  `test_certification_rounds_name_their_images_with_one_tag` refuses a literal CAP image tag in any
+  certification module whose workflow builds a different one. Run against the pre-fix text it fails,
+  so the guard is not decorative.
 - Still true from the previous round: registry digests, SBOM and provenance **attestations** exist
   only once images are pushed; the rollback exercise cannot exist before 1.0.6 does.
 
