@@ -61,8 +61,9 @@ place makes every incident creation fail with `SECRET_NOT_FOUND`.
 - Backend readiness: http://localhost:8000/ready
 - Metrics: http://localhost:8000/metrics
 
-Build the sandbox images before the first acquisition run -- compose builds
-the application services, not the two images the worker starts sandboxes from:
+Build the sandbox images before the first acquisition run if you are running from
+compose -- compose builds the application services, not the sandbox and egress images
+the worker starts (a released install pulls them from the registry instead):
 
 ```bash
 bash backend/docker/build_sandbox_images.sh --with-browser

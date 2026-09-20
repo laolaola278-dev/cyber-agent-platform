@@ -187,6 +187,40 @@ published release contents are immutable.
   `backend/tests/test_ga_report_preview_mode.py` runs the script as a real process in each mode and
   with each evidence layout; each rule was negative-controlled by reverting it.
 
+- **F-7 closed: the release now publishes the whole image graph the chart
+  deploys, and F-20 with it.** The Helm chart could deploy five CAP images while
+  `release.yml` built and pushed two, and the other three were named
+  `cap-sandbox-http:latest`, `cap-sandbox-browser:latest`,
+  `cap-egress-proxy:latest` -- coordinates no artifact ever served, so a fresh
+  `helm install` died at its first acquisition and the K8s certification passed
+  only because the runner happened to have built them locally. `release.yml` now
+  builds and publishes all five through one script
+  (`scripts/release/build_release_image.sh`): VERSION/REVISION build args, SBOM and
+  provenance attached, and the index digest, linux/amd64 child digest, Dockerfile
+  SHA, staged-context hash and source revision written to an evidence record per
+  image. `cap-sandbox-browser` can no longer layer on a mutable local image -- its
+  base is `--build-arg SANDBOX_HTTP_BASE`, with no default in the Dockerfile, and
+  the release passes the digest it published for `cap-sandbox-http` minutes
+  earlier. The chart composes every coordinate through `cap.imageRef`, defaults to
+  the chart's own `appVersion` instead of `latest`, and accepts a `digest` to pin
+  the exact manifest list; `release-image-completeness` renders
+  `values-release-<version>.yaml` from the published digests and ships it as a
+  release asset. Publication refuses a partial set: `release-chart` and
+  `publish-release` both wait for that job, so four of five images -- or a missing
+  attestation, digest or tag -- cannot produce a GitHub Release.
+  `test_release_image_completeness.py` derives the chart's image set from
+  `values.yaml` and the templates (not from a hand-written list of five) and
+  compares it with the parsed release matrix in both directions, then **executes**
+  the two inline release gates against fabricated evidence -- which is how two bugs
+  in the renderer itself were found and fixed before anyone ran it. F-20: every
+  external `FROM` is now `name:tag@sha256:…`, the digests read from the registry
+  and re-fetched by digest to prove byte identity
+  (`outputs/artifact-closure/registry-base-digests.json`), and
+  `deployment/third-party-images.json` records base, platforms and provenance for
+  all five -- with `test_dockerfile_base_images.py` failing on an unpinned or
+  unlisted base. The certification installs that relied on the `:latest` defaults
+  now name versioned images they build and load themselves, and K8S-GATE 34
+  refuses a cluster whose running CAP image set is not the released one.
 ### Fixed
 
 - **A healthy long-running acquisition could be cancelled under load.** The execution-lease

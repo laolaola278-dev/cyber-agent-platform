@@ -166,10 +166,28 @@ def test_canonical_version_is_valid_semver() -> None:
     ), f"canonical VERSION {version!r} is not valid SemVer"
 
 
-def test_helm_values_has_exactly_three_image_tags() -> None:
-    """Guard: the values.yaml contract is backend-api + backend-worker + frontend."""
-    tags = _helm_values_image_tags(_read("deployment/helm/cap/values.yaml"))
-    assert len(tags) == 3, f"expected 3 image tags, found {len(tags)}: {tags}"
+def test_helm_values_tag_every_image_coordinate_they_declare() -> None:
+    """Guard: one explicit tag per `{repository, tag, digest}` block in the chart.
+
+    This used to assert "exactly three tags" (api, worker, frontend). F-7 made the
+    two sandbox images and the egress proxy release coordinates as well, so a
+    hardcoded count would be edited by whoever adds the next one. The count is
+    derived from the chart's own `repository:` lines instead, and every block must
+    state a tag: the carrier assertion above only sees version *literals*, so an
+    image coordinate whose tag went missing would not be checked at all.
+    """
+    text = _read("deployment/helm/cap/values.yaml")
+    repositories = re.findall(r"^\s*repository:\s*\S+", text, re.MULTILINE)
+    tags = _helm_values_image_tags(text)
+    assert len(repositories) >= 6, (
+        f"the chart declares {len(repositories)} image coordinates; since F-7 it must "
+        "declare at least backend, worker, frontend, sandbox-http, sandbox-browser "
+        "and egress-proxy"
+    )
+    assert len(tags) == len(repositories), (
+        f"{len(repositories)} image coordinates but {len(tags)} tags: one coordinate "
+        "carries no version for the carrier check to compare"
+    )
 
 
 # -- guard: the build/packaging layer must not carry its own version ----------

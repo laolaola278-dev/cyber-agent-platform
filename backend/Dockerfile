@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
-FROM ghcr.io/astral-sh/uv:0.8.3 AS uv
+FROM ghcr.io/astral-sh/uv:0.8.3@sha256:ef11ed817e6a5385c02cd49fdcc99c23d02426088252a8eace6b6e6a2a511f36 AS uv
 
-FROM python:3.13-slim AS builder
+FROM python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0 AS builder
 COPY --from=uv /uv /uvx /bin/
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
@@ -11,7 +11,7 @@ COPY pyproject.toml README.md uv.lock ./
 COPY app ./app
 RUN uv sync --frozen --no-dev --no-editable
 
-FROM python:3.13-slim AS runtime
+FROM python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0 AS runtime
 
 ARG VERSION=1.0.6-rc1
 ARG REVISION=unknown

@@ -18,11 +18,19 @@ with the command that builds it.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from pathlib import Path
 
 import yaml
+
+#: The chart-reference derivation lives in the release completeness test, so
+#: this file cannot scan a narrower set of the chart than that one does and
+#: call the difference 'consistent'.
+_IMAGE_COMPLETENESS = (
+    Path(__file__).resolve().parent / "test_release_image_completeness.py"
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VERSIONS = PROJECT_ROOT / "backend" / "alembic" / "versions"
@@ -61,30 +69,24 @@ def checklist_head(doc: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _completeness_module():
+    spec = importlib.util.spec_from_file_location("release_image_completeness", _IMAGE_COMPLETENESS)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def chart_default_images(values: dict) -> list[str]:
-    """Every container image coordinate the chart can deploy with no overrides."""
-    found: list[str] = []
+    """Every container image coordinate the chart can deploy with no overrides.
 
-    def walk(node: object) -> None:
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key in {"image", "browserImage"} and isinstance(value, str):
-                    found.append(value)
-                elif key.endswith("Image") and isinstance(value, str):
-                    found.append(value)
-                elif value and not isinstance(value, (str, int, bool, float)):
-                    walk(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
-
-    walk(values)
-    # image: {repository: ..., tag: ...} blocks are the published product images;
-    # the strings above are the bare coordinates a default install pulls.
-    return sorted({entry for entry in found if "/" not in entry.split(":")[0] or ":" in entry})
-
-
-# -- the checks ---------------------------------------------------------------
+    Delegates to the release completeness scanner, which resolves both shapes a
+    coordinate takes in this chart -- a full string (an env value the worker
+    receives) and a `{repository, tag, digest}` block a template composes. Two
+    scanners over one chart is how a coordinate slips between them.
+    """
+    module = _completeness_module()
+    return sorted(set(module.chart_images(values).values()))
 
 
 def test_checklist_names_the_head_the_revisions_declare() -> None:
@@ -100,7 +102,7 @@ def test_checklist_names_the_head_the_revisions_declare() -> None:
 
 
 def test_sandbox_images_are_documented_where_they_are_needed() -> None:
-    """`release.yml` publishes two images; the worker needs two more."""
+    """The compose path still builds its sandbox images locally, so it has to say so."""
     compose_doc = COMPOSE_DOC.read_text("utf-8")
     checklist = CHECKLIST.read_text("utf-8")
     assert BUILD_SCRIPT in compose_doc, (
@@ -111,32 +113,47 @@ def test_sandbox_images_are_documented_where_they_are_needed() -> None:
 
 
 def test_every_default_image_coordinate_is_published_locked_or_documented() -> None:
+    """A chart default has to come from somewhere an operator can verify.
+
+    Two different rules, because the two kinds of coordinate fail differently:
+
+    * a **CAP-owned** image (`cap-*`) must be *published by the release
+      pipeline*. Documentation is not an acceptable answer -- until F-7 the
+      sandbox and egress images were named in three documents and produced by
+      no artifact, which read as "handled" while a fresh install pulled refs
+      that do not exist;
+    * a **third-party** image must appear in the third-party lock, which is the
+      file that records its registry, tag and digest and why that is safe.
+    """
     values = yaml.safe_load(VALUES.read_text("utf-8"))
-    published = RELEASE_WORKFLOW.read_text("utf-8")
+    module = _completeness_module()
+    published = module.published_images()
     lock = json.loads(THIRD_PARTY_LOCK.read_text("utf-8"))
     locked_refs = {entry["image_ref"] for entry in lock["images"]} | {
         entry["image_ref"].split(":")[0] for entry in lock["images"]
     }
-    documented = (COMPOSE_DOC.read_text("utf-8") + CHECKLIST.read_text("utf-8")
-                  + (PROJECT_ROOT / "docs" / "deployment" / "upgrade.md").read_text("utf-8"))
+    documented = (
+        COMPOSE_DOC.read_text("utf-8")
+        + CHECKLIST.read_text("utf-8")
+        + (PROJECT_ROOT / "docs" / "deployment" / "upgrade.md").read_text("utf-8")
+    )
 
     unexplained: list[str] = []
     for image in chart_default_images(values):
-        name = image.split(":")[0]
-        if f"cap-{name}" in published or name in published:
-            continue  # published by the release workflow
+        name = image.split("/")[-1].split(":")[0].split("@")[0]
+        if name.startswith("cap-"):
+            if name not in published:
+                unexplained.append(f"{image}: a CAP image no release job publishes")
+            continue
         if any(image in ref or ref in image for ref in locked_refs):
-            continue  # recorded in the third-party image lock
+            continue
         if name in documented:
-            continue  # the operator is told where it comes from
-        unexplained.append(image)
+            continue
+        unexplained.append(f"{image}: neither locked nor documented")
     assert not unexplained, (
-        "the chart can deploy images that nothing publishes and no document "
-        f"explains: {unexplained}"
+        "the chart can deploy images nothing publishes and no document explains: "
+        + "; ".join(unexplained)
     )
-
-
-# -- negative controls --------------------------------------------------------
 
 
 def test_head_check_fires_on_a_stale_document() -> None:
@@ -147,14 +164,31 @@ def test_head_check_fires_on_a_stale_document() -> None:
     )
 
 
-def test_chart_image_scanner_sees_an_undocumented_default(tmp_path: Path) -> None:
-    values = {
-        "worker": {"image": {"repository": "cap-backend", "tag": "1.0.0"}},
-        "sandbox": {"image": "made-up-sandbox:latest", "browserImage": "cap-sandbox-http:latest"},
+def test_chart_image_scanner_sees_an_undocumented_default() -> None:
+    """Both coordinate shapes are scanned, on the real chart, not a stub.
+
+    A fixture that only carries the images the scanner happens to look for would
+    pass while the real chart grew a coordinate nobody checked, so the mutation is
+    applied to the actual values document.
+    """
+    values = yaml.safe_load(VALUES.read_text("utf-8"))
+    values["worker"]["sandbox"]["extraImage"] = {
+        "repository": "ghcr.io/someone/made-up-sandbox",
+        "tag": "9.9.9",
+    }
+    values["worker"]["sandbox"]["browserImage"] = {
+        "repository": "cap-sandbox-http",
+        "tag": "",
+        "digest": "sha256:" + "a" * 64,
     }
     found = chart_default_images(values)
-    assert "made-up-sandbox:latest" in found, "a bare default image escaped the scan"
-    assert "cap-sandbox-http:latest" in found
+    assert "ghcr.io/someone/made-up-sandbox:9.9.9" in found, (
+        "an added image coordinate escaped the scan -- the doc rule below cannot "
+        "see it either, which is how F-7 stayed invisible"
+    )
+    assert any(ref.startswith("cap-sandbox-http@sha256:") for ref in found), (
+        "a digest-pinned coordinate lost its location"
+    )
 
 
 def test_missing_build_script_reference_is_detected(tmp_path: Path) -> None:

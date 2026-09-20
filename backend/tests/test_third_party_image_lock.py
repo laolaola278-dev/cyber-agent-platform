@@ -101,13 +101,19 @@ def test_lock_file_is_well_formed() -> None:
         assert entry["registry"] and entry["repository"], entry
         # An image either carries a digest or the reason it does not.
         assert entry.get("digest") or entry.get("tag"), entry["name"]
-        assert entry["image_ref"].startswith(f"{entry['registry']}/") or (
-            # Docker resolves the bare official-library short name to
-            # docker.io/library/<repo>, so surfaces legitimately write it that way.
+        short_form = (
             entry["registry"] == "docker.io"
             and entry["repository"].startswith("library/")
-            and entry["image_ref"] == entry["repository"].split("/", 1)[1] + ":" + entry["tag"]
-        ), entry["image_ref"]
+            # A surface may add the digest to the short name -- that is exactly
+            # what a pinned Dockerfile base looks like (`python:3.13-slim@sha256:…`),
+            # and refusing it here would push people back to a mutable tag.
+            and entry["image_ref"]
+            == entry["repository"].split("/", 1)[1] + ":" + entry["tag"]
+            + ("@" + entry["digest"] if entry.get("digest") else "")
+        )
+        assert entry["image_ref"].startswith(f"{entry['registry']}/") or short_form, (
+            entry["image_ref"]
+        )
 
 
 def test_derived_sites_read_the_lock_instead_of_copying_it() -> None:

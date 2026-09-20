@@ -4,8 +4,11 @@
 # NO privileged mode. The image carries only the execution shim + httpx; the
 # runtime enforces read-only rootfs + tmpfs + resource limits at run time.
 
-# Pin the base image (reproducible builds; replace with a pinned digest in CI)
-FROM python:3.13.12-slim-bookworm
+# Base image pinned by manifest-list digest (F-20). The coordinate, its platforms and
+# the registry verification that produced the digest live in
+# deployment/third-party-images.json; backend/tests/test_dockerfile_base_images.py
+# fails the build if this line and that record disagree.
+FROM python:3.13.12-slim-bookworm@sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

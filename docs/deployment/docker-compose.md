@@ -42,10 +42,15 @@ bash backend/docker/build_sandbox_images.sh --with-browser
 ```
 
 That script tags `:latest` locally, which is right for a single-node evaluation box
-and wrong for production: publish the two images to your own registry from the same
+and wrong for anything you intend to upgrade later: set `CAP_SANDBOX_IMAGE_TAG` to the
+release version instead, push the images to a registry you control from the same
 Dockerfiles (`backend/docker/sandbox-http/Dockerfile`,
-`backend/docker/sandbox-browser/Dockerfile`), pin them by digest, and pass the
-coordinates in (`SANDBOX_IMAGE`, `SANDBOX_BROWSER_IMAGE`, or the chart's
-`sandbox.image` / `sandbox.browserImage`). Release assets from `release.yml` contain
-the backend and console images only.
+`backend/docker/sandbox-browser/Dockerfile`,
+`backend/docker/egress-proxy/Dockerfile`), pin them by digest, and pass the coordinates in
+(`SANDBOX_IMAGE`, `SANDBOX_BROWSER_IMAGE`, or the chart's `worker.sandbox.image` /
+`worker.sandbox.browserImage` / `egressProxy.image` blocks). The browser image layers on the
+HTTP one and takes it as `--build-arg SANDBOX_HTTP_BASE`, with no default -- build
+`cap-sandbox-http` first and name it, because `:latest` would silently reuse whatever the
+machine already had. `release.yml` publishes all five under the release version, so a
+production install can pull them instead of building them.
 - Prometheus targets and alert rules load when the profile is enabled.

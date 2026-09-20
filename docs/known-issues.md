@@ -50,16 +50,30 @@ The readiness verdict and the exact candidate SHA are recorded in
   certified with invented tests** -- there is no business behaviour to observe. Removing the
   service and the field is a settings/API change and belongs with the event-plane work that
   would justify it.
-- **The release publishes two images; the product runs five.** `release.yml` builds and
-  pushes `cap-backend` and `cap-console` to ghcr.io (with SBOM and provenance attestations);
-  the acquisition worker starts sandboxes from `cap-sandbox-http` and
-  `cap-sandbox-browser`, and the egress proxy is a third image, none of which is published.
-  The chart's defaults are `:latest` tags that no registry serves, so a default install
-  fails at the first acquisition until the operator builds them
-  (`backend/docker/build_sandbox_images.sh`, now named in the compose guide, the production
-  checklist and the README). Follow-up, not fixed here because it changes build tooling:
-  publish all five by digest from `release.yml` and make the chart default to the published
-  coordinates instead of `:latest`.
+- **Closed in this line (F-7): the release publishes all five images the product runs.**
+  `release.yml` used to build and push `cap-backend` and `cap-frontend` while the chart
+  deployed five CAP images and pointed the other three at `:latest` tags no registry served,
+  so a default install died at the first acquisition (K8S-GATE 34 now checks exactly that).
+  It now publishes `cap-sandbox-http`, `cap-sandbox-browser` and `cap-egress-proxy` too, each
+  tagged with the release version, each with SBOM and provenance attestations and a recorded
+  manifest digest, and `release-image-completeness` refuses to let a partial set produce a
+  GitHub Release. The chart defaults to versioned coordinates and accepts a `digest` per
+  image, so the release-recorded digest can be pinned instead of a tag. **What remains**:
+  a compose deployment on a single node can still build the sandbox images locally
+  (`backend/docker/build_sandbox_images.sh`); that path does not need the registry, and the
+  compose guide says which coordinate to set if you would rather pull than build.
+- **Closed in this line (F-20): every Dockerfile base image is pinned by digest.** The
+  five external bases (`python:3.13-slim`, `python:3.13.12-slim-bookworm`,
+  `node:22-alpine`, `nginx:1.30.4-alpine`, `ghcr.io/astral-sh/uv:0.8.3`) are now written
+  as `name:tag@sha256:…`, with the manifest-list digest, the platform set and the
+  linux/amd64 child digest recorded in `deployment/third-party-images.json` together with
+  the registry verification that produced them
+  (`outputs/artifact-closure/registry-base-digests.json`). Before this, a rebuild of a
+  release commit could pull different base bytes than the certified build with nothing in
+  the lock to say so, and the certification artifact's `base_digest` was null for exactly
+  that reason. `backend/tests/test_dockerfile_base_images.py` fails the build if a Dockerfile
+  FROMs an external image that is not locked, or names one by tag alone, and refuses a new
+  base that nobody recorded.
 - Identity is supplied by a trusted reverse proxy; CAP does not provide an OIDC login implementation. Production gateways must overwrite identity headers.
 - **Audit attribution is client-supplied.** Transition/assign/decision endpoints take
   an `actor` (or `approver`) in the request body, and the Web Console submits the
