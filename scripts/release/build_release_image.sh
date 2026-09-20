@@ -24,11 +24,16 @@
 #                 (http | browser | egress-proxy); omit for a plain directory
 #   --context     build context directory, required when --role is absent
 #   --push        push the image and attach SBOM + provenance attestations
-#                 (without it the image is loaded locally, for a dry build)
+#   --local-docker  build with the docker driver instead of buildx, for a dry
+#                 build that may layer on a locally-built CAP base (a buildx
+#                 container builder cannot see the host docker store, so CI uses
+#                 this mode and the release uses --push with a registry digest)
+
 set -euo pipefail
 
 NAME="" ROLE="" DOCKERFILE="" CONTEXT="" REGISTRY="" VERSION="" REVISION="" OUT=""
 PUSH=0
+LOCAL_DOCKER=0
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -43,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     --out) OUT="$2"; shift 2 ;;
     --build-arg) EXTRA_ARGS+=("--build-arg" "$2"); shift 2 ;;
     --push) PUSH=1; shift ;;
+    --local-docker) LOCAL_DOCKER=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -87,26 +93,38 @@ print("\n".join(bases))
 PY
 )"
 
-BUILD_ARGS=(build --file "$DOCKERFILE" --tag "$REF"
-            --build-arg "VERSION=${VERSION}" --build-arg "REVISION=${REVISION}")
-if [[ "$PUSH" == "1" ]]; then
-  # Attestations belong to what the registry serves; a dry build has no
-  # attestation subject, and buildx refuses to load one into the docker store.
-  BUILD_ARGS+=(--provenance=true --sbom=true --push)
-else
-  BUILD_ARGS+=(--provenance=false --sbom=false --load)
-fi
+BUILD_ARGS=(--build-arg "VERSION=${VERSION}" --build-arg "REVISION=${REVISION}")
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
   BUILD_ARGS+=("${EXTRA_ARGS[@]}")
 fi
-BUILD_ARGS+=("$CONTEXT")
 
-META="$(mktemp -d)/metadata.json"
-docker buildx "${BUILD_ARGS[@]}" --metadata-file "$META"
+if [[ "$LOCAL_DOCKER" == "1" ]]; then
+  # The docker driver resolves `FROM <local-image>` from the host store, which is
+  # the only way a browser image can be built here on top of an HTTP sandbox image
+  # that exists nowhere but this runner. No attestation, no push, no index digest:
+  # what this mode proves is buildability, and it says so in its own evidence.
+  docker build --build-arg "VERSION=${VERSION}" --build-arg "REVISION=${REVISION}" \
+    "${BUILD_ARGS[@]}" --tag "$REF" --file "$DOCKERFILE" "$CONTEXT"
+  INDEX_DIGEST=""
+  CONFIG_DIGEST="$(docker image inspect "$REF" --format '{{.Id}}')"
+  PLATFORM_DIGEST="$(docker image inspect "$REF" --format '{{.Os}}/{{.Architecture}}')"
+  echo "built $REF locally with the docker driver ($CONFIG_DIGEST)"
+else
+  if [[ "$PUSH" == "1" ]]; then
+    # Attestations belong to what the registry serves; a dry build has no
+    # attestation subject, and buildx refuses to load one into the docker store.
+    BUILD_ARGS+=(--provenance=true --sbom=true --push)
+  else
+    BUILD_ARGS+=(--provenance=false --sbom=false --load)
+  fi
+  META="$(mktemp -d)/metadata.json"
+  docker buildx build "${BUILD_ARGS[@]}" --tag "$REF" --file "$DOCKERFILE" \
+    --metadata-file "$META" "$CONTEXT"
+  INDEX_DIGEST="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" "$META")"
+  CONFIG_DIGEST="$(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(d.get('containerimage.config.digest',''))" "$META")"
+fi
 
-INDEX_DIGEST="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['containerimage.digest'])" "$META")"
-CONFIG_DIGEST="$(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(d.get('containerimage.config.digest',''))" "$META")"
-
+PLATFORM_DIGEST_VALUE="$PLATFORM_DIGEST"
 PLATFORM_DIGEST=""
 if [[ "$PUSH" == "1" ]]; then
   # The child manifest for the platform this project supports. The index digest
@@ -132,6 +150,8 @@ CAP_EVIDENCE_OUT="$OUT" CAP_EVIDENCE_NAME="$NAME" CAP_EVIDENCE_REF="$REF" \
 CAP_EVIDENCE_REGISTRY="$REGISTRY" CAP_EVIDENCE_TAG="$VERSION" CAP_EVIDENCE_PUSHED="$PUSH" \
 CAP_EVIDENCE_INDEX="$INDEX_DIGEST" CAP_EVIDENCE_CONFIG="$CONFIG_DIGEST" \
 CAP_EVIDENCE_PLATFORM="$PLATFORM_DIGEST" CAP_EVIDENCE_DOCKERFILE="$DOCKERFILE" \
+CAP_EVIDENCE_DRIVER="$([[ "$LOCAL_DOCKER" == "1" ]] && echo docker || echo buildx)" \
+CAP_EVIDENCE_PLATFORM_NAME="$PLATFORM_DIGEST_VALUE" \
 CAP_EVIDENCE_DOCKERFILE_SHA="$DOCKERFILE_SHA" CAP_EVIDENCE_CONTEXT="$CONTEXT" \
 CAP_EVIDENCE_CONTEXT_SHA="$CONTEXT_SHA" CAP_EVIDENCE_BASES="$(printf '%s\n' "$BASES")" \
 CAP_EVIDENCE_REVISION="$REVISION" \
@@ -151,6 +171,8 @@ evidence = {
     "index_digest": env["CAP_EVIDENCE_INDEX"] or None,
     "config_digest": env["CAP_EVIDENCE_CONFIG"] or None,
     "platform_digest_linux_amd64": env["CAP_EVIDENCE_PLATFORM"] or None,
+    "build_driver": env["CAP_EVIDENCE_DRIVER"],
+    "platform": env["CAP_EVIDENCE_PLATFORM_NAME"] or None,
     "dockerfile": env["CAP_EVIDENCE_DOCKERFILE"],
     "dockerfile_sha256": env["CAP_EVIDENCE_DOCKERFILE_SHA"],
     "context_sha256": env["CAP_EVIDENCE_CONTEXT_SHA"],

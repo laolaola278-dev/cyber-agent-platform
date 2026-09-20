@@ -29,6 +29,7 @@ CHART = PROJECT_ROOT / "deployment" / "helm" / "cap"
 VALUES = CHART / "values.yaml"
 TEMPLATES = CHART / "templates"
 RELEASE_YML = PROJECT_ROOT / ".github" / "workflows" / "release.yml"
+CI_YML = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
 
 #: Image names this repository owns, i.e. the ones a release must publish.
 CAP_OWNER_PREFIX = "cap-"
@@ -275,6 +276,36 @@ def test_chart_image_references_are_all_templated() -> None:
     )
 
 
+def ci_job_steps(job_name: str) -> list[dict]:
+    doc = yaml.safe_load(CI_YML.read_text("utf-8"))
+    job = (doc.get("jobs") or {}).get(job_name)
+    assert isinstance(job, dict), f"ci.yml has no {job_name} job"
+    return job.get("steps") or []
+
+
+def ci_job_scripts(job_name: str) -> list[str]:
+    """Every shell a CI job runs, plus the lines that would push an image.
+
+    Scoping the search to a job's own steps matters: ci.yml talks about `--push`
+    in a comment explaining why it does *not* use the flag, and a whole-file
+    substring check would fail on that comment while still passing if a step
+    grew `push: true`.
+    """
+    scripts: list[str] = []
+    for step in ci_job_steps(job_name):
+        run = step.get("run")
+        if isinstance(run, str):
+            scripts.append(run)
+        with_map = step.get("with") or {}
+        if isinstance(with_map, dict) and with_map.get("push"):
+            scripts.append(f"--push {with_map.get('push')}")
+    return scripts
+
+
+def ci_job_uses(job_name: str) -> list[str]:
+    return [str(step.get("uses") or "") for step in ci_job_steps(job_name)]
+
+
 def test_every_release_image_is_built_with_version_revision_and_attestations() -> None:
     """release.yml §12/§14/§15: one contract for every image, however it builds."""
     doc = _release_doc()
@@ -300,6 +331,26 @@ def test_every_release_image_is_built_with_version_revision_and_attestations() -
     )
     assert "--push" in script and "--load" in script, (
         "the script must distinguish the publish build from the dry build"
+    )
+    # CI's dry build cannot use buildx for the browser image: a buildx container
+    # builder does not see the host docker store, so its local base would have to
+    # come from a registry that does not exist yet. That is what --local-docker is
+    # for -- and the evidence must say which driver produced it, or a dry build
+    # could be read as an attested release artifact.
+    assert "--local-docker" in script, "the dry-build driver switch is gone"
+    assert '"attestations": {"sbom": pushed, "provenance": pushed}' in script, (
+        "attestations must be derived from the build actually having pushed"
+    )
+    ci_build_scripts = ci_job_scripts("release-image-builds")
+    assert ci_build_scripts, "ci.yml defines no release-image-builds steps"
+    assert any("--local-docker" in s for s in ci_build_scripts), (
+        "CI's image builds no longer name their driver"
+    )
+    assert not [s for s in ci_build_scripts if "--push" in s], (
+        "CI must not push release images -- --push belongs to release.yml"
+    )
+    assert any("trivy" in s.lower() for s in ci_job_uses("release-image-builds")), (
+        "CI no longer scans the images it builds"
     )
     assert "--build-arg" in script and "VERSION" in script and "REVISION" in script
     assert text.count("--push") >= 2, "every release build must be a push build"

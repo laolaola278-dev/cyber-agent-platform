@@ -337,6 +337,7 @@ jobs:
           fi
           args=(--name "$IMAGE" --dockerfile "$DOCKERFILE"
                 --version "$VERSION" --revision "$GITHUB_SHA"
+                --local-docker
                 --out "outputs/ci-release-images/$IMAGE.json")
           if [[ -n "$ROLE" ]]; then
             args+=(--role "$ROLE")
