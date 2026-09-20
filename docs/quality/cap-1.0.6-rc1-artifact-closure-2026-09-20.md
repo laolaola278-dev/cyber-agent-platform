@@ -41,8 +41,22 @@ pulls refs that do not exist: ['cap-egress-proxy', 'cap-sandbox-browser', 'cap-s
 release publishes: cap-backend, cap-frontend
 ```
 
-Machine-readable form: `outputs/artifact-closure/image-graph.json`, with the failing first run of
-the gate preserved in `outputs/artifact-closure/gate1-image-set-diff-before-fix.txt`.
+Machine-readable form: `docs/quality/artifacts/cap-1.0.6-rc1-artifact-closure/image-graph.json` —
+the derivation snapshot taken at the **start** of this round, so its `chart_references` still show the
+`:latest` values the table above records as "before". Re-deriving it on today's tree is the gate
+itself, and needs no trust in this sentence:
+
+```
+uv run --project backend pytest backend/tests/test_release_image_completeness.py \
+  -k "same_image_set or reference_is_latest or references_are_all_templated" -q
+```
+
+which passes on the current tree -- all eleven chart coordinates resolve to `ghcr.io/…:1.0.6-rc1`,
+including `egress-proxy.yaml:egressProxy`, templated where the snapshot still says `:literal`, and
+five CAP images against a published set of five. The failing first run of the gate is preserved beside
+the snapshot in `gate1-image-set-diff-before-fix.txt`. Both were moved out of `outputs/` into the
+repository because a report that cites a gitignored path proves nothing to anyone without the machine
+that wrote it (§10, F-37).
 
 The chart's own `:latest` offenders were three, and one of them was not even retargetable: the
 egress-proxy deployment spelled its image inside the template, so an operator setting
@@ -94,7 +108,12 @@ Every external `FROM` is now `name:tag@sha256:…`. The digests were read from t
 HTTPS — request the tag with an `Accept` header for the OCI index and Docker manifest-list media
 types, take `Docker-Content-Digest` (or the SHA-256 of the returned manifest bytes, which is what
 ghcr requires because it omits the header), then **re-fetch by digest and require byte-identical
-manifest bytes**. Output: `outputs/artifact-closure/registry-base-digests.json`.
+manifest bytes**. Output:
+`docs/quality/artifacts/cap-1.0.6-rc1-artifact-closure/registry-base-digests.json`, which carries per
+base the registry, the index digest, the media type, the `linux/amd64` child, and the two flags that
+say the re-fetch happened (`byte_identical_by_digest`, `digest_matches_recomputed`). It is tracked for
+the same reason as §1's snapshot: `deployment/third-party-images.json` points at it, and a pointer into
+a gitignored directory resolves only on the machine that ran the measurement (F-37).
 
 | Base | Index digest (manifest list) | Media type | linux/amd64 child | Used by |
 | --- | --- | --- | --- | --- |
@@ -225,7 +244,7 @@ did.
 ## 7. Diff classification and the recertification decision
 
 `python scripts/release/classify_diff.py c52dcb9 b447436` → **RECERTIFICATION_REQUIRED**
-(`outputs/artifact-closure/diff-c52dcb9-to-final-tip.json`): 49 files, of which **16 are
+(`docs/quality/artifacts/cap-1.0.6-rc1-artifact-closure/diff-c52dcb9-to-b447436.json`): 49 files, of which **16 are
 runtime-affecting** —
 
 | Category | Files | Runtime-affecting | What is in it |
@@ -255,10 +274,10 @@ artifact.
 
 | # | Gate | Status | Evidence |
 | --- | --- | --- | --- |
-| 1 | Helm CAP image set == release workflow image set | **PASS** (statically enforced) | `test_chart_and_release_publish_the_same_image_set`; `outputs/artifact-closure/image-graph.json`; the before-fix refusal quoted in §1 |
+| 1 | Helm CAP image set == release workflow image set | **PASS** (statically enforced) | `test_chart_and_release_publish_the_same_image_set`; `docs/quality/artifacts/cap-1.0.6-rc1-artifact-closure/image-graph.json` (start-of-round snapshot, §1); the before-fix refusal quoted in §1 and kept in `gate1-image-set-diff-before-fix.txt` |
 | 2 | No production CAP image uses `:latest` | **PASS** | `test_no_production_chart_reference_is_latest`, `test_no_dockerfile_layers_on_a_cap_image_by_mutable_name`, K8S-GATE 34 at runtime |
 | 3 | All external Dockerfile FROM refs digest-pinned | **PASS** | `test_every_external_dockerfile_base_is_locked_and_digest_pinned` + §3 table |
-| 4 | Third-party lock covers every external base | **PASS** | `test_lock_base_entries_are_actually_used_by_a_dockerfile`, `test_locked_base_digests_carry_their_provenance` |
+| 4 | Third-party lock covers every external base | **PASS** | `test_lock_base_entries_are_actually_used_by_a_dockerfile`, `test_locked_base_digests_carry_their_provenance`; §3's five rows compared field by field against the tracked `registry-base-digests.json` — 5/5 index digests, media types and amd64 children match, with `byte_identical_by_digest` and `digest_matches_recomputed` true for all five |
 | 5 | Clean runner builds all required images | **PASS** | CI run 35502404774 on `a79d29c`: five `release-image-builds` cells green inside a successful run on `ubuntu-latest`, push=false, one evidence artifact per image, and the uploaded records read back in §9. It took two red runs and one aborted-script bug to get here, all recorded in §5 and §10 |
 | 6 | Trivy covers all release images | **PASS** | CI `release-image-builds` scans each matrix cell it builds (derived, cannot drift); `release-image-security` lists its five names by hand, so `test_every_published_image_is_scanned_in_the_release` now requires that list to equal both the published set and the chart-derived set, with a control that dropping a name breaks it. The two workflow scans use one policy (HIGH+CRITICAL, unfixed ignored, `exit-code: 1`); GA-GATE 22's `security_policy.json` blocks only fixable CRITICALs. That difference is deliberate and not a hole: for a release image the stricter workflow policy runs too, and the policy file governs the GA verdict, not publication |
 | 7 | SBOM enabled for all release images | **PASS** | `build_release_image.sh` adds `--sbom=true` only to a push build and records `attestations.sbom` from the flags it actually passed (`test_the_push_build_attests_and_records_the_platform_child`, `test_attestations_are_reported_from_the_build_that_ran`); `release-image-completeness` then refuses a record whose flag is false — executed by `test_completeness_gate_refuses_a_record_without_a_digest_or_attestation`, which sets `sbom: False` and expects the refusal |
@@ -506,6 +525,18 @@ no round in these tables is claimed as green before its run finished.
   remedy rather than folded in silently. What this round does guarantee is the *dispatch*: the
   strict verdict in §11 is quoted from a run of `cap-ga-certification.yml` with
   `ga_strict=true`, whose artifact is the source of the numbers, not from a green tick.
+- **F-37** (new and open) — five `evidence` fields in `deployment/third-party-images.json`, and three
+  citations in this report when §1 was written, point into `outputs/`, which `.gitignore` excludes. A
+  pointer to a gitignored path resolves only inside a working tree where the measurement happened to
+  run, and no test looks, so a fresh clone reports nothing. The captures this report depends on are now
+  tracked under `docs/quality/artifacts/cap-1.0.6-rc1-artifact-closure/` and cited from there — which
+  fixes the report, not the lock. The five pointers under `deployment/` were left alone deliberately:
+  `classify_diff.py` puts every path starting `deployment/` in the runtime-affecting `deployment`
+  category, so rewriting those strings costs a full re-certification of build inputs that did not
+  change, and the way to avoid that cost is a classifier exception for a metadata-only edit — the exact
+  manoeuvre §17–§20 forbids for a digest pin "only to inherit". Closing this for real means either
+  generating the measurement inside the check that consumes it, or deciding explicitly that evidence
+  lives at a path the lock may name; both are governance changes outside F-7/F-20.
 - Still true from the previous round: registry digests, SBOM and provenance **attestations** exist
   only once images are pushed; the rollback exercise cannot exist before 1.0.6 does.
 

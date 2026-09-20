@@ -1,0 +1,111 @@
+FFF.FF.                                                                  [100%]
+================================== FAILURES ===================================
+______________ test_chart_and_release_publish_the_same_image_set ______________
+
+    def test_chart_and_release_publish_the_same_image_set() -> None:
+        """ARTIFACT-GATE 1: set equality between what deploys and what is published."""
+        references = chart_images()
+        deployed = cap_image_names(references)
+        published = set(release_matrix())
+        missing = deployed - published
+        extra = published - deployed
+>       assert not missing, (
+            "the production chart deploys CAP images that no release job publishes, so a "
+            f"fresh install pulls refs that do not exist: {sorted(missing)}\n"
+            "release publishes: " + ", ".join(sorted(published))
+        )
+E       AssertionError: the production chart deploys CAP images that no release job publishes, so a fresh install pulls refs that do not exist: ['cap-egress-proxy', 'cap-sandbox-browser', 'cap-sandbox-http']
+E         release publishes: cap-backend, cap-frontend
+E       assert not {'cap-egress-proxy', 'cap-sandbox-browser', 'cap-sandbox-http'}
+
+tests\test_release_image_completeness.py:167: AssertionError
+________________ test_no_production_chart_reference_is_latest _________________
+
+    def test_no_production_chart_reference_is_latest() -> None:
+        """ARTIFACT-GATE 2: :latest is untraceable, and cannot be a release contract."""
+        offenders = {key: ref for key, ref in chart_images().items() if ref.endswith(":latest")}
+>       assert not offenders, (
+            "these chart references resolve to a tag that no release produces and no "
+            f"digest can pin: {offenders}"
+        )
+E       AssertionError: these chart references resolve to a tag that no release produces and no digest can pin: {'egress-proxy.yaml:literal': 'cap-egress-proxy:latest', 'values.yaml:worker.sandbox.image': 'cap-sandbox-http:latest', 'values.yaml:worker.sandbox.browserImage': 'cap-sandbox-browser:latest'}
+E       assert not {'egress-proxy.yaml:literal': 'cap-egress-proxy:latest', 'values.yaml:worker.sandbox.browserImage': 'cap-sandbox-browser:latest', 'values.yaml:worker.sandbox.image': 'cap-sandbox-http:latest'}
+
+tests\test_release_image_completeness.py:181: AssertionError
+________________ test_chart_image_references_are_all_templated ________________
+
+    def test_chart_image_references_are_all_templated() -> None:
+        """Every CAP image the chart runs must be retargetable through values.
+    
+        A literal `image: cap-egress-proxy:latest` in a template cannot be pinned to
+        a release tag or a digest by the operator, which is how F-7 stayed invisible:
+        the default values were never what the template would have used.
+        """
+        literals = {k: v for k, v in chart_images().items() if k.endswith(":literal")}
+        cap_literals = {
+            k: v for k, v in literals.items() if v.split("/")[-1].startswith(CAP_OWNER_PREFIX)
+        }
+>       assert not cap_literals, (
+            f"hard-coded CAP image references in templates: {cap_literals}"
+        )
+E       AssertionError: hard-coded CAP image references in templates: {'egress-proxy.yaml:literal': 'cap-egress-proxy:latest'}
+E       assert not {'egress-proxy.yaml:literal': 'cap-egress-proxy:latest'}
+
+tests\test_release_image_completeness.py:198: AssertionError
+_________ test_sandbox_browser_does_not_depend_on_a_mutable_local_tag _________
+
+    def test_sandbox_browser_does_not_depend_on_a_mutable_local_tag() -> None:
+        """ARTIFACT-GATE 9: the browser base must be an explicit, versioned reference.
+    
+        `FROM cap-sandbox-http:latest` builds only on a machine that already built
+        that image, and cannot say which bytes the published browser image contains.
+        """
+        dockerfile = (PROJECT_ROOT / "backend" / "docker" / "sandbox-browser" / "Dockerfile").read_text(
+            "utf-8"
+        )
+        froms = re.findall(r"^FROM\s+(\S+)", dockerfile, re.MULTILINE)
+        internal = [f for f in froms if f.startswith(CAP_OWNER_PREFIX)]
+        assert internal, "the browser image no longer builds on a CAP base at all -- update this test"
+        for ref in internal:
+            tag = ref.split(":")[-1]
+>           assert tag != "latest", (
+                f"sandbox-browser builds FROM {ref!r}: an internal base must be pinned "
+                "to the release version (or a digest) and passed in explicitly"
+            )
+E           AssertionError: sandbox-browser builds FROM 'cap-sandbox-http:latest': an internal base must be pinned to the release version (or a digest) and passed in explicitly
+E           assert 'latest' != 'latest'
+
+tests\test_release_image_completeness.py:246: AssertionError
+_________ test_scanner_reports_both_directions_of_the_set_difference __________
+
+    def test_scanner_reports_both_directions_of_the_set_difference() -> None:
+        """The comparison has to notice a change on either side, not just neither."""
+        deployed = cap_image_names(chart_images())
+        published = set(release_matrix())
+        assert deployed and published, "one side parsed empty -- the guard would be vacuous"
+    
+        # Dropping any image release publishes must surface as exactly that image
+        # missing from the release set -- F-7 is this assertion, seen from the other
+        # end, for the three the release never had.
+        for name in sorted(deployed & published):
+            shrunk = {k for k in published if k != name}
+>           assert deployed - shrunk == {name}, (
+                f"dropping {name} from the release matrix was not reported as a gap"
+            )
+E           AssertionError: dropping cap-backend from the release matrix was not reported as a gap
+E           assert {'cap-backend...sandbox-http'} == {'cap-backend'}
+E             
+E             Extra items in the left set:
+E             'cap-sandbox-http'
+E             'cap-egress-proxy'
+E             'cap-sandbox-browser'
+E             Use -v to get more diff
+
+tests\test_release_image_completeness.py:269: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_release_image_completeness.py::test_chart_and_release_publish_the_same_image_set
+FAILED tests/test_release_image_completeness.py::test_no_production_chart_reference_is_latest
+FAILED tests/test_release_image_completeness.py::test_chart_image_references_are_all_templated
+FAILED tests/test_release_image_completeness.py::test_sandbox_browser_does_not_depend_on_a_mutable_local_tag
+FAILED tests/test_release_image_completeness.py::test_scanner_reports_both_directions_of_the_set_difference
+5 failed, 2 passed in 2.48s

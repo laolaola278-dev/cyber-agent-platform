@@ -1,0 +1,60 @@
+{
+  "chart_references": {
+    "backend.yaml:backend": {
+      "reference": "ghcr.io/example/cap-backend:1.0.6-rc1",
+      "name": "cap-backend",
+      "cap_owned": true
+    },
+    "egress-proxy.yaml:literal": {
+      "reference": "cap-egress-proxy:latest",
+      "name": "cap-egress-proxy",
+      "cap_owned": true
+    },
+    "frontend.yaml:frontend": {
+      "reference": "ghcr.io/example/cap-frontend:1.0.6-rc1",
+      "name": "cap-frontend",
+      "cap_owned": true
+    },
+    "migration-job.yaml:backend": {
+      "reference": "ghcr.io/example/cap-backend:1.0.6-rc1",
+      "name": "cap-backend",
+      "cap_owned": true
+    },
+    "values.yaml:worker.sandbox.browserImage": {
+      "reference": "cap-sandbox-browser:latest",
+      "name": "cap-sandbox-browser",
+      "cap_owned": true
+    },
+    "values.yaml:worker.sandbox.image": {
+      "reference": "cap-sandbox-http:latest",
+      "name": "cap-sandbox-http",
+      "cap_owned": true
+    },
+    "worker.yaml:worker": {
+      "reference": "ghcr.io/example/cap-backend:1.0.6-rc1",
+      "name": "cap-backend",
+      "cap_owned": true
+    }
+  },
+  "chart_cap_images": [
+    "cap-backend",
+    "cap-egress-proxy",
+    "cap-frontend",
+    "cap-sandbox-browser",
+    "cap-sandbox-http"
+  ],
+  "release_matrix_images": [
+    "cap-backend",
+    "cap-frontend"
+  ],
+  "missing_from_release": [
+    "cap-egress-proxy",
+    "cap-sandbox-browser",
+    "cap-sandbox-http"
+  ],
+  "latest_references": {
+    "egress-proxy.yaml:literal": "cap-egress-proxy:latest",
+    "values.yaml:worker.sandbox.image": "cap-sandbox-http:latest",
+    "values.yaml:worker.sandbox.browserImage": "cap-sandbox-browser:latest"
+  }
+}

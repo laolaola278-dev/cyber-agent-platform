@@ -1,0 +1,254 @@
+{
+  "certified_sha": "c52dcb9",
+  "candidate_sha": "b447436",
+  "runtime_affecting": true,
+  "release_metadata_only": false,
+  "inheritance": "RECERTIFICATION_REQUIRED",
+  "files": [
+    {
+      "path": ".github/workflows/cap-ga-certification.yml",
+      "category": "ci_workflow",
+      "runtime_affecting": false
+    },
+    {
+      "path": ".github/workflows/cap-ga-reliability.yml",
+      "category": "ci_workflow",
+      "runtime_affecting": false
+    },
+    {
+      "path": ".github/workflows/cap-k8s-certification.yml",
+      "category": "ci_workflow",
+      "runtime_affecting": false
+    },
+    {
+      "path": ".github/workflows/cap-linux-certification.yml",
+      "category": "ci_workflow",
+      "runtime_affecting": false
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "category": "ci_workflow",
+      "runtime_affecting": false
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "category": "ci_workflow",
+      "runtime_affecting": false
+    },
+    {
+      "path": "CHANGELOG.md",
+      "category": "docs",
+      "runtime_affecting": false
+    },
+    {
+      "path": "README.md",
+      "category": "docs",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/Dockerfile",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "backend/docker/build_sandbox_images.sh",
+      "category": "production_runtime",
+      "runtime_affecting": true
+    },
+    {
+      "path": "backend/docker/egress-proxy/Dockerfile",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "backend/docker/prepare_sandbox_context.sh",
+      "category": "production_runtime",
+      "runtime_affecting": true
+    },
+    {
+      "path": "backend/docker/sandbox-browser/Dockerfile",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "backend/docker/sandbox-http/Dockerfile",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "backend/tests/test_deployment_doc_contract.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_dockerfile_base_images.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_ga_report_preview_mode.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_phase_28_6_k8s_certification.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_phase_28_7_ga_certification.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_phase_28_7_ga_tier2_resilience.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_phase_28_7_ga_tier2_supply_chain.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_quality_gate_parity.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_release_audit_tool.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_release_build_script.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_release_image_completeness.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_release_publication_gate.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_release_version_consistency.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "backend/tests/test_third_party_image_lock.py",
+      "category": "test_harness",
+      "runtime_affecting": false
+    },
+    {
+      "path": "deployment/helm/cap/README.md",
+      "category": "docs",
+      "runtime_affecting": false
+    },
+    {
+      "path": "deployment/helm/cap/templates/_helpers.tpl",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "deployment/helm/cap/templates/backend.yaml",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "deployment/helm/cap/templates/egress-proxy.yaml",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "deployment/helm/cap/templates/frontend.yaml",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "deployment/helm/cap/templates/migration-job.yaml",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "deployment/helm/cap/templates/worker.yaml",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "deployment/helm/cap/values.schema.json",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "deployment/helm/cap/values.yaml",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "deployment/third-party-images.json",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "docs/deployment/docker-compose.md",
+      "category": "docs",
+      "runtime_affecting": false
+    },
+    {
+      "path": "docs/deployment/production-checklist.md",
+      "category": "docs",
+      "runtime_affecting": false
+    },
+    {
+      "path": "docs/known-issues.md",
+      "category": "docs",
+      "runtime_affecting": false
+    },
+    {
+      "path": "docs/quality/cap-1.0.6-rc1-artifact-closure-2026-09-20.md",
+      "category": "docs",
+      "runtime_affecting": false
+    },
+    {
+      "path": "docs/quality/cap-1.0.6-rc1-release-certification-2026-09-19.md",
+      "category": "docs",
+      "runtime_affecting": false
+    },
+    {
+      "path": "docs/releases/v1.0.6-rc1.md",
+      "category": "docs",
+      "runtime_affecting": false
+    },
+    {
+      "path": "frontend/Dockerfile",
+      "category": "deployment",
+      "runtime_affecting": true
+    },
+    {
+      "path": "scripts/certification/generate_report_28_6.py",
+      "category": "certification_generator",
+      "runtime_affecting": false
+    },
+    {
+      "path": "scripts/certification/generate_report_28_7.py",
+      "category": "certification_generator",
+      "runtime_affecting": false
+    },
+    {
+      "path": "scripts/quality/audit_junit.py",
+      "category": "repo_tooling",
+      "runtime_affecting": false
+    },
+    {
+      "path": "scripts/release/build_release_image.sh",
+      "category": "certification_generator",
+      "runtime_affecting": false
+    }
+  ]
+}
