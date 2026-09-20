@@ -158,14 +158,29 @@ def _image_set() -> dict:
         return {
             "source": "not_observed",
             "detail": (
-                "K8S-GATE 34 wrote no k8s-image-set.json, so this artifact names no "
-                "image coordinates -- a gate that did not run cannot be reported from "
-                "memory"
+                "K8S-GATE 34 wrote no k8s-image-set.json into this run's CAP_CERT_OUT, "
+                "so this artifact names no image coordinates -- a gate that did not run "
+                "cannot be reported from memory"
             ),
         }
     observed = json.loads(record.read_text(encoding="utf-8"))
+    this_commit = _commit()
+    if observed.get("commit") != this_commit:
+        # A leftover record from an earlier round is exactly as misleading as the
+        # literal table this replaced, and this repository has already been
+        # certified once by a stale junit it found in its own outputs/ directory.
+        return {
+            "source": "commit_mismatch",
+            "recorded_for": observed.get("commit"),
+            "commit": this_commit,
+            "detail": (
+                "k8s-image-set.json in this output directory belongs to another commit; "
+                "refusing to describe this deployment with it"
+            ),
+        }
     return {
         "source": observed.get("observed_by", "K8S-GATE 34"),
+        "record": record.name,
         "tag": observed.get("tag"),
         "images": observed.get("images"),
         "pod_images": observed.get("pod_images"),

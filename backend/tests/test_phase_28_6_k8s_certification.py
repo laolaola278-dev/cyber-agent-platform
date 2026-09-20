@@ -2143,12 +2143,24 @@ def test_gate34_deployed_image_set_is_the_released_set() -> None:
     # coordinates, and it went stale the moment the jobs stopped building
     # `:latest`: an artifact that names images the cluster never ran is evidence
     # for a deployment that did not happen. Record what this gate observed.
-    out = Path(os.environ.get("CAP_CERT_OUT", str(REPO_ROOT / "outputs" / "cap-cert")))
+    #
+    # `CAP_CERT_OUT` is a *relative* path in the workflow and these tests run from
+    # `backend/`, so resolving it against the repository root is what puts the
+    # record where the generator looks. The commit is stamped so a leftover record
+    # from an earlier round describes nothing: this repository has already been
+    # certified once by a stale file it found in its own outputs/ directory.
+    configured = Path(os.environ.get("CAP_CERT_OUT", "outputs/cap-cert"))
+    out = configured if configured.is_absolute() else REPO_ROOT / configured
     out.mkdir(parents=True, exist_ok=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+        cwd=REPO_ROOT, check=False,
+    ).stdout.strip() or "unknown"
     (out / "k8s-image-set.json").write_text(
         json.dumps(
             {
                 "observed_by": "K8S-GATE 34",
+                "commit": head,
                 "tag": tag,
                 "images": sorted(every),
                 "pod_images": sorted(deployed_cap),

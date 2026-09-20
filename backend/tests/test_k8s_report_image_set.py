@@ -27,6 +27,8 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import yaml
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GENERATOR = PROJECT_ROOT / "scripts" / "certification" / "generate_report_28_6.py"
 WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "cap-k8s-certification.yml"
@@ -87,11 +89,18 @@ def _artifact(tmp_path: Path) -> dict:
     )
 
 
+def _record(tmp_path: Path, commit: str | None = None) -> Path:
+    out = tmp_path / "cap-cert"
+    out.mkdir(parents=True, exist_ok=True)
+    payload = dict(OBSERVED)
+    payload["commit"] = report._commit() if commit is None else commit
+    path = out / "k8s-image-set.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
 def test_the_artifact_reports_the_observed_image_set(tmp_path: Path) -> None:
-    (tmp_path / "cap-cert").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "cap-cert" / "k8s-image-set.json").write_text(
-        json.dumps(OBSERVED), encoding="utf-8"
-    )
+    _record(tmp_path)
     proc = _run(tmp_path)
     assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
     images = _artifact(tmp_path)["images"]
@@ -113,6 +122,43 @@ def test_the_artifact_says_when_nothing_observed_the_images(tmp_path: Path) -> N
     text = json.dumps(images)
     assert "cap-sandbox-http:latest" not in text and "cap-backend:ci" not in text, (
         f"the artifact reconstructed coordinates from memory: {text}"
+    )
+
+
+def test_a_record_from_another_commit_describes_nothing_here(tmp_path: Path) -> None:
+    """Stale evidence in the output directory is the bug this whole file exists for."""
+    _record(tmp_path, commit="0" * 40)
+    proc = _run(tmp_path)
+    assert proc.returncode == 0, proc.stdout[-1500:] + proc.stderr[-1500:]
+    images = _artifact(tmp_path)["images"]
+    assert images["source"] == "commit_mismatch", images
+    assert images["recorded_for"] == "0" * 40
+    assert "images" not in images, images
+    assert "not_observed" not in json.dumps(images)
+
+
+def test_the_workflow_runs_the_generator_where_the_gate_writes(tmp_path: Path) -> None:
+    """`CAP_CERT_OUT` is relative, so both sides' working directory matters.
+
+    The first green round after the record existed still said `not_observed`: the
+    certification tests run from `backend/` while the generator runs from the
+    repository root, and the gate wrote where *it* thought the output directory
+    was. The gate now resolves against the repository root, which only lines up if
+    the generator keeps running from there -- so that is asserted, not assumed.
+    """
+    text = WORKFLOW.read_text("utf-8")
+    job = yaml.safe_load(text)["jobs"]["k8s-certification"]
+    step = next(
+        step for step in job["steps"]
+        if "generate_report_28_6.py" in str(step.get("run", ""))
+    )
+    assert not step.get("working-directory"), (
+        "the generator is no longer run from the repository root, so the relative "
+        "CAP_CERT_OUT it reads is a different directory from the one gate 34 writes"
+    )
+    gate = (PROJECT_ROOT / "backend" / "tests" / "test_phase_28_6_k8s_certification.py")
+    assert "configured.is_absolute() else REPO_ROOT / configured" in gate.read_text("utf-8"), (
+        "gate 34 stopped resolving CAP_CERT_OUT against the repository root"
     )
 
 
