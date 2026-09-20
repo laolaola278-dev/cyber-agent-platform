@@ -1,5 +1,11 @@
 # CAP 1.0.6-rc1 — Final Release Certification Report
 
+> **Status of the findings below has moved for two of them.** F-7 (release publishes 2 of the 5
+> images) and F-20 (Dockerfile bases by mutable tag) were closed in the follow-up round; its record is
+> `cap-1.0.6-rc1-artifact-closure-2026-09-20.md` (§1–§5 for what changed, §8 for the gates, §11 for the
+> verdict). Everything else in this document is the round that found them, as it stood, and §23's
+> open-list is annotated where that is no longer the state of the branch.
+
 Certified SHA: `c52dcb9` (branch `release/1.0.6-rc1`) — the commit CI, the Linux release layer and
 PostgreSQL matrix, the K8s certification, the 7200 s reliability soak and the strict FULL GA round
 (40/40, run `35445391334`) all ran green on. Last CI-verified tip: `2e4ecaf` (F-21's publication
@@ -823,6 +829,7 @@ its documentation and a home that collects it.
 - F-6 `SECRET_NOT_FOUND` returns **404** for a missing server-side credential (§8).
 - F-7 Release artifacts cover 2 of the 5 images a deployment needs; the chart defaults the other 3
   to unpublishable `:latest` tags (§11, now documented in README/compose guide/checklist).
+  **Closed in the follow-up round** (artifact closure report §1–§2, §8 GATE 1).
 - F-8 Concurrency cancelled in-flight certification runs on any push to the candidate branch; a
   17-minute release-layer run was destroyed (run `35427694720`). Fixed at `1fc1c98` for all four
   certification workflows; CI keeps cancelling; both halves are asserted.
@@ -849,6 +856,11 @@ its documentation and a home that collects it.
   `test_third_party_image_lock.py` police every `FROM` line the way it polices MinIO; pinning the
   `FROM` lines themselves without being able to build here would trade a documented gap for an
   unverified one.
+  **Closed in the follow-up round, along the lines proposed here**: every external `FROM` is now
+  `name:tag@sha256:…`, the lock carries each base with its manifest-list digest, amd64 child and
+  platforms, and two test modules police every `FROM` line and every lock entry (artifact closure
+  report §3, §8 GATE 3/4). What that reasoning did not reach is the compose stack's mutable service
+  tags, recorded there as F-24.
 
 **LOW**
 - F-16 `scripts/` — the code that *generates* the release certification artifact and the quality
@@ -933,8 +945,9 @@ Evidence assembled on the certified `c52dcb9` (and inheritable deltas to the cur
 publication authorization** (§28). Nothing was tagged, published, pushed to a registry, or
 overwritten by this task, and the certified digests, SBOMs and provenance attestations that
 `release.yml` produces only come into existence when a tag is published (§19, §24). The §23 MEDIUM
-items (F-4…F-9, F-19, F-20) remain open by decision, each with its evidence and the reason it is
-not a late edit to a candidate; §24 lists the three things not produced today that a real
+items (F-4…F-6, F-8, F-9, F-19) remain open by decision, each with its evidence and the reason it is
+not a late edit to a candidate -- F-7 and F-20 no longer are, having been closed by the follow-up round
+named at the top of this file; §24 lists the three things not produced today that a real
 deployment still needs. And the boundary this report has kept all along still holds: the local
 Windows measurements in §3–§6 and §20 are supporting evidence, while every claim about production
 behaviour — Linux runtime, OCI sandbox, PostgreSQL, MinIO, Kubernetes, nginx routing, the soak —
