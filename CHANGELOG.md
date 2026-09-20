@@ -215,7 +215,7 @@ published release contents are immutable.
   in the renderer itself were found and fixed before anyone ran it. F-20: every
   external `FROM` is now `name:tag@sha256:…`, the digests read from the registry
   and re-fetched by digest to prove byte identity
-  (`outputs/artifact-closure/registry-base-digests.json`), and
+  (`docs/quality/artifacts/cap-1.0.6-rc1-artifact-closure/registry-base-digests.json`), and
   `deployment/third-party-images.json` records base, platforms and provenance for
   all five -- with `test_dockerfile_base_images.py` failing on an unpinned or
   unlisted base. The certification installs that relied on the `:latest` defaults
@@ -236,7 +236,7 @@ published release contents are immutable.
   with `test_certification_rounds_name_their_images_with_one_tag` refusing a
   literal that no job builds. Evidence gained `base_refs` resolved from the
   caller's `--build-arg` (a base that resolves to nothing fails the build instead
-  of recording an empty list), and the publication gate requires it. Three more
+  of recording an empty list), and the publication gate requires it. Six more
   came from reading what the green rounds *published* rather than noting that they
   were green: the digest-pinned `values-release-<version>.yaml` was uploaded into
   the release assets and never attached to the GitHub Release (F-30); the observed
@@ -247,7 +247,15 @@ published release contents are immutable.
   six, leaving `worker.image` -- the deployment that runs acquisitions -- on the
   chart's placeholder registry, with a test that listed the same five paths and so
   agreed with the bug (F-32). The check now enumerates the coordinates out of
-  `values.yaml` itself.
+  `values.yaml` itself. `context_sha256`, added so that a staging change would show
+  up, was hashing the absolute path of its own `mktemp -d` directory: one image's
+  records disagreed between matrix cells at the same commit, and identical content
+  could not be told apart from a different temporary directory (F-34). CI's browser
+  cell builds `cap-sandbox-http` a second time as its base and uploaded that record
+  under the released image's own file name, so two different builds of one image
+  arrived indistinguishably (F-35); and `platform` was filled by the docker driver
+  and left null by buildx -- including on the release's own push path -- so the
+  platform a record claims no longer depends on which builder wrote it (F-36).
 
 ### Fixed
 

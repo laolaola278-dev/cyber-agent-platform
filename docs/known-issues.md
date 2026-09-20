@@ -268,6 +268,21 @@ listed so that an import name is not mistaken for a working capability.
    found by that dry build and fixed. What is still verified only by reading:
    `--push`, registry authentication, the stored SBOM/provenance attachments and
    the index-digest hand-off between the two sandbox jobs.
+7. **A tracked file can point its evidence into a gitignored directory (F-37).**
+   `deployment/third-party-images.json` names
+   `outputs/artifact-closure/registry-base-digests.json` as the proof behind five
+   digest pins, and the 1.0.6-rc1 artifact-closure report cited three more paths
+   under that same ignored directory. A fresh clone resolves none of them, and no
+   test looks, which is why CI said nothing about it. The report's own captures
+   are tracked beside it now
+   (`docs/quality/artifacts/cap-1.0.6-rc1-artifact-closure/`); the five pointers
+   in the lock were deliberately not rewritten, because `classify_diff.py` puts
+   every path under `deployment/` in the runtime-affecting `deployment` category,
+   so changing those strings costs a full re-certification of build inputs that did
+   not change -- and the only cheap way round that cost is a metadata-only
+   classifier exception, which is the manoeuvre the release governance refuses.
+   Closing it means either generating the measurement inside the check that consumes
+   it, or deciding that evidence lives at a path the lock may name.
 
 ## Live verification against a real PostgreSQL server
 
