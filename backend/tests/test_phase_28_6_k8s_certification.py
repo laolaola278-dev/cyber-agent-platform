@@ -366,6 +366,34 @@ def _sandbox_image_coordinate() -> str:
     return _deployment_env("cap-cap-worker", "SANDBOX_IMAGE")
 
 
+def test_the_ready_pod_selector_skips_pods_that_cannot_serve() -> None:
+    """The other half of the restart lesson: choosing *which* pod to read.
+
+    Gate 26 failed with `backend logs are not structured` while the evidence it
+    quoted was `Error from server (BadRequest): container "backend" in pod
+    "cap-cap-backend-…" is waiting to start: ContainerCreating` -- kubectl's own
+    complaint, passed through because the helper read `pods[0]`. A restarting
+    cluster is full of those pods, so the selector has to see the difference.
+    """
+    creating = {
+        "metadata": {"name": "backend-creating"},
+        "status": {"phase": "Pending", "containerStatuses": [{"ready": False}]},
+    }
+    not_ready = {
+        "metadata": {"name": "backend-starting"},
+        "status": {"phase": "Running", "containerStatuses": [{"ready": False}]},
+    }
+    ready = {
+        "metadata": {"name": "backend-serving"},
+        "status": {"phase": "Running", "containerStatuses": [{"ready": True}]},
+    }
+    assert _ready_pod_name([creating, not_ready]) is None, (
+        "a pod that cannot serve was selected"
+    )
+    assert _ready_pod_name([creating, not_ready, ready]) == "backend-serving"
+    assert _ready_pod_name([]) is None
+
+
 def test_the_deployment_env_reader_parses_what_kubectl_returns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -513,38 +541,60 @@ def test_gate7_sandbox_networkpolicy_enforced(probe_pod: str) -> None:
 
 def _proxy_logs(tail: int = 25) -> str:
     """Latest egress-proxy pod logs (diagnostics for GATE 10)."""
-    pods = _json(["get", "pods", "-n", NAMESPACE, "-l", "app.kubernetes.io/component=egress-proxy"])
+    return _pod_logs("egress-proxy", tail)
+
+
+def _component_pods(component: str) -> list[dict]:
+    pods = _json(["get", "pods", "-n", NAMESPACE, "-l", f"app.kubernetes.io/component={component}"])
     if isinstance(pods, dict):
         pods = pods.get("items", [])
-    if not pods:
-        return "(no egress-proxy pod)"
-    pod = pods[0]["metadata"]["name"]
+    return list(pods)
+
+
+def _ready_pod_name(pods: list[dict]) -> str | None:
+    """The first pod whose containers are all Running *and ready*.
+
+    `pods[0]` is not that: during a restart the list is full of Pending and
+    ContainerCreating entries, and `kubectl logs` on one of them answers with an
+    error string that a caller looking for log content cannot tell apart from
+    logs that simply do not match.
+    """
+    for pod in pods:
+        status = pod.get("status") or {}
+        if status.get("phase") != "Running":
+            continue
+        containers = status.get("containerStatuses") or []
+        if containers and all(c.get("ready") for c in containers):
+            return pod["metadata"]["name"]
+    return None
+
+
+def _wait_ready_pod_name(component: str, timeout: float = 60.0) -> str | None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        name = _ready_pod_name(_component_pods(component))
+        if name:
+            return name
+        time.sleep(3)
+    return None
+
+
+def _pod_logs(component: str, tail: int) -> str:
+    pod = _wait_ready_pod_name(component)
+    if pod is None:
+        return f"(no ready {component} pod)"
     proc = _kubectl(["logs", "-n", NAMESPACE, pod, "--tail", str(tail)], check=False)
-    return (proc.stdout or proc.stderr)[-800:]
+    return (proc.stdout or proc.stderr)[-1500:]
 
 
 def _backend_logs(tail: int = 40) -> str:
     """Latest API pod logs (diagnostics for GATE 11/12)."""
-    pods = _json(["get", "pods", "-n", NAMESPACE, "-l", "app.kubernetes.io/component=backend"])
-    if isinstance(pods, dict):
-        pods = pods.get("items", [])
-    if not pods:
-        return "(no backend pod)"
-    pod = pods[0]["metadata"]["name"]
-    proc = _kubectl(["logs", "-n", NAMESPACE, pod, "--tail", str(tail)], check=False)
-    return (proc.stdout or proc.stderr)[-1500:]
+    return _pod_logs("backend", tail)
 
 
 def _worker_logs(tail: int = 40) -> str:
     """Latest worker pod logs (diagnostics for GATE 12 claim behavior)."""
-    pods = _json(["get", "pods", "-n", NAMESPACE, "-l", "app.kubernetes.io/component=worker"])
-    if isinstance(pods, dict):
-        pods = pods.get("items", [])
-    if not pods:
-        return "(no worker pod)"
-    pod = pods[0]["metadata"]["name"]
-    proc = _kubectl(["logs", "-n", NAMESPACE, pod, "--tail", str(tail)], check=False)
-    return (proc.stdout or proc.stderr)[-1500:]
+    return _pod_logs("worker", tail)
 
 
 def test_gate10_controlled_egress_via_proxy_works(probe_pod: str) -> None:
@@ -1534,6 +1584,8 @@ def test_gate25_dr_data_survives_restart(api_port: int) -> None:
     key = f"k8s-dr-{uuid4().hex[:8]}"
     rid = _asyncio_run_create(api_port, key)
     # nuke every backend pod
+    before = {pod["metadata"]["name"] for pod in _component_pods("backend")}
+    assert before, "gate 25 has no backend pods to delete -- nothing is being survived"
     _kubectl(
         [
             "delete",
@@ -1547,12 +1599,21 @@ def test_gate25_dr_data_survives_restart(api_port: int) -> None:
         ],
         check=False,
     )
+    # `_ensure_api` returns the moment /health answers, and a pod that is already
+    # terminating answers happily for a second. Waiting for the *replacement*
+    # pod set is what makes this the recovery test it claims to be.
     deadline = time.monotonic() + 240
+    recovered = False
     while time.monotonic() < deadline:
-        if _ensure_api(api_port, timeout=30):
+        now = {pod["metadata"]["name"] for pod in _component_pods("backend")}
+        if now and not (now & before) and _ensure_api(api_port, timeout=15):
+            recovered = True
             break
         time.sleep(5)
-    assert _api_health(api_port), "API did not come back after full restart"
+    assert recovered and _api_health(api_port), (
+        "API did not come back after full restart: no replacement backend pod "
+        f"served /health within 240s (deleted {len(before)}, now {sorted(now)})"
+    )
     status = _run_status(api_port, rid)
     assert status in (
         "COMPLETE", "PARTIAL", "BLOCKED", "FAILED", "CANCELLED", "QUEUED", "RUNNING",
