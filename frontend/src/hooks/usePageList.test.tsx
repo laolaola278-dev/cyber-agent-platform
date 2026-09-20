@@ -59,7 +59,13 @@ describe("usePageList", () => {
     expect(within(alert).getByText("数据加载失败")).toBeInTheDocument();
     // The backend `detail` must reach the operator, not just the HTTP status.
     expect(within(alert).getByText(/maintenance/)).toBeInTheDocument();
-    expect(screen.getByText(/加载 \/incidents 失败：maintenance/)).toBeInTheDocument();
+    // Awaited, not read synchronously: the inline alert arrives with the same
+    // state update as `error`, while antd's App message API mounts the toast's
+    // DOM on a later tick. Asserting it here without waiting passed only when
+    // the awaits above happened to leave enough time -- which made CI red on a
+    // commit that touched no frontend file. A toast that never renders still
+    // fails this test; it just fails after findByText gives up.
+    expect(await screen.findByText(/加载 \/incidents 失败：maintenance/)).toBeInTheDocument();
     expect(screen.getByTestId("loading")).toHaveTextContent("false");
   });
 
