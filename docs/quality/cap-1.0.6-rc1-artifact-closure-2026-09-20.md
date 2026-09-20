@@ -229,8 +229,13 @@ the exact spot where F-26 aborted. What says it is safe is not the reading of th
   prefers the digest; an empty tag falls back to `Chart.AppVersion`, so the chart carries one
   version literal (already a version carrier) instead of six that can disagree.
 - `values.yaml` declares six image coordinates for the five CAP images (`backend.image` and
-  `worker.image` name the same artifact); `values.schema.json` requires a repository
-  everywhere and, through `anyOf`, one of tag or digest.
+  `worker.image` name the same artifact); `values.schema.json` requires a non-empty `repository` on
+  all six, and on four of them an `anyOf` accepting a tag **or** a digest — while `backend.image` and
+  `worker.image` additionally require `tag` outright, so a digest-only pin is legal for a sandbox and
+  refused for the API and the worker (F-41). `test_the_released_values_satisfy_the_chart_schema`
+  evaluates every coordinate the renderer writes against the node the schema declares for it, and
+  declares which keywords it understands so a new construct fails the test rather than going
+  unevaluated.
 - `release-image-completeness` renders `values-release-<version>.yaml` from the **published
   digests** for every image coordinate the chart declares — six of them, because `worker.image` is a
   second deployment of the backend artifact — and `publish-release` attaches it to the GitHub Release
@@ -614,22 +619,29 @@ this purpose, and no round in these tables is claimed green before its run finis
   manoeuvre §17–§20 forbids for a digest pin "only to inherit". Closing this for real means either
   generating the measurement inside the check that consumes it, or deciding explicitly that evidence
   lives at a path the lock may name; both are governance changes outside F-7/F-20.
-- **F-41** (new and open) — **nothing in this repository runs the chart's `values.schema.json`.** No test
-  imports it, no workflow lints against it; `grep` for the file across `backend/tests`,
-  `.github/workflows` and `deployment/` returns nothing. Helm applies it on the operator's
-  `helm install`, which means the contract that the released `values-release-<version>.yaml` must
-  satisfy is enforced by a program this round never runs. What was checked by inspection instead, and
-  is not therefore proven: the schema declares image blocks as `{repository, tag, digest}` with an
-  `anyOf` demanding tag or digest, it sets no `additionalProperties: false` anywhere (so the keys the
-  renderer emits cannot be rejected as extras), and the rendered coordinates satisfy both branches —
-  which is also what `test_values_renderer_pins_every_image_the_chart_reads` asserts about their
-  *content*. Two remedies exist and neither is free: a `helm lint -f values-release-<v>.yaml` step in
-  the workflow that already installs with helm (`ci_workflow`, so it costs a re-run of that round), or
-  `jsonschema` in the dev extras so the release test validates the rendered file against the actual
-  schema (`pyproject.toml`/`uv.lock`, which the classifier charges as `dependency` — a full
-  re-certification, the same toll F-38 paid for less). The second is the better gate; it is recorded
-  rather than built here because this line is mid-re-certification and the round should not start a
-  third.
+- **F-41** (found, half closed, half open) — the sentence this entry first carried was **that nothing in
+  this repository runs the chart's `values.schema.json`.** It was wrong, and wrong in the direction that
+  makes a gap look bigger than it is: `ci.yml`'s "Validate Helm chart" step runs `helm lint
+  deployment/helm/cap`, and `helm lint`/`helm install` apply the schema to the values they are given —
+  which is what the three certification rounds do with their `--set` coordinates. The grep I should have
+  done first took one command and contradicted the paragraph. What *was* uncovered, and is now closed:
+  the file an operator is told to install with — `values-release-<version>.yaml` — reaches no helm at
+  all. `release-chart` runs `helm lint` on the chart with its defaults and then `cp`s the rendered file
+  into `dist/`, so the released values were validated by nothing but the test that checks their content.
+  `test_the_released_values_satisfy_the_chart_schema` now evaluates every coordinate the renderer writes
+  against the node the schema declares for it, reads the constraints out of the schema rather than
+  restating them, and fails loudly if the schema grows a keyword the checker does not evaluate — the
+  alternative was adding `jsonschema` to the dev extras, which `pyproject.toml`/`uv.lock` makes a
+  `dependency` change and therefore a third re-certification, in the middle of the second.
+  What remains open is the asymmetry that checker exposes: `backend.image` and `worker.image` require a
+  non-empty `tag` with a pattern that rejects the empty string, while `worker.sandbox.image`,
+  `worker.sandbox.browserImage`, `egressProxy.image` and `frontend.image` accept tag **or** digest
+  through `anyOf`. So `cap.imageRef`, which prefers the digest, cannot be driven to a digest-only pin
+  for the two workloads that matter most — the API and the acquisition worker — even though the chart
+  advertises that mode for the other four. Fixing it is a `deployment/` edit, which the classifier
+  charges as runtime-affecting, so it belongs at the head of the next round rather than in the middle
+  of this one's re-certification; the test asserts the difference today so the day it is unified, the
+  suite says so.
 - **F-39** (new and open) — **CAP images are not reproducible by digest.** The round's own clean-runner
   builds measure it: `cap-sandbox-http` and `cap-egress-proxy`, built at `a79d29c` and again at
   `b671f53` with identical `dockerfile_sha256`, identical `context_sha256` and identical pinned bases,

@@ -296,18 +296,21 @@ listed so that an import name is not mistaken for a working capability.
    Dockerfiles plus layer metadata and copied-in file times, which changes what every
    image is and so costs a full re-certification. See the 1.0.6-rc1 artifact closure
    report, §10.
-9. **Nothing runs the chart's `values.schema.json` (F-41).** No test imports it and
-   no workflow lints against it -- `helm` applies it on the operator's `helm
-   install`, so the contract the released `values-release-<version>.yaml` must
-   satisfy is enforced by a program this repository never runs. Checked by
-   inspection, not proven: image blocks are declared as `{repository, tag, digest}`
-   with an `anyOf` of tag-or-digest, the schema sets no `additionalProperties:
-   false`, and the rendered coordinates satisfy both branches. Two remedies, both
-   with a price: a `helm lint -f values-release-<v>.yaml` step in the workflow that
-   already installs with helm (a workflow change, so that round re-runs), or
-   `jsonschema` in the dev extras so the release test validates the rendered file
-   against the real schema (`pyproject.toml`/`uv.lock` is `dependency`, so it costs
-   a full re-certification). The second is the better gate.
+9. **The chart schema forbids a digest-only pin for two of six coordinates
+   (F-41, half closed).** `helm lint` in CI and the `helm install`s in the
+   certification rounds do apply `values.schema.json`, and the released
+   `values-release-<version>.yaml` is now evaluated against it coordinate by
+   coordinate in `test_the_released_values_satisfy_the_chart_schema`. What is left
+   is the schema's own asymmetry: `worker.sandbox.image`,
+   `worker.sandbox.browserImage`, `egressProxy.image` and `frontend.image` accept
+   tag **or** digest through `anyOf`, while `backend.image` and `worker.image`
+   require a non-empty `tag` whose pattern rejects the empty string. `cap.imageRef`
+   prefers a digest, so the digest-only form an operator would use to pin exact
+   bytes is unavailable for precisely the API and the acquisition worker. Unifying
+   it means editing `deployment/helm/cap/values.schema.json`, which
+   `classify_diff.py` charges as runtime-affecting, so the change is scheduled in
+   front of its own re-certification rather than slipped into a docs-only round;
+   the test above asserts the difference, and will fail when it is removed.
 
 ## Live verification against a real PostgreSQL server
 

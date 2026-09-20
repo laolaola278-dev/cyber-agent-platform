@@ -247,7 +247,11 @@ published release contents are immutable.
   six, leaving `worker.image` -- the deployment that runs acquisitions -- on the
   chart's placeholder registry, with a test that listed the same five paths and so
   agreed with the bug (F-32). The check now enumerates the coordinates out of
-  `values.yaml` itself. `context_sha256`, added so that a staging change would show
+  `values.yaml` itself, and a second one evaluates the released file against
+  `values.schema.json` itself rather than against a list written beside the test --
+  which is also how the schema's own asymmetry got recorded: four coordinates accept
+  a tag or a digest, `backend.image` and `worker.image` demand a tag, so a digest-only
+  pin is unavailable for the API and the worker (F-41). `context_sha256`, added so that a staging change would show
   up, was hashing the absolute path of its own `mktemp -d` directory: one image's
   records disagreed between matrix cells at the same commit, and identical content
   could not be told apart from a different temporary directory (F-34). CI's browser

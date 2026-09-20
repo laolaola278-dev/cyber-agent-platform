@@ -26,6 +26,7 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHART = PROJECT_ROOT / "deployment" / "helm" / "cap"
+SCHEMA = CHART / "values.schema.json"
 VALUES = CHART / "values.yaml"
 TEMPLATES = CHART / "templates"
 RELEASE_YML = PROJECT_ROOT / ".github" / "workflows" / "release.yml"
@@ -1059,3 +1060,120 @@ def test_the_gate_graph_check_is_sensitive() -> None:
     assert not reaches(severed, "release-chart", GATE_JOB), (
         "removing the gate's edge did not disconnect the chart job"
     )
+
+
+#: The subset of JSON Schema `values.schema.json` uses, and the only subset this
+#: module's checker evaluates. A keyword outside the list fails the test instead
+#: of being skipped: a checker that quietly stops covering the schema is how a
+#: contract keeps looking enforced after it stopped being one.
+SCHEMA_KEYWORDS = {"type", "required", "properties", "anyOf", "minLength", "pattern"}
+_JSON_TYPES = {"object": dict, "string": str, "integer": int, "number": float,
+               "boolean": bool, "array": list}
+
+
+def _schema_at(root: dict, dotted: str) -> dict:
+    """The schema node governing a chart value path like `worker.sandbox.image`."""
+    node: dict = root
+    for part in dotted.split("."):
+        node = (node.get("properties") or {}).get(part) or {}
+    return node
+
+
+def _assert_matches_schema(node: dict, value: object, where: str) -> None:
+    """Evaluate one schema node against one value, loudly and narrowly."""
+    unsupported = set(node) - SCHEMA_KEYWORDS
+    assert not unsupported, (
+        f"{where}: values.schema.json declares {sorted(unsupported)}, which this "
+        "check does not evaluate -- extend it rather than pass quietly"
+    )
+    declared = node.get("type")
+    if declared is not None:
+        python_type = _JSON_TYPES.get(declared)
+        assert python_type is not None, f"{where}: unhandled schema type {declared!r}"
+        assert isinstance(value, python_type), (
+            f"{where}: the chart schema says {declared}, the release wrote {value!r}"
+        )
+    if isinstance(value, dict):
+        for key in node.get("required") or []:
+            assert key in value and value[key] not in (None, ""), (
+                f"{where}: {key!r} is required by the chart schema"
+            )
+        for key, spec in (node.get("properties") or {}).items():
+            if key in value:
+                _assert_matches_schema(spec, value[key], f"{where}.{key}")
+    if isinstance(value, str):
+        if "minLength" in node:
+            assert len(value) >= int(node["minLength"]), (
+                f"{where}: {value!r} is shorter than minLength {node['minLength']}"
+            )
+        if "pattern" in node:
+            assert re.search(str(node["pattern"]), value), (
+                f"{where}: {value!r} does not match {node['pattern']!r}"
+            )
+    if "anyOf" not in node:
+        return
+    branches = node["anyOf"]
+    assert isinstance(branches, list) and branches, f"{where}: anyOf with no branches"
+    first_error: AssertionError | None = None
+    for branch in branches:
+        try:
+            _assert_matches_schema(branch, value, where)
+            return
+        except AssertionError as exc:
+            first_error = first_error or exc
+    raise AssertionError(
+        f"{where}: satisfies none of the chart schema's anyOf branches "
+        f"{json.dumps(branches)} ({first_error})"
+    )
+
+
+def test_the_released_values_satisfy_the_chart_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-41: the file an operator installs with has never been through helm.
+
+    CI's `helm lint` validates the chart's *default* values against
+    `values.schema.json`, and the certification rounds validate whatever they
+    `--set`; the rendered `values-release-<version>.yaml` -- the artifact the
+    production checklist tells an operator to use -- is checked by no one. The
+    renderer's own test asserts content (registry, tag, digest); this asserts the
+    contract, read out of the schema rather than restated beside it.
+    """
+    code, _merged = _exec_release_gate(tmp_path, monkeypatch, _all_five())
+    assert code == 0
+    monkeypatch.setenv("VERSION", "9.9.9-rc1")
+    exec(  # noqa: S102 -- executing the renderer the release ships
+        compile(_release_gate_body(RENDER_STEP, "VALUES_PY"), "<values renderer>", "exec"),
+        {"__name__": "cap_values_renderer"},
+    )
+    rendered = yaml.safe_load(
+        (tmp_path / "values-release-9.9.9-rc1.yaml").read_text("utf-8")
+    )
+    schema = json.loads(SCHEMA.read_text("utf-8"))
+    declared = sorted(
+        key.split(":", 1)[1] for key in chart_images() if key.startswith("values.yaml:")
+    )
+    assert declared, "the chart declares no image coordinates"
+    for dotted in declared:
+        node = _schema_at(schema, dotted)
+        assert node, (
+            f"{dotted} is written by the release and declared nowhere in "
+            "values.schema.json"
+        )
+        _assert_matches_schema(node, _lookup(rendered, dotted), dotted)
+
+    # The asymmetry the checker also makes visible: four of the six coordinates
+    # accept a digest-only pin through `anyOf`; `backend.image` and `worker.image`
+    # require `tag`, so an operator pinning the API or the acquisition worker by
+    # digest alone is refused by the contract the sandboxes satisfy. Recorded as
+    # F-41 rather than fixed, because fixing it edits a file under deployment/,
+    # which the classifier charges as runtime-affecting.
+    digest_only = {
+        "repository": "ghcr.io/cap-owner/cap-backend",
+        "digest": "sha256:" + "ab" * 32,
+    }
+    _assert_matches_schema(_schema_at(schema, "worker.sandbox.image"), digest_only,
+                           "worker.sandbox.image")
+    with pytest.raises(AssertionError, match="required"):
+        _assert_matches_schema(_schema_at(schema, "backend.image"), digest_only,
+                               "backend.image")
