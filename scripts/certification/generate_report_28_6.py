@@ -79,18 +79,41 @@ def _commit() -> str:
 
 
 def _cluster_info() -> dict[str, str]:
+    """Provenance for the run. Absence is recorded, never inferred.
+
+    A generator that dies because `kind` is not on PATH produces no artifact at
+    all, which is worse than one that says `unavailable`: the certification job
+    then has nothing to publish and a reader cannot tell "this round ran without
+    kind" from "the report was never written". Empty strings are what hid F-20's
+    `base_digest` for a whole release line, so the reason goes into the field.
+    """
     def run(args: list[str]) -> str:
-        proc = subprocess.run(
-            args, capture_output=True, text=True, timeout=30, check=False
-        )
-        return proc.stdout.strip()
+        try:
+            proc = subprocess.run(
+                args, capture_output=True, text=True, timeout=30, check=False
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"unavailable: {type(exc).__name__}"
+        text = proc.stdout.strip()
+        if proc.returncode != 0:
+            return f"unavailable: rc={proc.returncode} {(proc.stderr or text).strip()[:120]}"
+        return text or "unavailable: empty output"
 
     kind = run(["kind", "version"])
-    k8s = run(["kubectl", "version", "-o", "json"]).split("gitVersion")[1][:12] if "gitVersion" in run(["kubectl", "version", "-o", "json"]) else ""
+    version_json = run(["kubectl", "version", "-o", "json"])
+    k8s = ""
+    if "gitVersion" in version_json:
+        k8s = version_json.split("gitVersion")[1][:12]
+    else:
+        k8s = version_json
+    nodes = run(
+        ["kubectl", "get", "nodes", "--no-headers",
+         "-o", "custom-columns=:.metadata.name"]
+    )
     return {
         "kind": kind,
         "kubernetes": k8s,
-        "nodes": run(["kubectl", "get", "nodes", "--no-headers", "-o", "custom-columns=:.metadata.name"]).replace("\n", ","),
+        "nodes": nodes.replace("\n", ",") if "unavailable:" not in nodes else nodes,
     }
 
 
@@ -118,6 +141,36 @@ def _parse_junit() -> dict[str, str]:
         else:
             results[name] = "passed"
     return results
+
+
+def _image_set() -> dict:
+    """What the cluster actually ran, as K8S-GATE 34 recorded it.
+
+    This used to be a literal table in the generator. The jobs moved off
+    `:latest` for F-7 and the table kept naming `cap-sandbox-http:latest`, so the
+    certification artifact described a deployment that had not happened -- and it
+    kept passing, because nothing compared it with the cluster. Reading the gate's
+    own record makes that impossible to write by accident again; when the record
+    is missing the artifact says `not_observed` rather than asserting a set.
+    """
+    record = OUT_DIR / "k8s-image-set.json"
+    if not record.is_file():
+        return {
+            "source": "not_observed",
+            "detail": (
+                "K8S-GATE 34 wrote no k8s-image-set.json, so this artifact names no "
+                "image coordinates -- a gate that did not run cannot be reported from "
+                "memory"
+            ),
+        }
+    observed = json.loads(record.read_text(encoding="utf-8"))
+    return {
+        "source": observed.get("observed_by", "K8S-GATE 34"),
+        "tag": observed.get("tag"),
+        "images": observed.get("images"),
+        "pod_images": observed.get("pod_images"),
+        "worker_sandbox_coordinates": observed.get("worker_sandbox_coordinates"),
+    }
 
 
 def main() -> int:
@@ -150,13 +203,7 @@ def main() -> int:
         "commit": _commit(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "kubernetes": _cluster_info(),
-        "images": {
-            "backend": "cap-backend:ci",
-            "frontend": "cap-frontend:ci",
-            "sandbox_http": "cap-sandbox-http:latest",
-            "sandbox_browser": "cap-sandbox-browser:latest",
-            "egress_proxy": "cap-egress-proxy:latest",
-        },
+        "images": _image_set(),
         "gates": gates,
         "gate_summary": {
             "total": len(ALL_GATES),

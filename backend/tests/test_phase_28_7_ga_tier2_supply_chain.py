@@ -182,7 +182,12 @@ def test_ga_gate22_trivy_blocking_policy() -> None:
     )
 
     summaries = []
-    for image in policy["scan_targets"]:
+    for target in policy["scan_targets"]:
+        assert ":" not in target, (
+            f"security policy scan target {target!r} carries a tag -- the policy names "
+            "images and this round composes the tag it built and loaded"
+        )
+        image = f"{target}:{IMAGE_TAG}"
         report = OUT_DIR / f"trivy-{image.replace(':', '-').replace('/', '_')}.json"
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         _run(

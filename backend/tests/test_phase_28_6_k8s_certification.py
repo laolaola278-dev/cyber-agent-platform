@@ -2139,3 +2139,23 @@ def test_gate34_deployed_image_set_is_the_released_set() -> None:
         assert all(ref.endswith(f":{tag}") for ref in refs), (
             f"{name} runs as {sorted(refs)}, not the {tag} this job built and loaded"
         )
+    # The certification artifact used to carry a hand-written table of these five
+    # coordinates, and it went stale the moment the jobs stopped building
+    # `:latest`: an artifact that names images the cluster never ran is evidence
+    # for a deployment that did not happen. Record what this gate observed.
+    out = Path(os.environ.get("CAP_CERT_OUT", str(REPO_ROOT / "outputs" / "cap-cert")))
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "k8s-image-set.json").write_text(
+        json.dumps(
+            {
+                "observed_by": "K8S-GATE 34",
+                "tag": tag,
+                "images": sorted(every),
+                "pod_images": sorted(deployed_cap),
+                "worker_sandbox_coordinates": sorted(coordinates),
+                "pull_errors": [],
+            },
+            indent=2,
+        ) + "\n",
+        encoding="utf-8",
+    )

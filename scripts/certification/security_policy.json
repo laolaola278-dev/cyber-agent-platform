@@ -3,12 +3,13 @@
   "scanner": "trivy",
   "rationale": "Blocking is limited to fixable CRITICAL findings: un-fixable base-image noise would permanently red GA without adding security, while a fixable CRITICAL in a shipped image is a genuine release blocker.",
   "scan_targets": [
-    "cap-backend:ci",
-    "cap-frontend:ci",
-    "cap-sandbox-http:latest",
-    "cap-sandbox-browser:latest",
-    "cap-egress-proxy:latest"
+    "cap-backend",
+    "cap-frontend",
+    "cap-sandbox-http",
+    "cap-sandbox-browser",
+    "cap-egress-proxy"
   ],
+  "scan_targets_rules": "Image names only, never a tag: the certification round composes each one with the tag it built and loaded (CAP_CERT_IMAGE_TAG). A policy file that carries a tag is a second source of truth, and it went stale here once -- three targets named `:latest`, which no job builds, and GA-GATE 22 failed on the policy rather than on a finding.",
   "blocking": {
     "severities": ["CRITICAL"],
     "only_with_fix": true

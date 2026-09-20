@@ -439,6 +439,34 @@ def test_certification_rounds_name_their_images_with_one_tag() -> None:
         f"{sorted(defaults)}"
     )
 
+    #: The Trivy policy names images, never coordinates: GA-GATE 22 iterates it,
+    #: and three `:latest` entries in this one file failed a strict GA round that
+    #: had nothing wrong with the images themselves.
+    policy = json.loads(
+        (PROJECT_ROOT / "scripts" / "certification" / "security_policy.json").read_text("utf-8")
+    )
+    targets = policy["scan_targets"]
+    assert all(":" not in target for target in targets), (
+        f"security policy scan targets carry tags: {targets}"
+    )
+    assert set(targets) == cap_image_names(chart_images()), (
+        f"the Trivy policy scans {sorted(targets)} but the chart deploys "
+        f"{sorted(cap_image_names(chart_images()))}"
+    )
+
+
+def test_the_policy_scan_target_check_is_sensitive() -> None:
+    """Dropping a target has to break the equality with the chart's set."""
+    targets = json.loads(
+        (PROJECT_ROOT / "scripts" / "certification" / "security_policy.json").read_text("utf-8")
+    )["scan_targets"]
+    deployed = cap_image_names(chart_images())
+    assert set(targets) == deployed
+    assert len(targets) == len(deployed), "the policy lists a name twice"
+    for index in range(len(targets)):
+        without = [target for position, target in enumerate(targets) if position != index]
+        assert set(without) != deployed, f"removing {targets[index]!r} changed nothing"
+
 
 def test_the_drift_guard_notices_a_stale_tag() -> None:
     """The control: this is the exact text that broke the Kubernetes round."""
