@@ -329,11 +329,18 @@ jobs:
             # runner that base does not exist, which is the point: build it
             # here from this same workflow and name it, instead of inheriting
             # whatever `:latest` a developer machine happened to keep.
+            #
+            # The record goes under `$BASE_IMAGE.prerequisite.json`, not
+            # `$BASE_IMAGE.json`: this build and the cap-sandbox-http cell's own
+            # build are different builds of one image (this one uses buildx
+            # because nothing here needs the local store), and both cells upload
+            # the whole directory. One file name for two records is how F-34
+            # looked like a content bug before it was a naming one.
             bash scripts/release/build_release_image.sh \
               --name "$BASE_IMAGE" --role http \
               --dockerfile backend/docker/sandbox-http/Dockerfile \
               --version "$VERSION" --revision "$GITHUB_SHA" \
-              --out "outputs/ci-release-images/$BASE_IMAGE.json"
+              --out "outputs/ci-release-images/$BASE_IMAGE.prerequisite.json"
           fi
           args=(--name "$IMAGE" --dockerfile "$DOCKERFILE"
                 --version "$VERSION" --revision "$GITHUB_SHA"

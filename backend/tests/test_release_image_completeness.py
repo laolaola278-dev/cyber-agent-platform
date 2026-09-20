@@ -364,6 +364,43 @@ def test_every_release_image_is_built_with_version_revision_and_attestations() -
     )
 
 
+def test_ci_s_prerequisite_build_does_not_sign_its_record_as_the_released_one() -> None:
+    """F-35: one image, two builds, one file name -- evidence that cannot be read.
+
+    Every `release-image-builds` cell uploads the whole evidence directory, and
+    the browser cell builds `cap-sandbox-http` a second time so its base exists
+    on a runner that has no local state to inherit. Those are different builds of
+    the same image: run 35502404774 left `config_digest` 7d4eb213… in the http
+    cell's record (docker driver) and b22192b0… in the browser cell's
+    prerequisite (buildx). Under the released image's own file name the two are
+    indistinguishable to anything that reads the artifacts -- which is what made
+    F-34's "two context hashes for one image" look like a content bug first.
+    """
+    doc = yaml.safe_load(CI_YML.read_text("utf-8"))
+    include = (
+        ((doc.get("jobs") or {}).get("release-image-builds") or {}).get("strategy", {})
+        .get("matrix", {})
+        .get("include") or []
+    )
+    bases = {entry.get("base-image") for entry in include if entry.get("base-image")}
+    assert bases == {"cap-sandbox-http"}, (
+        f"the browser image no longer builds its base on a clean runner: {bases} -- "
+        "ARTIFACT-GATE 5 depends on that build, and this test is only worth "
+        "anything while it exists"
+    )
+    scripts = ci_job_scripts("release-image-builds")
+    targets = {
+        Path(match.group(1)).name
+        for script in scripts
+        for match in re.finditer(r'--out\s+"([^"]+\.json)"', script)
+    }
+    assert targets, "no CI build names an evidence file at all"
+    others = {name for name in targets if name != "$IMAGE.json"}
+    assert others and all("prerequisite" in name for name in others), (
+        f"every record but the cell's own must say which build wrote it: {sorted(others)}"
+    )
+
+
 #: Workflows that build CAP images and deploy them to a throwaway cluster, and
 #: the test modules that read those images back. They have to agree on the tag:
 #: `kind load` refuses an image it does not have, and a helm install that falls
