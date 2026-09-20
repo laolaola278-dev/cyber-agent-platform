@@ -139,7 +139,10 @@ The staged context both sandbox images need (copies of `app/sandbox/oci_protocol
 `oci_shim.py`) moved into `backend/docker/prepare_sandbox_context.sh`, called by both the
 certification script and the release script, so a release image cannot be assembled from a
 different file list than the certified one — and `context_sha256` in each evidence record is what
-makes a difference visible instead of a matter of faith.
+makes a difference visible instead of a matter of faith. That last clause is true only after F-34:
+until that fix the hash covered the absolute path of the `mktemp -d` staging directory, so the same
+staged content produced a different value in every cell and the field described the machine rather
+than the input.
 
 Naming the base is only half of it; the release has to be able to *say* which base it used. The
 build script reads `FROM` lines out of the Dockerfile, and a `FROM ${VAR}` line resolved only
@@ -167,10 +170,16 @@ nowhere but that runner — would resolve against `docker.io/library`, which is 
 
     pull access denied for cap-sandbox-http, repository does not exist or may require 'docker login'
 
-`--local-docker` therefore builds with `docker build`, which does share the store, and CI uses it for
-the browser image. The evidence records `build_driver` and derives `attestations` from the flags the
-builder was handed, so a docker-driver dry build can never be mistaken for an attested release
-artifact; `release.yml` still builds every image with buildx and `--push`.
+`--local-docker` therefore builds with `docker build`, which does share the store — and CI passes it
+in **every** cell, not just the browser's: what the matrix proves is that each image's own Dockerfile
+builds on a clean runner and lands where the scan step can find it. The one buildx dry build per CI
+run is the browser cell's `cap-sandbox-http` prerequisite, which needs no store access and so takes
+the release's own builder. Three drivers, three claims, and the evidence records which one produced which
+record — `build_driver` alongside `attestations` read back out of the flags the builder was handed,
+so a docker-driver dry build can never be mistaken for an attested release artifact:
+`docker build` for CI's five cells, `buildx --load` for that prerequisite, and
+`buildx --push` for the release itself — which is the only one of the three that has never executed
+(F-25).
 
 That run then failed a second time for a different reason, and this one is worth stating plainly:
 
@@ -250,40 +259,103 @@ artifact.
 | 2 | No production CAP image uses `:latest` | **PASS** | `test_no_production_chart_reference_is_latest`, `test_no_dockerfile_layers_on_a_cap_image_by_mutable_name`, K8S-GATE 34 at runtime |
 | 3 | All external Dockerfile FROM refs digest-pinned | **PASS** | `test_every_external_dockerfile_base_is_locked_and_digest_pinned` + §3 table |
 | 4 | Third-party lock covers every external base | **PASS** | `test_lock_base_entries_are_actually_used_by_a_dockerfile`, `test_locked_base_digests_carry_their_provenance` |
-| 5 | Clean runner builds all required images | **PASS** | CI run 35485625550: five `release-image-builds` cells green on `ubuntu-latest` with push=false, per-image evidence artifacts uploaded. It took two red runs to get here, both recorded in §5 |
+| 5 | Clean runner builds all required images | **PASS** | CI run 35502404774 on `a79d29c`: five `release-image-builds` cells green inside a successful run on `ubuntu-latest`, push=false, one evidence artifact per image, and the uploaded records read back in §9. It took two red runs and one aborted-script bug to get here, all recorded in §5 and §10 |
 | 6 | Trivy covers all release images | **PASS** | CI `release-image-builds` scans each matrix cell it builds (derived, cannot drift); `release-image-security` lists its five names by hand, so `test_every_published_image_is_scanned_in_the_release` now requires that list to equal both the published set and the chart-derived set, with a control that dropping a name breaks it. The two workflow scans use one policy (HIGH+CRITICAL, unfixed ignored, `exit-code: 1`); GA-GATE 22's `security_policy.json` blocks only fixable CRITICALs. That difference is deliberate and not a hole: for a release image the stricter workflow policy runs too, and the policy file governs the GA verdict, not publication |
-| 7 | SBOM enabled for all release images | **PASS** | `release.yml` completeness gate refuses a record without `attestations.sbom`; script attaches it on push builds |
-| 8 | Provenance enabled for all release images | **PASS** | as above, with `REVISION` bound to the tag target SHA |
-| 9 | Browser image has an immutable internal base relationship | **PASS** | no-default `ARG SANDBOX_HTTP_BASE`; release passes `cap-sandbox-http@<index digest>` |
-| 10 | Fresh kind deployment has no missing image | **PASS** | Kubernetes certification run 35489588677 on `b447436`: 34/34 gates green, including K8S-GATE 34 (every CAP image in the running pods and in the worker's sandbox coordinates is one of the five, at the tag the job built, with no `ImagePullBackOff`/`ErrImagePull`) |
+| 7 | SBOM enabled for all release images | **PASS** | `build_release_image.sh` adds `--sbom=true` only to a push build and records `attestations.sbom` from the flags it actually passed (`test_the_push_build_attests_and_records_the_platform_child`, `test_attestations_are_reported_from_the_build_that_ran`); `release-image-completeness` then refuses a record whose flag is false — executed by `test_completeness_gate_refuses_a_record_without_a_digest_or_attestation`, which sets `sbom: False` and expects the refusal |
+| 8 | Provenance enabled for all release images | **PASS** | as 7, with `REVISION` bound to the tag's target SHA and asserted from the same evidence (`--build-arg` + `REVISION` in `test_every_release_image_is_built_with_version_revision_and_attestations`) |
+| 9 | Browser image has an immutable internal base relationship | **PASS** | no-default `ARG SANDBOX_HTTP_BASE`; release passes `cap-sandbox-http@<index digest>`; `test_an_unresolvable_base_refuses_the_build` makes an unnamed base a build failure, and the browser record in §9 shows the field populated |
+| 10 | Fresh kind deployment has no missing image | **PASS** | Kubernetes certification run 35489588677 on `b447436` first reached 34/34 with K8S-GATE 34 included; run 35500709149 on `4aff814` is the round whose published artifact names what it observed — `source: K8S-GATE 34`, five images at the tag the job built, `worker_sandbox_coordinates` covering both sandboxes, `pull_errors: []` |
 | 11 | Publication graph blocks a partial image release | **PASS** (statically enforced) | `publish-release`/`release-chart` need `release-image-completeness`; the gate's refusal paths are executed by `test_completeness_gate_refuses_a_missing_image` and its siblings |
 | 12 | Classifier / recertification decision truthful | **PASS** | §7: RECERTIFICATION_REQUIRED, no byte-identity claim, no classifier exception added |
 
-## 9. Certification runs on the closure tip
+## 9. Certification runs on the closure line
 
-Closure tip: **`86e105d`** on `release/1.0.6-rc1`. `c52dcb9`'s evidence is **not** inherited (§7), so
-each round below has to be green at a SHA that reaches the tip through inheritable-only commits.
+`c52dcb9`'s evidence is **not** inherited (§7), so each round below has to be green at a SHA that
+reaches the closure tip through inheritable-only commits — which is what the classifier check at the
+end of this section is for. Every row cites the run, and where a round's meaning depends on what it
+published, the row quotes its own artifact rather than the tick.
 
-| Round | Attempt | SHA | Conclusion |
-| --- | --- | --- | --- |
-| CI | [35484377542](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35484377542) | `0b143ac` | **failure** — F-26, the build script aborted after building |
-| CI | [35485625550](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485625550) | `3cc6579` | cancelled by the next push; **all five `release-image-builds` cells success** (ARTIFACT-GATE 5/6) |
-| CI | [35490251245](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35490251245) | `86e105d` | running |
-| Linux layer=release + PostgreSQL matrix | [35485710392](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485710392) | `3cc6579` | **success** |
-| Kubernetes | [35485711757](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485711757) | `3cc6579` | **failure** — F-27 |
-| Kubernetes | [35488262094](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488262094) | `c69d960` | **failure** — F-28 (GATE 34 itself passed) |
-| Kubernetes | [35489588677](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35489588677) | `b447436` | **success** — 34/34 gates, K8S-GATE 34 included (ARTIFACT-GATE 10) |
-| FULL GA, strict (`CAP_GA_STRICT=1`, 40/40) | [35485715411](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485715411) | `3cc6579` | **failure** — F-27 |
-| FULL GA, strict | [35488263281](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488263281) | `c69d960` | running |
-| Reliability soak (7200 s) | [35485713552](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485713552) | `3cc6579` | running |
+**CI** (`ci.yml`, cancels in flight):
 
-Three of the four rounds reached their green state on `3cc6579`/`b447436`, and the commits between
-those SHAs and the tip are `test_harness`, `ci_workflow`, `certification_generator` and `docs` —
-checked with `scripts/release/classify_diff.py`, which reports `INHERITED` for each hop. A gate that
-errors is reported as a failure and re-run rather than read as close enough: the second Kubernetes
-attempt is in that table because it failed, even though the new gate inside it passed.
+| Attempt | SHA | Conclusion |
+| --- | --- | --- |
+| [35484377542](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35484377542) | `0b143ac` | **failure** — F-26: the build script aborted after a successful build |
+| [35486431316](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35486431316) | `faaa4d1` | **failure** — `test_license_and_release_workflows_are_complete`, `assert 1 == 2`: an assertion left counting the two-image CI job this closure had already replaced. Now derived set equality with its own sensitivity test |
+| [35485625550](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485625550) | `3cc6579` | cancelled by a later push; every `release-image-builds` cell had already succeeded (ARTIFACT-GATE 5/6) |
+| [35490251245](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35490251245) | `86e105d` | **success** |
+| [35492342346](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35492342346) | `fdee042` | **success** |
+| [35494453516](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35494453516) | `536827b` | **success** |
+| [35496688015](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35496688015) | `9de9f0f` | **success** |
+| [35498634857](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35498634857) | `3c523f4` | **success** |
+| [35500219964](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500219964) | `4aff814` | **success** — and reading its evidence artifacts back is what produced F-34 |
+| [35502404774](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35502404774) | `a79d29c` | **success** — five `release-image-builds` cells green; its artifacts produced F-35 and F-36 and carried the F-34 verification (below) |
+| final tip | pending | re-run after §10's findings are recorded; CI is the only round that cancels its own predecessor |
 
-_Filled in as each round finishes; nothing here is asserted before its run is green._
+**Linux certification** (`cap-linux-certification.yml`, `layer: release`; GA-GATE 33's evidence):
+
+| Attempt | SHA | Conclusion |
+| --- | --- | --- |
+| [35485710392](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485710392) | `3cc6579` | **success** |
+| [35492389112](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35492389112) | `fdee042` | **success** |
+| [35496753285](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35496753285) | `9de9f0f` | **success** |
+| [35498707800](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35498707800) | `3c523f4` | **success** |
+| [35500248467](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500248467) | `4aff814` | **success** |
+| [35500710588](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500710588) | `4aff814` | **success** — re-dispatched to read the artifact back, which is how F-31's fix was confirmed rather than assumed |
+
+**Kubernetes certification** (`cap-k8s-certification.yml`, 34 gates incl. the new K8S-GATE 34):
+
+| Attempt | SHA | Conclusion |
+| --- | --- | --- |
+| [35485711757](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485711757) | `3cc6579` | **failure** — F-27 |
+| [35488262094](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488262094) | `c69d960` | **failure** — F-28, though GATE 34 itself passed |
+| [35489588677](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35489588677) | `b447436` | **success** — 34/34, ARTIFACT-GATE 10's first real round |
+| [35492391209](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35492391209) | `fdee042` | **success** |
+| [35496754931](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35496754931) | `9de9f0f` | **success**, `gates: 34/34` — and its artifact said `"source": "not_observed"`, i.e. F-31: a green round that could not name what it had deployed |
+| [35498709533](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35498709533) | `3c523f4` | **success** — `"source": "K8S-GATE 34"`, five images, `worker_sandbox_coordinates` both sandboxes, `pull_errors: []` |
+| [35500246776](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500246776) | `4aff814` | **success** |
+| [35500709149](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500709149) | `4aff814` | **success**, 34/34, same observed set — the round §8's GATE 10 cites |
+
+**Reliability soak** (`cap-ga-reliability.yml`, 7200 s — the only proof GA-GATE 24/25/26/34/35 get):
+
+| Attempt | SHA | Conclusion |
+| --- | --- | --- |
+| [35485713552](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485713552) | `3cc6579` | **success** |
+| [35496756245](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35496756245) | `9de9f0f` | **success** — 07:23:52Z → 09:31:26Z (2 h 07 m) |
+| [35498711108](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35498711108) | `3c523f4` | **cancelled by hand** a third of the way in, because a fix landed; a soak of a superseded commit produces no evidence, and `cancel-in-progress: false` means it had to be cancelled deliberately rather than by the push |
+| [35500245071](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500245071) | `4aff814` | pending — started 08:41:26Z |
+
+**FULL GA, strict** (`cap-ga-certification.yml` with `ga_strict=true`, so `CAP_GA_STRICT=1`,
+`PLANNED == failure`, 40/40 required):
+
+| Attempt | SHA | Conclusion |
+| --- | --- | --- |
+| [35485715411](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485715411) | `3cc6579` | **failure** — F-27 |
+| [35488263281](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488263281) | `c69d960` | **failure** — F-29: 57 tests passed, `GA-GATE 22` refused over a `:latest` in `security_policy.json`, `total: 40, passed: 33` |
+| [35492392358](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35492392358) | `fdee042` | **failure** — the round's own log: `reliability soak run for fdee042…: <none>`. Dispatched without a soak at its SHA, so gates 24/25/26/34/35 had no evidence to consume and the strict meta-gate went red. That is the gate working, and it is why the soak and the GA round are ordered and matched below |
+| pending | `4aff814` | to be dispatched from a ref pinned at that commit once its soak is green: `workflow_dispatch` always runs a ref's *tip*, and the GA job resolves the soak by exact `head_sha` |
+
+A gate that errors is reported as a failure and re-run rather than read as close enough: the second
+and third Kubernetes attempts and all three GA attempts are in these tables because they failed.
+Seven CI runs and one Linux run were superseded mid-flight by the next push (`c69d960`, `fb5fc17`,
+`0ce3b93`, `706996f`, `b447436`, `0c22e0e`, `d0ddf48`) and are left out for that reason; the
+certification workflows do not cancel, so no certification round was lost to a push.
+
+**What the tip's own artifacts said.** From CI run 35502404774 at `a79d29c`, per-image evidence for
+all five images, read out of the uploaded files: every record carries `tag: 1.0.6-rc1`,
+`source_revision: a79d29c…`, `pushed: false`, `attestations: {sbom: false, provenance: false}` (a dry
+build has no attestation subject, and the release gate refuses exactly that — GATE 7/8 are therefore
+proved by the gate's executed refusal plus the script's flags, not by CI colour);
+`cap-sandbox-http`'s two records — the http cell's `docker` build and the browser cell's `buildx`
+prerequisite — carry the **same** `context_sha256` `1da56fbc05b4…` (F-34 verified across two builders)
+while their `config_digest`s differ (`7d4eb213…` vs `b22192b0…`, F-35's two builds);
+`cap-sandbox-browser` records `base_refs: ["cap-sandbox-http:1.0.6-rc1"]`, i.e. the browser image
+states what it was built on, and that ref exists only because the same job built it minutes earlier.
+
+**Inheritance.** `scripts/release/classify_diff.py 4aff814 <tip>` reports
+`runtime certification INHERITED (release_metadata_only=True)` — the commits between are
+`ci_workflow`, `test_harness`, `certification_generator` and `docs`, none runtime-affecting — so the
+`4aff814` rounds above are the tip's evidence. The classifier was not modified for this purpose, and
+no round in these tables is claimed as green before its run finished.
 
 ## 10. Remaining findings after this closure
 
@@ -386,6 +458,31 @@ _Filled in as each round finishes; nothing here is asserted before its run is gr
   hold both halves, because stability alone is not the claim (§4's sentence was written before
   anything ever compared the field against anything — which is why no number of green runs could
   have caught it).
+- **F-35** (found and closed inside this round) — reading this round's own evidence back out of CI
+  run 35502404774 took longer than writing it, and the reason was a naming collision. Every
+  `release-image-builds` cell uploads the *whole* evidence directory, and the browser cell builds
+  `cap-sandbox-http` a second time as its base, so two files arrived named `cap-sandbox-http.json`
+  from two different builds: the http cell's own `docker`-driver record with
+  `config_digest sha256:7d4eb213…`, and the browser cell's buildx prerequisite with
+  `sha256:b22192b0…` plus an `index_digest` the other cannot have. Neither file said it was the
+  second one. The prerequisite record is now written as `$BASE_IMAGE.prerequisite.json`, and
+  `test_ci_s_prerequisite_build_does_not_sign_its_record_as_the_released_one` refuses a cell naming
+  any record but its own image's under a released image's file name — with a
+  `bases == {"cap-sandbox-http"}` precondition so the guard cannot go vacuous if the prerequisite
+  build itself disappears. The same read carried the result §4 actually needed: after F-34 both
+  records say `context_sha256 1da56fbc05b4…` — one value across two different build drivers, the
+  first time that field was compared against anything on a clean runner rather than admired.
+- **F-36** (found and closed inside this round) — `platform` was filled by the docker driver and
+  left `null` by buildx on the same commit, because only one branch of the script read it, and the
+  branch that omitted it is the one the release uses. A field whose presence depends on which
+  builder ran is a field a reader cannot compare across records, which is the same defect shape as
+  F-31's and F-32's one file over. The dry buildx build loads its image into the local store, so the
+  platform is as knowable there as it was for `docker build`; the push path now names the platform of
+  the child manifest it selected instead of recording only its digest. The stubbed registry manifest
+  in `test_release_build_script.py` listed the amd64 child first, which let a parser that took
+  `entries[0]` pass every assertion — it lists arm64 first now, and the three driver tests assert the
+  values rather than the fields' presence (verified: an unfiltered pick produces
+  `linux/arm64` and fails).
 - **F-32** (found and closed inside this round) — `values-release-<version>.yaml` pinned five image
   coordinates and the production chart reads six. `worker.image` — the deployment that runs
   acquisitions — was left at the chart's placeholder registry, `ghcr.io/example/cap-backend`, so
