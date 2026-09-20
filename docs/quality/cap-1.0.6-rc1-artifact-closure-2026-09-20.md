@@ -460,7 +460,8 @@ no round in these tables is claimed as green before its run finished.
   the deleted one before accepting health, and by a ready-pod selector (`Running` with every
   container ready) in the log helpers. Both halves have cluster-free tests, because the difference
   only becomes visible during a restart — the worst possible moment to be discovering how the probe
-  works. The third attempt (run 35489588677) is green with all 34 gates.
+  works. The third attempt (run 35489588677) is green with all 34 gates -- which, as F-40 turned out,
+  meant the remaining half of the race had not been hit yet rather than that it had been closed.
 - **F-29** (found and closed inside this round) — the strict GA round at `c69d960` ran 57 tests green
   and still refused to certify, over one line of JSON. `scripts/certification/security_policy.json`
   listed GA-GATE 22's Trivy targets with their own tags, three of them `:latest` — the fourth place
