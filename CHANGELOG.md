@@ -263,7 +263,15 @@ published release contents are immutable.
   now, with the assertion's teeth checked by suppressing the toast and watching the
   test fail (F-38) -- and the full re-certification the classifier charged for a
   test-only change under `frontend/src/` is recorded as that rule working, not as
-  an argument for an exception. One last thing is stated rather than assumed: CAP
+  an argument for an exception. A Kubernetes round then failed five gates on a
+  *stale* `kubectl port-forward`: a service forward binds one endpoint, and a
+  terminating pod answers `/health` once, so the restart gate declared recovery
+  through a socket about to die and the next four gates inherited a dead tunnel on a
+  healthy cluster. `_ensure_api` now wants two consecutive answers a second apart and
+  a stale forward is rebound before each gate, with the single-answer form failing the
+  new test as the control (F-40) -- a repair under `backend/tests/`, which the
+  classifier charges as test harness, so it costs a re-run of that suite and not
+  another two-hour soak. One last thing is stated rather than assumed: CAP
   images are not reproducible by digest (F-39). Two clean-runner builds of
   `cap-sandbox-http` with the same Dockerfile hash, the same staged-context hash and
   the same pinned base produced different digests, because nothing but build

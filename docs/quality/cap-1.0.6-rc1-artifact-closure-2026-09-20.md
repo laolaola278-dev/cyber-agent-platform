@@ -218,6 +218,11 @@ the push build and the local-driver build each have to emit evidence carrying th
 publication gate requires, and removing the default this fix added makes the suite fail the way CI
 did.
 
+F-36's repair belongs to the same family, because it reads image metadata *after* a successful build —
+the exact spot where F-26 aborted. What says it is safe is not the reading of the diff but CI run
+35506705907's prerequisite record: a buildx dry build on a clean runner, green, carrying
+`platform: linux/amd64`.
+
 ## 6. Helm contract and the fresh-install audit
 
 - `templates/_helpers.tpl` gained `cap.imageRef`, which composes `{repository, tag, digest}` and
@@ -312,7 +317,7 @@ published, the row quotes its own artifact rather than the tick.
 | [35500219964](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500219964) | `4aff814` | **success** — and reading its evidence artifacts back is what produced F-34 |
 | [35502404774](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35502404774) | `a79d29c` | **success** — five `release-image-builds` cells green; its artifacts produced F-35 and F-36 and carried the F-34 verification (below) |
 | [35505431617](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35505431617) | `8797a64` | **failure** — F-38: the `frontend` job's toast assertion raced antd's async mount on a commit that changed no frontend file. The other nine jobs, all five `release-image-builds` cells included, were green |
-| [35506705907](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506705907) | `b671f53` | running — the tip under certification, with the awaited toast assertion |
+| [35506705907](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506705907) | `b671f53` | **success** — all ten jobs, the console suite included; the six evidence records it uploaded are read below |
 
 **Linux certification** (`cap-linux-certification.yml`, `layer: release`; GA-GATE 33's evidence):
 
@@ -324,7 +329,7 @@ published, the row quotes its own artifact rather than the tick.
 | [35498707800](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35498707800) | `3c523f4` | **success** |
 | [35500248467](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500248467) | `4aff814` | **success** |
 | [35500710588](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500710588) | `4aff814` | **success** — re-dispatched to read the artifact back, which is how F-31's fix was confirmed rather than assumed |
-| [35506716466](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506716466) | `b671f53` | running — the round GA-GATE 33 will resolve at the certified SHA |
+| [35506716466](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506716466) | `b671f53` | **success** — the round GA-GATE 33 resolves at the certified SHA |
 
 **Kubernetes certification** (`cap-k8s-certification.yml`, 34 gates incl. the new K8S-GATE 34):
 
@@ -338,7 +343,8 @@ published, the row quotes its own artifact rather than the tick.
 | [35498709533](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35498709533) | `3c523f4` | **success** — `"source": "K8S-GATE 34"`, five images, `worker_sandbox_coordinates` both sandboxes, `pull_errors: []` |
 | [35500246776](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500246776) | `4aff814` | **success** |
 | [35500709149](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500709149) | `4aff814` | **success**, 34/34, same observed set — the round §8's GATE 10 cites |
-| [35506717889](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506717889) | `b671f53` | running — ARTIFACT-GATE 10 on the certified SHA |
+| [35506717889](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506717889) | `b671f53` | **failure** — F-40. Gates 26/28/29/32 and pregate E died on `Server disconnected` / `ConnectError` while K8S-GATE 34, which reads the cluster through `kubectl`, passed with the expected image set: a dead port-forward, not a dead deployment |
+| pending | `483a397` | re-dispatch with the tunnel repair — two consecutive health answers before a restart counts, and a stale forward rebound before each gate |
 
 **Reliability soak** (`cap-ga-reliability.yml`, 7200 s — the only proof GA-GATE 24/25/26/34/35 get):
 
@@ -547,6 +553,26 @@ no round in these tables is claimed as green before its run finished.
   working — a test inside the shipped tree sits beside shipped code — and the alternative is an
   exception claiming a runtime-affecting path is not, which this round declined twice already (F-33,
   F-37).
+- **F-40** (found and closed inside this round) — the Kubernetes round at `b671f53` failed five gates
+  (26, 28, 29, 32 and pregate E) with `httpx.RemoteProtocolError: Server disconnected without sending a
+  response` and then plain `ConnectError`, on a cluster that was healthy throughout: `K8S-GATE 34`,
+  which reads the pods with `kubectl` rather than through the API, passed in the same run and reported
+  the expected image set with `pull_errors: []`. The cause sits one layer below F-28's fix.
+  `kubectl port-forward svc/X` binds **one** endpoint for the life of the process; gate 25 force-deletes
+  every backend pod, waits for a replacement pod set, and then asks `_ensure_api` whether the API came
+  back — through the forward that was still bound to a pod it had just killed. A terminating pod answers
+  `/health`. So gate 25 declared recovery over a socket with seconds to live, and every later gate that
+  touched the API inherited the corpse. `_ensure_api` now requires two consecutive health answers a
+  second apart, and an autouse fixture rebinds a stale tunnel before each gate: what gets repaired is
+  the tunnel, never the verdict, so a gate whose subject really is an unavailable API still sees one.
+  Both halves are exercised without a cluster, and the control is executed rather than claimed — with
+  the two-answer rule deleted, the new test fails (`CONTROL OK: the single-answer rule is what the test
+  refuses`). F-28's round had the same cluster and went green, because whether the forward picks a
+  doomed endpoint is a race; that is the difference between a fixed bug and a bug that has not been hit
+  yet, and it is why the fix is in the helper rather than in gate 25's next line. The change is under
+  `backend/tests/`, so `classify_diff.py b671f53 <tip>` still reads `INHERITED` and the soak and Linux
+  rounds at `b671f53` stand as the tip's evidence — a test harness repair costs a re-run of the suite
+  that uses it, not another two-hour soak.
 - **F-32** (found and closed inside this round) — `values-release-<version>.yaml` pinned five image
   coordinates and the production chart reads six. `worker.image` — the deployment that runs
   acquisitions — was left at the chart's placeholder registry, `ghcr.io/example/cap-backend`, so
