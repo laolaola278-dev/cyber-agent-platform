@@ -221,6 +221,22 @@ published release contents are immutable.
   unlisted base. The certification installs that relied on the `:latest` defaults
   now name versioned images they build and load themselves, and K8S-GATE 34
   refuses a cluster whose running CAP image set is not the released one.
+  Getting that far took three repairs found by running rather than reading, each
+  now gated in its own right: the browser image cannot be dry-built with buildx at
+  all (a container builder does not see the host docker store, so `--local-docker`
+  builds it with `docker build` and the evidence records which driver produced it,
+  with attestations read back out of the flags the builder was handed rather than
+  restated from `--push`); the shared build script aborted on `set -u` *after* a
+  successful buildx build, which would have failed every image on the first real
+  release, and `test_release_build_script.py` now executes the script against a
+  stubbed `docker` for all three driver paths instead of leaving that to a clean
+  runner twenty minutes later; and the certification rounds disagreed with their
+  own workflows about which tag the sandbox and proxy images carried, so one
+  `CAP_CERT_IMAGE_TAG` now feeds the load list, the helm coordinates and the gates,
+  with `test_certification_rounds_name_their_images_with_one_tag` refusing a
+  literal that no job builds. Evidence gained `base_refs` resolved from the
+  caller's `--build-arg` (a base that resolves to nothing fails the build instead
+  of recording an empty list), and the publication gate requires it.
 ### Fixed
 
 - **A healthy long-running acquisition could be cancelled under load.** The execution-lease

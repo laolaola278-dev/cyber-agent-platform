@@ -1,8 +1,11 @@
 # CAP 1.0.6-rc1 — Artifact Completeness & Reproducible Build Closure Report
 
-Closure tip: `d6a7f77` (branch `release/1.0.6-rc1`). Runtime certification anchor from the
-previous round: `c52dcb9` — and this round **cannot inherit it** (§11 below), because closing F-7
-and F-20 changed build inputs.
+Closure tip: `b447436` (branch `release/1.0.6-rc1`). Runtime certification anchor from the previous
+round: `c52dcb9` — and this round **cannot inherit it** (§7), because closing F-7 and F-20 changed
+build inputs. F-7 and F-20 landed in `3eadfc4`/`d6a7f77`; the closure then needed four code
+follow-ups (`0b143ac`, `3cc6579`, `c69d960`, `b447436`), each one produced by this round's own CI or
+re-certification run rather than by reading the code — see §5, §9 and §10. The commits between them
+carry this report and the register updates.
 Prepared: 2026-09-20, from a Windows audit host plus GitHub-hosted Linux runners.
 Publication: **none performed** — no `v*` tag, no GitHub Release, no image pushed, no existing tag
 or image overwritten.
@@ -194,16 +197,19 @@ did.
 
 ## 7. Diff classification and the recertification decision
 
-`python scripts/release/classify_diff.py c52dcb9 d6a7f77` → **RECERTIFICATION_REQUIRED**
-(`outputs/artifact-closure/diff-c52dcb9-to-artifact-tip.json`): 44 files, of which 16 are
-runtime-affecting —
+`python scripts/release/classify_diff.py c52dcb9 b447436` → **RECERTIFICATION_REQUIRED**
+(`outputs/artifact-closure/diff-c52dcb9-to-final-tip.json`): 49 files, of which **16 are
+runtime-affecting** —
 
-| Category | Count | Examples |
-| --- | --- | --- |
-| `deployment` | 14 | `deployment/helm/cap/values.yaml`, chart templates, `deployment/third-party-images.json` |
-| `production_runtime` | 2 | `backend/Dockerfile`, `frontend/Dockerfile` |
-| plus runtime-affecting build inputs | 6 more | `backend/docker/*/Dockerfile`, `build_sandbox_images.sh`, `prepare_sandbox_context.sh` |
-| `test_harness` / `ci_workflow` / `certification_generator` / `docs` / `repo_tooling` | 28 | the gates above |
+| Category | Files | Runtime-affecting | What is in it |
+| --- | --- | --- | --- |
+| `deployment` | 14 | **14** | the five Dockerfiles, five chart templates plus `_helpers.tpl`, `values.yaml`, `values.schema.json`, `third-party-images.json` |
+| `production_runtime` | 2 | **2** | `backend/docker/build_sandbox_images.sh`, `backend/docker/prepare_sandbox_context.sh` — the staged context a sandbox image is built from |
+| `test_harness` | 14 | 0 | the completeness, build-script, base-image, doc-contract, publication-gate and certification test modules |
+| `ci_workflow` | 6 | 0 | `ci.yml`, `release.yml` and the four certification workflows |
+| `docs` | 9 | 0 | this report, the previous round's, the registers, chart and deployment docs |
+| `certification_generator` | 3 | 0 | `scripts/release/build_release_image.sh`, the two report generators |
+| `repo_tooling` | 1 | 0 | `scripts/quality/audit_junit.py` |
 
 **Byte-identity was the alternative, and it is not available** (§18): to inherit, the base that the
 certified build resolved at `c52dcb9` would have to be provably the same digest this round pins. The
@@ -230,7 +236,7 @@ Dockerfiles, because a base image decides which OpenSSL ships in the artifact.
 | 7 | SBOM enabled for all release images | **PASS** | `release.yml` completeness gate refuses a record without `attestations.sbom`; script attaches it on push builds |
 | 8 | Provenance enabled for all release images | **PASS** | as above, with `REVISION` bound to the tag target SHA |
 | 9 | Browser image has an immutable internal base relationship | **PASS** | no-default `ARG SANDBOX_HTTP_BASE`; release passes `cap-sandbox-http@<index digest>` |
-| 10 | Fresh kind deployment has no missing image | **RUNNING / see §9** | K8S-GATE 34 (33 → 34 gates) in the Kubernetes certification run |
+| 10 | Fresh kind deployment has no missing image | **PASS** | Kubernetes certification run 35489588677 on `b447436`: 34/34 gates green, including K8S-GATE 34 (every CAP image in the running pods and in the worker's sandbox coordinates is one of the five, at the tag the job built, with no `ImagePullBackOff`/`ErrImagePull`) |
 | 11 | Publication graph blocks a partial image release | **PASS** (statically enforced) | `publish-release`/`release-chart` need `release-image-completeness`; the gate's refusal paths are executed by `test_completeness_gate_refuses_a_missing_image` and its siblings |
 | 12 | Classifier / recertification decision truthful | **PASS** | §7: RECERTIFICATION_REQUIRED, no byte-identity claim, no classifier exception added |
 
