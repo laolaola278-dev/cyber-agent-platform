@@ -82,7 +82,12 @@ REF="${REGISTRY:+${REGISTRY}/}${NAME}:${VERSION}"
 
 # What went in, before anything can be argued to have changed it.
 DOCKERFILE_SHA="$(sha256sum "$DOCKERFILE" | cut -d' ' -f1)"
-CONTEXT_SHA="$(find "$CONTEXT" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+# From *inside* the context: `sha256sum` prints the path it was given, and the
+# staging directory is a fresh `mktemp -d` every run, so hashing with absolute
+# paths made context_sha256 different for two builds of the same commit -- the
+# field would then record which temporary directory was used, not which files
+# went in, and could not show a difference anyone cared about.
+CONTEXT_SHA="$(cd "$CONTEXT" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
 # A `FROM ${VAR}` base resolves from the Dockerfile's ARG default, and a caller's
 # --build-arg wins over that default: the release names the browser image's base
 # as the digest it just published, and the evidence has to record *that*.

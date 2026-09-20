@@ -28,6 +28,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -183,10 +184,14 @@ def run_build(
     *extra: str,
     script_text: str | None = None,
     dockerfile: str = PROBE_DOCKERFILE,
+    where: str = "repo",
+    mutate: Callable[[Path], None] | None = None,
 ) -> BuildResult:
-    root = _repo(tmp_path, script_text, dockerfile)
-    env = dict(os.environ, **_fake_bin(tmp_path / "fakebin"))
-    out = tmp_path / "evidence.json"
+    root = _repo(tmp_path / where, script_text, dockerfile)
+    if mutate is not None:
+        mutate(root)
+    env = dict(os.environ, **_fake_bin(tmp_path / f"fakebin-{where}"))
+    out = tmp_path / f"evidence-{where}.json"
     cmd = [
         bash_exe(),
         _posix(root / "scripts" / "release" / "build_release_image.sh"),
@@ -403,4 +408,36 @@ def test_a_build_without_a_metadata_file_records_no_digest(tmp_path: Path) -> No
     assert proc.returncode != 0, (
         "a build that cannot resolve its digest has to say so: "
         f"evidence was written anyway\n{combined[-1500:]}"
+    )
+
+
+def test_the_context_hash_is_about_bytes_not_directories(tmp_path: Path) -> None:
+    """Two builds of the same staged content must agree. CI could not make them.
+
+    Run 35500219964 recorded `cap-sandbox-http`'s context as 8310b248… in one
+    matrix cell and febcb187… in another, at the same commit, because the hash
+    covered `sha256sum`'s output *including the absolute path* of a fresh
+    `mktemp -d`. The field §4 advertises as "what makes a difference visible"
+    was recording which temporary directory the run happened to get, so a real
+    change to a staged file was indistinguishable from a rebuild.
+    """
+    first = evidence(run_build(tmp_path, where="one"))
+    second = evidence(run_build(tmp_path, where="two"))
+    assert first["context_sha256"] == second["context_sha256"], (
+        f"the same staged content hashed to {first['context_sha256']} and "
+        f"{second['context_sha256']}"
+    )
+    assert re.fullmatch(r"[0-9a-f]{64}", first["context_sha256"]), first
+
+
+def test_the_context_hash_moves_when_a_staged_file_changes(tmp_path: Path) -> None:
+    """The other half of the claim: stable is not the same as meaningful."""
+    before = evidence(run_build(tmp_path, where="before"))["context_sha256"]
+
+    def change(root: Path) -> None:
+        (root / "probe" / "app.py").write_text("print('changed')\n", encoding="utf-8")
+
+    after = evidence(run_build(tmp_path, where="after", mutate=change))["context_sha256"]
+    assert before != after, (
+        "editing a file in the build context did not change context_sha256"
     )
