@@ -344,7 +344,7 @@ published, the row quotes its own artifact rather than the tick.
 | [35500246776](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500246776) | `4aff814` | **success** |
 | [35500709149](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500709149) | `4aff814` | **success**, 34/34, same observed set — the round §8's GATE 10 cites |
 | [35506717889](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506717889) | `b671f53` | **failure** — F-40. Gates 26/28/29/32 and pregate E died on `Server disconnected` / `ConnectError` while K8S-GATE 34, which reads the cluster through `kubectl`, passed with the expected image set: a dead port-forward, not a dead deployment |
-| pending | `483a397` | re-dispatch with the tunnel repair — two consecutive health answers before a restart counts, and a stale forward rebound before each gate |
+| [35508689787](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35508689787) | `d30b4e7` | running — the round with the tunnel repair: two consecutive health answers before a restart counts, and a stale forward rebound before each gate |
 
 **Reliability soak** (`cap-ga-reliability.yml`, 7200 s — the only proof GA-GATE 24/25/26/34/35 get):
 
@@ -608,6 +608,22 @@ no round in these tables is claimed as green before its run finished.
   manoeuvre §17–§20 forbids for a digest pin "only to inherit". Closing this for real means either
   generating the measurement inside the check that consumes it, or deciding explicitly that evidence
   lives at a path the lock may name; both are governance changes outside F-7/F-20.
+- **F-41** (new and open) — **nothing in this repository runs the chart's `values.schema.json`.** No test
+  imports it, no workflow lints against it; `grep` for the file across `backend/tests`,
+  `.github/workflows` and `deployment/` returns nothing. Helm applies it on the operator's
+  `helm install`, which means the contract that the released `values-release-<version>.yaml` must
+  satisfy is enforced by a program this round never runs. What was checked by inspection instead, and
+  is not therefore proven: the schema declares image blocks as `{repository, tag, digest}` with an
+  `anyOf` demanding tag or digest, it sets no `additionalProperties: false` anywhere (so the keys the
+  renderer emits cannot be rejected as extras), and the rendered coordinates satisfy both branches —
+  which is also what `test_values_renderer_pins_every_image_the_chart_reads` asserts about their
+  *content*. Two remedies exist and neither is free: a `helm lint -f values-release-<v>.yaml` step in
+  the workflow that already installs with helm (`ci_workflow`, so it costs a re-run of that round), or
+  `jsonschema` in the dev extras so the release test validates the rendered file against the actual
+  schema (`pyproject.toml`/`uv.lock`, which the classifier charges as `dependency` — a full
+  re-certification, the same toll F-38 paid for less). The second is the better gate; it is recorded
+  rather than built here because this line is mid-re-certification and the round should not start a
+  third.
 - **F-39** (new and open) — **CAP images are not reproducible by digest.** The round's own clean-runner
   builds measure it: `cap-sandbox-http` and `cap-egress-proxy`, built at `a79d29c` and again at
   `b671f53` with identical `dockerfile_sha256`, identical `context_sha256` and identical pinned bases,

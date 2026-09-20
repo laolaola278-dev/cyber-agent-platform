@@ -296,6 +296,18 @@ listed so that an import name is not mistaken for a working capability.
    Dockerfiles plus layer metadata and copied-in file times, which changes what every
    image is and so costs a full re-certification. See the 1.0.6-rc1 artifact closure
    report, §10.
+9. **Nothing runs the chart's `values.schema.json` (F-41).** No test imports it and
+   no workflow lints against it -- `helm` applies it on the operator's `helm
+   install`, so the contract the released `values-release-<version>.yaml` must
+   satisfy is enforced by a program this repository never runs. Checked by
+   inspection, not proven: image blocks are declared as `{repository, tag, digest}`
+   with an `anyOf` of tag-or-digest, the schema sets no `additionalProperties:
+   false`, and the rendered coordinates satisfy both branches. Two remedies, both
+   with a price: a `helm lint -f values-release-<v>.yaml` step in the workflow that
+   already installs with helm (a workflow change, so that round re-runs), or
+   `jsonschema` in the dev extras so the release test validates the rendered file
+   against the real schema (`pyproject.toml`/`uv.lock` is `dependency`, so it costs
+   a full re-certification). The second is the better gate.
 
 ## Live verification against a real PostgreSQL server
 
