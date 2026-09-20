@@ -381,6 +381,22 @@ _Filled in as each round finishes; nothing here is asserted before its run is gr
   the worker. The test that claimed to cover it listed the same five paths the renderer did, which is
   how both agreed: the check now enumerates the coordinates out of `values.yaml` itself, and fails on
   the pre-fix renderer with `release values leave chart coordinates unpinned: ['worker.image']`.
+- New and open: **F-33** — `verify-certification` requires a *successful run* of each certification
+  workflow with the release job set, and that is the right shape for F-7's purposes, but it cannot
+  tell a final-strict GA round from a development-mode one. Development mode exits 0 with `PLANNED`
+  gates, so a green `ga-certification` job is not by itself "FULL GA 40/40". Checked rather than
+  assumed: the Actions API this repository is served does **not** return a run's `inputs` — a
+  `workflow_dispatch` run of `cap-ga-reliability.yml` carries `soak_seconds` in the URL used to
+  start it and nothing in the response, whose key list has no `inputs` at all. So the gate cannot
+  filter on "was this round asked to be strict". Closing it means reading the decision out of the
+  run's own artifact — `ga-cert-artifacts/cap-cert-ga/cap-28.7-ga-certification.json` carries
+  `mode`, `full_ga_certified`, `commit` and `gate_summary` — and requiring `full_ga_certified is
+  true` with `commit` equal to the run's `head_sha`, in the publication gate. That is roughly
+  forty lines of new machinery inside the most safety-critical gate in the repository and outside
+  this round's declared scope (F-7 and F-20), so it is recorded here as a finding with a named
+  remedy rather than folded in silently. What this round does guarantee is the *dispatch*: the
+  strict verdict in §11 is quoted from a run of `cap-ga-certification.yml` with
+  `ga_strict=true`, whose artifact is the source of the numbers, not from a green tick.
 - Still true from the previous round: registry digests, SBOM and provenance **attestations** exist
   only once images are pushed; the rollback exercise cannot exist before 1.0.6 does.
 

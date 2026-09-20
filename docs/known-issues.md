@@ -247,7 +247,19 @@ listed so that an import name is not mistaken for a working capability.
    `docker-compose.yml` to digest references, or dropping the compose stack in
    favour of the chart; both are larger than the artifact-closure scope and were
    left alone deliberately rather than half-done.
-5. **The release image graph has never run (F-25).** `release.yml` builds and
+5. **The certification gate cannot tell a strict GA round from a development one (F-33).**
+   `release.yml`'s `verify-certification` accepts a *successful* run of `cap-ga-certification.yml`
+   that carried the release job set — but development mode exits 0 with `PLANNED` gates, so a green
+   `ga-certification` job is not by itself "FULL GA 40/40". This was checked, not assumed: the
+   Actions API serving this repository returns no `inputs` field for a run at all (a
+   `workflow_dispatch` soak run started with `soak_seconds=7200` has no `inputs` key in its
+   response), so the gate cannot filter on how a round was dispatched. The remedy is to read the
+   round's own decision out of its artifact — `cap-28.7-ga-certification.json` carries `mode`,
+   `full_ga_certified`, `commit` and `gate_summary` — and require `full_ga_certified` with `commit`
+   equal to the run's `head_sha`. Until that exists, whoever authorises a publication must confirm
+   the GA run was dispatched with `ga_strict=true` **and** that its artifact reports FULL GA
+   CERTIFIED; the release notes on this line quote the artifact, never the green tick.
+6. **The release image graph has never run (F-25).** `release.yml` builds and
    publishes all five CAP images, and its completeness gate refuses a partial
    set, but the workflow triggers only on a `v*` tag and publication is not
    authorised. What a clean runner did prove: the same script builds all five
