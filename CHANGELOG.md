@@ -256,6 +256,20 @@ published release contents are immutable.
   arrived indistinguishably (F-35); and `platform` was filled by the docker driver
   and left null by buildx -- including on the release's own push path -- so the
   platform a record claims no longer depends on which builder wrote it (F-36).
+  A console test then reddened CI on a commit that touched no frontend file:
+  `usePageList`'s error test read the antd toast with a synchronous `getByText`
+  while the `App` message API mounts on a later tick, and `release.yml`'s first job
+  is `ci.yml`, so that race sat between a tag and a release. It awaits the same text
+  now, with the assertion's teeth checked by suppressing the toast and watching the
+  test fail (F-38) -- and the full re-certification the classifier charged for a
+  test-only change under `frontend/src/` is recorded as that rule working, not as
+  an argument for an exception. One last thing is stated rather than assumed: CAP
+  images are not reproducible by digest (F-39). Two clean-runner builds of
+  `cap-sandbox-http` with the same Dockerfile hash, the same staged-context hash and
+  the same pinned base produced different digests, because nothing but build
+  timestamps differs. The release contract pins the *published* index digest, so
+  what an operator deploys is still exactly what was certified; "rebuild it and
+  compare" is not a check that works today.
 
 ### Fixed
 

@@ -283,6 +283,19 @@ listed so that an import name is not mistaken for a working capability.
    classifier exception, which is the manoeuvre the release governance refuses.
    Closing it means either generating the measurement inside the check that consumes
    it, or deciding that evidence lives at a path the lock may name.
+8. **CAP images are not reproducible by digest (F-39).** Two clean-runner builds of
+   `cap-sandbox-http` -- same `dockerfile_sha256`, same `context_sha256`, same pinned
+   base, same builder -- produced different config and index digests at `a79d29c` and
+   `b671f53`; the same holds for `cap-egress-proxy`. Those Dockerfiles carry no
+   `VERSION`/`REVISION` label, so what differs is build metadata: timestamps in the
+   image config and layer history. What still holds: `values-release-<version>.yaml`
+   pins the *published* index digest, so an operator runs the bytes that were scanned
+   and certified, and the recorded input hashes say what went into them. What does
+   not: rebuild at the tag and compare digests -- that verification fails today.
+   Closing it means `--timestamp`/`SOURCE_DATE_EPOCH` discipline across all five
+   Dockerfiles plus layer metadata and copied-in file times, which changes what every
+   image is and so costs a full re-certification. See the 1.0.6-rc1 artifact closure
+   report, §10.
 
 ## Live verification against a real PostgreSQL server
 

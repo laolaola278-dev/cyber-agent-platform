@@ -376,16 +376,22 @@ pushes triggered came back `skipped` by design — a `release/**` push runs no c
 is why every round in these tables is a dispatch — and `cancel-in-progress: false` there means no
 certification round was ever lost to a push.
 
-**What the tip's own artifacts said.** From CI run 35502404774 at `a79d29c`, per-image evidence for
-all five images, read out of the uploaded files: every record carries `tag: 1.0.6-rc1`,
-`source_revision: a79d29c…`, `pushed: false`, `attestations: {sbom: false, provenance: false}` (a dry
-build has no attestation subject, and the release gate refuses exactly that — GATE 7/8 are therefore
-proved by the gate's executed refusal plus the script's flags, not by CI colour);
-`cap-sandbox-http`'s two records — the http cell's `docker` build and the browser cell's `buildx`
-prerequisite — carry the **same** `context_sha256` `1da56fbc05b4…` (F-34 verified across two builders)
-while their `config_digest`s differ (`7d4eb213…` vs `b22192b0…`, F-35's two builds);
-`cap-sandbox-browser` records `base_refs: ["cap-sandbox-http:1.0.6-rc1"]`, i.e. the browser image
-states what it was built on, and that ref exists only because the same job built it minutes earlier.
+**What the tip's own artifacts said.** From CI run 35506705907 at `b671f53`, the six per-image records
+read out of the uploaded files: every one carries `tag: 1.0.6-rc1`, `platform: linux/amd64`,
+`pushed: false` and `attestations: {sbom: false, provenance: false}` — a dry build has no attestation
+subject and the release gate refuses exactly that, so GATE 7/8 rest on the gate's executed refusal
+plus the script's flags, not on CI's colour. Both halves of F-34's claim are visible in them at once:
+`cap-sandbox-http`'s staged context hashes to `1da56fbc05b4…` in all three sandbox records, from two
+different builders, and to the same value it had at `a79d29c` two commits back, because those two files
+did not change; `cap-backend`'s context moved from `4775ddd6…` to `d620e4a3…` between the same two
+commits, because two files under `backend/` did. Stable when nothing changed, different when something
+did — that is the property the field exists to have, and it is now observed on clean-runner bytes rather
+than asserted by a test. And because the browser cell's buildx prerequisite is finally named for what
+it is (`cap-sandbox-http.prerequisite.json`, F-35), the two `cap-sandbox-http` records can sit in one
+directory without lying about it: same inputs, one built by `docker` and one by `buildx`, which is why
+their `config_digest`s differ at the same commit. Read that pair across the two commits instead — same
+builder, same Dockerfile hash, same context hash, same base — and the digest still moves. That is
+F-39.
 
 **Inheritance.** `4aff814` would have been the certified SHA — `classify_diff.py 4aff814 <tip>` said
 `INHERITED (release_metadata_only=True)`, and CI, Linux and Kubernetes were green there. F-38 took it
@@ -576,6 +582,23 @@ no round in these tables is claimed as green before its run finished.
   manoeuvre §17–§20 forbids for a digest pin "only to inherit". Closing this for real means either
   generating the measurement inside the check that consumes it, or deciding explicitly that evidence
   lives at a path the lock may name; both are governance changes outside F-7/F-20.
+- **F-39** (new and open) — **CAP images are not reproducible by digest.** The round's own clean-runner
+  builds measure it: `cap-sandbox-http` and `cap-egress-proxy`, built at `a79d29c` and again at
+  `b671f53` with identical `dockerfile_sha256`, identical `context_sha256` and identical pinned bases,
+  came out with different `config_digest`s and different `index_digest`s. Those two Dockerfiles carry no
+  `VERSION`/`REVISION` label, so nothing but build metadata — timestamps in the image config and in the
+  layer history — distinguishes the pairs. (`cap-sandbox-browser` is not a clean case: its base was
+  rebuilt too, so its digest moving proves nothing either way; backend and console *do* carry
+  `org.opencontainers.image.*` labels, and a differing digest there is the design working.)
+  What the finding does not damage: the release contract pins the **published** index digest into
+  `values-release-<version>.yaml`, so an operator runs the exact bytes that were scanned and certified,
+  and the input hashes still prove what went into them. What it does prevent is the verification the
+  phrase "reproducible build" invites — rebuild at the tag and compare digests — which fails for these
+  images today. Closing it means `--timestamp`/`SOURCE_DATE_EPOCH` discipline across all five
+  Dockerfiles, plus layer metadata and the file times of what those images copy in (the Playwright
+  browser set in the sandbox image is the obvious one). It changes what every image *is*, so it costs a
+  full re-certification — F-38 was the same rule on a much smaller scale — and belongs to a round of its
+  own rather than to the last hour of this one.
 - Still true from the previous round: registry digests, SBOM and provenance **attestations** exist
   only once images are pushed; the rollback exercise cannot exist before 1.0.6 does.
 
