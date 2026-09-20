@@ -266,7 +266,10 @@ equality here would have been the cheapest possible way to skip a re-certificati
 claimed: the Dockerfile digest change is treated as runtime-affecting, `c52dcb9` is **not** inherited,
 and a new certified SHA is established by re-running CI, the Linux release layer with its PostgreSQL
 matrix, the Kubernetes suite (now 34 gates), the 7200 s reliability soak and the strict FULL GA round
-on the closure tip. §20's rule was respected in the making: no "metadata-only" exception was added to
+along the closure line — the soak and its paired GA round at one commit, the rest of the rounds at
+that commit or a later inheritable one, and CI at the delivered tip (§9 lists which run sits on which
+SHA, and the classifier check at the end of §9 is what makes the ancestor's rounds the tip's evidence).
+§20's rule was respected in the making: no "metadata-only" exception was added to
 the classifier for pinned Dockerfiles, because a base image decides which OpenSSL ships in the
 artifact.
 
@@ -308,7 +311,8 @@ published, the row quotes its own artifact rather than the tick.
 | [35498634857](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35498634857) | `3c523f4` | **success** |
 | [35500219964](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500219964) | `4aff814` | **success** — and reading its evidence artifacts back is what produced F-34 |
 | [35502404774](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35502404774) | `a79d29c` | **success** — five `release-image-builds` cells green; its artifacts produced F-35 and F-36 and carried the F-34 verification (below) |
-| final tip | pending | re-run after §10's findings are recorded; CI is the only round that cancels its own predecessor |
+| [35505431617](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35505431617) | `8797a64` | **failure** — F-38: the `frontend` job's toast assertion raced antd's async mount on a commit that changed no frontend file. The other nine jobs, all five `release-image-builds` cells included, were green |
+| [35506705907](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506705907) | `b671f53` | running — the tip under certification, with the awaited toast assertion |
 
 **Linux certification** (`cap-linux-certification.yml`, `layer: release`; GA-GATE 33's evidence):
 
@@ -320,6 +324,7 @@ published, the row quotes its own artifact rather than the tick.
 | [35498707800](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35498707800) | `3c523f4` | **success** |
 | [35500248467](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500248467) | `4aff814` | **success** |
 | [35500710588](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500710588) | `4aff814` | **success** — re-dispatched to read the artifact back, which is how F-31's fix was confirmed rather than assumed |
+| [35506716466](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506716466) | `b671f53` | running — the round GA-GATE 33 will resolve at the certified SHA |
 
 **Kubernetes certification** (`cap-k8s-certification.yml`, 34 gates incl. the new K8S-GATE 34):
 
@@ -333,6 +338,7 @@ published, the row quotes its own artifact rather than the tick.
 | [35498709533](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35498709533) | `3c523f4` | **success** — `"source": "K8S-GATE 34"`, five images, `worker_sandbox_coordinates` both sandboxes, `pull_errors: []` |
 | [35500246776](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500246776) | `4aff814` | **success** |
 | [35500709149](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500709149) | `4aff814` | **success**, 34/34, same observed set — the round §8's GATE 10 cites |
+| [35506717889](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506717889) | `b671f53` | running — ARTIFACT-GATE 10 on the certified SHA |
 
 **Reliability soak** (`cap-ga-reliability.yml`, 7200 s — the only proof GA-GATE 24/25/26/34/35 get):
 
@@ -341,7 +347,8 @@ published, the row quotes its own artifact rather than the tick.
 | [35485713552](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485713552) | `3cc6579` | **success** |
 | [35496756245](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35496756245) | `9de9f0f` | **success** — 07:23:52Z → 09:31:26Z (2 h 07 m) |
 | [35498711108](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35498711108) | `3c523f4` | **cancelled by hand** a third of the way in, because a fix landed; a soak of a superseded commit produces no evidence, and `cancel-in-progress: false` means it had to be cancelled deliberately rather than by the push |
-| [35500245071](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500245071) | `4aff814` | pending — started 08:41:26Z |
+| [35500245071](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35500245071) | `4aff814` | **cancelled by hand at 2 h 23 m** (08:41:26Z → 11:04:42Z). It could no longer certify anything: F-38's fix landed at `b671f53`, which sits under `frontend/src/` and so blocks inheritance from `4aff814`, and the ref's soak group serialises — finishing that round would have delayed the one that counts by another 20 minutes. The two green soaks above are history; the tip's evidence is the one below it |
+| [35506714369](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35506714369) | `b671f53` | running — started 11:02:21Z; the round the strict GA verdict pairs with |
 
 **FULL GA, strict** (`cap-ga-certification.yml` with `ga_strict=true`, so `CAP_GA_STRICT=1`,
 `PLANNED == failure`, 40/40 required):
@@ -351,7 +358,7 @@ published, the row quotes its own artifact rather than the tick.
 | [35485715411](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35485715411) | `3cc6579` | **failure** — F-27 |
 | [35488263281](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35488263281) | `c69d960` | **failure** — `{total: 40, passed: 33, failed: 2, planned: 5}` in its own artifact. `GA-GATE 22` is F-29: 57 tests green, the Trivy target list in `security_policy.json` naming `cap-sandbox-http:latest`, so the gate died on a policy file rather than on an image. `GA-GATE 33` failed alongside it for a second, unrelated reason — no Linux release-layer run existed at `c69d960` for it to find |
 | [35492392358](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35492392358) | `fdee042` | **failure**, and the artifact says why in its own fields: `mode: final-strict`, `full_ga_certified: false`, `gate_summary: {total: 40, passed: 35, planned: 5}` with `GA-GATE 24/25/26/34/35` the five. It was dispatched without a soak at its SHA, so the reliability evidence those five gates consume did not exist (`reliability soak run for fdee042…: <none>`), and the strict meta-gate went red instead of certifying on a partial record. That is the gate working — and it is why the soak and the GA round are ordered and matched below |
-| pending | `4aff814` | to be dispatched from a ref pinned at that commit once its soak is green: `workflow_dispatch` always runs a ref's *tip*, and the GA job resolves the soak by exact `head_sha` |
+| pending | `b671f53` | to be dispatched from `cert/ga-strict-b671f53`, a ref pinned at that commit: `workflow_dispatch` always runs a ref's *tip*, the GA job resolves its soak by exact `head_sha`, and this line keeps moving forward while the soak runs |
 
 One field in that artifact needs reading carefully: `baseline` is a *historical anchor* — Phase 28.6
 as it stood when 28.7 was written, `{"run": "32565459369", "gates": "32/32 PASS", "commit":
@@ -380,10 +387,12 @@ while their `config_digest`s differ (`7d4eb213…` vs `b22192b0…`, F-35's two 
 `cap-sandbox-browser` records `base_refs: ["cap-sandbox-http:1.0.6-rc1"]`, i.e. the browser image
 states what it was built on, and that ref exists only because the same job built it minutes earlier.
 
-**Inheritance.** `scripts/release/classify_diff.py 4aff814 <tip>` reports
-`runtime certification INHERITED (release_metadata_only=True)` — the commits between are
-`ci_workflow`, `test_harness`, `certification_generator` and `docs`, none runtime-affecting — so the
-`4aff814` rounds above are the tip's evidence. The classifier was not modified for this purpose, and
+**Inheritance.** `4aff814` would have been the certified SHA — `classify_diff.py 4aff814 <tip>` said
+`INHERITED (release_metadata_only=True)`, and CI, Linux and Kubernetes were green there. F-38 took it
+away: the fix lands in `frontend/src/hooks/`, which the classifier charges as `production_runtime`, so
+nothing at or after `b671f53` can inherit a `4aff814` round. `scripts/release/classify_diff.py b671f53
+<tip>` therefore has to read `INHERITED` for the tip to carry the rounds above, and it does — docs and
+`test_harness` only, no runtime-affecting file. The classifier was not modified for this purpose, and
 no round in these tables is claimed as green before its run finished.
 
 ## 10. Remaining findings after this closure
@@ -468,11 +477,12 @@ no round in these tables is claimed as green before its run finished.
   pre-fix workflow (`MISSING: ['dist/values-release-*.yaml']`) — checked, not asserted.
 - **F-31** (found and closed inside this round) — the first Kubernetes round whose gate passed for
   the new observed-image-set still reported `not_observed` in its own artifact. The cause is three
-  lines of the same workflow: `CAP_CERT_OUT: outputs/cap-cert` is relative (line 24), the pytest step
-  runs with `working-directory: backend` and therefore writes its junit to `../outputs/cap-cert/`
-  explicitly (lines 256, 265), and the upload reads `outputs/cap-cert/` from the repository root
-  (line 293). Gate 34 resolved the relative variable against *its* working directory, so the record
-  landed in `backend/outputs/cap-cert/` — beside the tests, out of reach of the generator and of the
+  lines of the same workflow: `CAP_CERT_OUT: outputs/cap-cert` is relative, the pytest step runs with
+  `working-directory: backend` and therefore writes its junit out explicitly
+  (`--junitxml=../outputs/cap-cert/junit-k8s.xml`), and the upload reads `path: outputs/cap-cert/`
+  from the repository root. Gate 34 resolved the relative variable against *its* working directory,
+  so the record landed in `backend/outputs/cap-cert/` — beside the tests, out of reach of the
+  generator and of the
   upload. The safe fallback did its job (it declined to invent coordinates); the fix resolves the path
   against the repository root and stamps the record with its commit, and the generator refuses a
   record from another commit rather than searching candidate directories — this repository has already
@@ -512,6 +522,25 @@ no round in these tables is claimed as green before its run finished.
   `entries[0]` pass every assertion — it lists arm64 first now, and the three driver tests assert the
   values rather than the fields' presence (verified: an unfiltered pick produces
   `linux/arm64` and fails).
+- **F-38** (found and closed inside this round) — CI went red on `8797a64`, whose diff against the
+  previous green tip touches no file under `frontend/`. `usePageList`'s error test asserted the antd
+  toast with a synchronous `getByText` immediately after awaiting the inline alert: the alert arrives
+  with the state update that sets `error`, while the `App` message API mounts its DOM on a later tick,
+  so the assertion passed exactly when the awaits before it happened to leave enough slack. Measured
+  rate: one failure in the five completed `frontend` runs on this branch today. It is a release problem
+  rather than a CI nuisance because `release.yml`'s first job is `quality-gates:
+  uses: ./.github/workflows/ci.yml` — the same console suite stands between a tag and a publication.
+  `usePageList.test.tsx` now awaits the same text, and the control is executed rather than argued: with
+  `message.error` suppressed the test fails, so "await" is not a way to wait out an absence. The rest of
+  the suite was swept for the shape — every other toast-shaped assertion goes through
+  `findByText`/`waitFor` already, and the remaining synchronous `getByText("证据加载失败")` reads a
+  table `emptyText` rendered in the same update as the error state, not a toast.
+  What it cost is the reason to record it: the file lives under `frontend/src/`, the classifier charges
+  `production_runtime`, `b671f53` therefore cannot inherit the `4aff814` rounds, and a 7200-second soak
+  plus a strict FULL GA round had to be re-run for a change to nothing but a test. That is the rule
+  working — a test inside the shipped tree sits beside shipped code — and the alternative is an
+  exception claiming a runtime-affecting path is not, which this round declined twice already (F-33,
+  F-37).
 - **F-32** (found and closed inside this round) — `values-release-<version>.yaml` pinned five image
   coordinates and the production chart reads six. `worker.image` — the deployment that runs
   acquisitions — was left at the chart's placeholder registry, `ghcr.io/example/cap-backend`, so
