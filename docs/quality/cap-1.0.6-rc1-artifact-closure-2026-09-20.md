@@ -334,6 +334,10 @@ published, the row quotes its own artifact rather than the tick.
 | [35517891043](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35517891043) | `8d2110d` | **success** — all ten jobs, including the five clean-runner image builds whose records are quoted below |
 | [35519211202](https://github.com/laolaola278-dev/cyber-agent-platform/actions/runs/35519211202) | `02a81eb` | **success on attempt 2**, all ten jobs. Attempt 1's `release-image-builds (cap-frontend)` cell died before building: `docker/setup-buildx-action` could not bootstrap its container builder — `Get "https://auth.docker.io/token?…": Client.Timeout exceeded while awaiting headers` — and the same runner failed the SSL download of `aquasecurity/setup-trivy`, so no record existed and `if-no-files-found: error` reddened the job. The other four image cells in that attempt built fine, and the commit's delta is documentation; that is a runner-network transient, so only the failed job was re-run rather than the verdict being argued with. Its record at this head: `build_driver docker`, `platform linux/amd64`, `source_revision 02a81eb…` |
 
+The CI table stops at `02a81eb` on purpose. Documentation commits keep landing above it, and a row
+per prose edit would be a race with the file it documents; `classify_diff.py` reads every delta after
+`c2fb7f4` as `docs`, so those runs confirm the same thing rather than certify anything new.
+
 **Linux certification** (`cap-linux-certification.yml`, `layer: release`; GA-GATE 33's evidence):
 
 | Attempt | SHA | Conclusion |
@@ -687,13 +691,14 @@ The basis, each line tied to a run or to a check that executes what the sentence
   against fabricated evidence and refuse the partial shapes; one (5) because five clean-runner builds
   succeeded on a pushed commit whose uploaded records were then read back — and disagreed with each
   other in ways that became F-34, F-35 and F-36.
-- **CI is green** at `d30b4e7` (run 35508682453), at `57c4a09` (run 35516542339 — where the schema check
-  F-41 adds first ran on a clean runner rather than only on the Windows audit host) and at the delivered
-  head `02a81eb` (run 35519211202, attempt 2; attempt 1 lost one image cell to a runner that could not
-  reach `auth.docker.io` or `codeload.github.com`, §9). Everything above `57c4a09` is documentation and
-  `classify_diff.py d30b4e7 <head>` returns `INHERITED` (`test_harness` + `docs`), so the verdict does not
-  rest on any of it. CI also passed at `b671f53` (run 35506705907), whose six evidence records §9 reads
-  line by line.
+- **CI is green** at `d30b4e7` (35508682453), `57c4a09` (35516542339), `8d2110d` (35517891043) and
+  `02a81eb` (35519211202 — attempt 2; attempt 1 lost one image cell to a runner that could not reach
+  `auth.docker.io` or `codeload.github.com`, §9). The only non-documentation change after `d30b4e7` is
+  the schema test added in `c2fb7f4`, and CI from `57c4a09` onward executes it — which is also where it
+  first ran on a clean runner rather than only on the Windows audit host. Every commit above those four
+  is documentation, `classify_diff.py d30b4e7 <head>` returns `INHERITED` (`test_harness` + `docs`), so
+  no further CI cycle is what makes this claim true. CI also passed at `b671f53` (run 35506705907),
+  whose six evidence records §9 reads line by line.
 - **Kubernetes certification** — run 35508689787 at `d30b4e7`: `gates: {total: 34, passed: 34, failed:
   0, not_run: 0}`, artifact `source: K8S-GATE 34`, five CAP images at the tag the job built, both
   sandbox coordinates present, `pull_errors: []` (ARTIFACT-GATE 10).
