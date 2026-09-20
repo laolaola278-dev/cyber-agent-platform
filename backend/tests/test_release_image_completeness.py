@@ -980,3 +980,82 @@ def test_values_renderer_pins_every_image_the_chart_reads(
     values = _values()
     for dotted in declared:
         assert _lookup(values, dotted), f"{dotted} is not a chart value path"
+
+
+def needs_graph(doc: dict) -> dict[str, set[str]]:
+    """`job -> the jobs it declares`, read out of the parsed workflow.
+
+    `needs` is a list, a bare string or a mapping depending on how the author
+    spelled it, and a helper that quietly drops one of those shapes reports an
+    empty edge set rather than an error -- which is the wrong answer in the
+    direction that matters.
+    """
+    graph: dict[str, set[str]] = {}
+    for name, job in (doc.get("jobs") or {}).items():
+        needs = (job or {}).get("needs")
+        if isinstance(needs, str):
+            needs = [needs]
+        elif isinstance(needs, dict):
+            needs = list(needs)
+        graph[name] = set(needs or [])
+    return graph
+
+
+def reaches(graph: dict[str, set[str]], start: str, target: str) -> bool:
+    """Can ``start`` reach ``target`` by following `needs` edges?"""
+    seen, queue = {start}, [start]
+    while queue:
+        for parent in graph.get(queue.pop(), set()):
+            if parent == target:
+                return True
+            if parent not in seen:
+                seen.add(parent)
+                queue.append(parent)
+    return False
+
+
+#: What has to be true before anything announces this release.
+GATED_JOBS = ("release-chart", "publish-release")
+GATE_JOB = "release-image-completeness"
+
+
+def test_the_completeness_gate_is_in_front_of_everything_that_announces() -> None:
+    """ARTIFACT-GATE 11's *edges*, not only the gate's body.
+
+    Executing the gate against four-of-five evidence proves it refuses. It does not
+    prove that the jobs which create the GitHub Release and package the chart have
+    to wait for it -- and a gate nobody has to pass is a report. The graph is walked
+    out of the parsed YAML, transitively, because `release-chart` sits one hop from
+    the gate and `publish-release` behind that.
+    """
+    doc = _release_doc()
+    graph = needs_graph(doc)
+    assert set(GATED_JOBS) <= set(graph), f"release.yml lost jobs: {GATED_JOBS}"
+    for job in GATED_JOBS:
+        assert reaches(graph, job, GATE_JOB), (
+            f"{job} can run without {GATE_JOB}: needs={sorted(graph[job])}"
+        )
+    # ...and the gate has to see all five images and the scan of each of them.
+    for required in (
+        "release-images", "release-sandbox-browser", "release-image-security",
+        "validate-tag", "verify-certification",
+    ):
+        assert reaches(graph, GATE_JOB, required), (
+            f"{GATE_JOB} does not wait for {required}, so its verdict is about "
+            f"evidence it never required"
+        )
+
+
+def test_the_gate_graph_check_is_sensitive() -> None:
+    """Cutting the edge has to be what the check reports."""
+    doc = _release_doc()
+    graph = needs_graph(doc)
+    assert graph["release-chart"], "release-chart declares no needs at all"
+    severed = {name: set(edges) for name, edges in graph.items()}
+    severed["release-chart"] = {
+        edge for edge in severed["release-chart"] if edge != GATE_JOB
+    }
+    assert reaches(graph, "publish-release", GATE_JOB), "the intact graph says otherwise"
+    assert not reaches(severed, "release-chart", GATE_JOB), (
+        "removing the gate's edge did not disconnect the chart job"
+    )
