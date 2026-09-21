@@ -27,6 +27,12 @@ as ``verify-certification``, and this file is what keeps it honest:
     unparseable artifact must all refuse the release, and a strict round that
     says it certified must pass;
   * an API error must raise, never be misread as "uncertified, carry on";
+  * the verdict is computed in one place (`decide`), and a recorded refusal cannot
+    coexist with a PASS: if an authority record or a classification verdict says
+    otherwise while no failure line was recorded, the gate raises rather than passing;
+  * every refused authority state is asserted to keep the release from passing, and
+    `ERROR` blocks publication for the same structural reason `FAIL` does -- which is
+    pinned by asserting that nothing in the gate job tolerates its own failure;
   * the prose in ``cap-linux-certification.yml`` may not claim a mechanism
     ``release.yml`` does not implement, in either direction.
 """
@@ -431,11 +437,20 @@ def test_nothing_in_the_gate_job_tolerates_its_own_failure() -> None:
     doc = _release_doc()
     job = doc["jobs"][GATE_JOB]
     assert not job.get("continue-on-error"), "the gate job may not tolerate its own failure"
+    assert "if" not in job, (
+        "a conditional certification gate is an optional one -- `if:` on the job "
+        "would let a run exist where publication was never checked"
+    )
+    assert job["needs"] == "validate-tag", (
+        "the gate must run on the tag's own commit, not on a ref it chose itself"
+    )
     for step in job["steps"]:
         assert not step.get("continue-on-error"), (
             f"{step.get('name') or step.get('uses')}: a gate step that may fail "
             "without failing the job makes the gate advisory"
         )
+        if step.get("name") == GATE_STEP:
+            assert "if" not in step, "the verdict step itself must be unconditional"
     gate = next(step for step in job["steps"] if step.get("name") == GATE_STEP)
     script = gate["run"]
     assert "|| true" not in script, "a swallowed exit code is a swallowed verdict"
