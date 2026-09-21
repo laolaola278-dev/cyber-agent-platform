@@ -95,17 +95,21 @@ metadata. So the comparison the acceptance criterion asks for cannot be performe
 what is on file, at any commit, on any of the five images — and that, not a diff between
 two builds, is the finding of this stage.
 
-## 4. What must be decided before anything claims reproducibility
+## 4. The reproducibility model is PROPOSED, not policy
 
 Plan item G states this and it is repeated here because it is the part that cannot be
-derived from the bytes: *which* digest is the reproducibility claim. Recommended —
+derived from the bytes: *which* digest is the reproducibility claim. **PROPOSED MODEL —
+not an established policy, and not a gate contract:** nothing here fixes a digest rule for
+CI to enforce, because the two-build structural comparison that would justify one has never
+run. Proposed —
 platform manifest digest plus OCI config digest, with attestation manifests excluded
 (on the assumption that their own invocation timestamps can move an index digest while
 every layer matches — the pushed attestations were never read, so this is a definitional
 choice made in the absence of evidence, not a measured behaviour), and the index digest
 kept as a "verify against the published value" check
-rather than a rebuild comparison. Until that is agreed, a "reproducible" badge would be
-a statement about an undefined quantity.
+rather than a rebuild comparison. Until that model is agreed **and** the comparison in §5
+has run, a "reproducible" badge — or a release gate keyed to a timestamp-normalised config
+digest — would be a statement about an undefined quantity, so neither is adopted here.
 
 ## 5. The measurement that would answer F-39 (spec only; nothing here implements it)
 

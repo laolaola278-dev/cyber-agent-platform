@@ -125,10 +125,15 @@ tag with no `buildx-version` input in all four jobs that use it, and the BuildKi
      `attestations.builder_id` **read back from the pushed manifest** (the same rule that fixed
      `attestations`/`platform`: read it, never restate the flags), and let completeness require it to be
      a `github.com/<owner>/<repo>/actions/runs/<id>` URL equal to the publishing run.
-  4. **Then, optionally:** `actions/attest-build-provenance` per image (`attestations: write`,
-     `id-token: write`) so the subject digest is bound to a Sigstore-signed statement issued over OIDC
-     and verifiable with `gh attestation verify`. Keep buildx provenance alongside — they answer
-     different questions, and this is the step that makes the binding machine-checkable by a third party.
+  4. **`actions/attest-build-provenance` per image (`attestations: write`, `id-token: write`) — an
+     independent security/design decision, NOT the automatic successor to step 3:** it binds the subject
+     digest to a Sigstore-signed statement issued over OIDC and verifiable with `gh attestation verify`,
+     which is a question of who must be able to verify a release without trusting this repository's own
+     evidence. Buildx provenance stays alongside it; the two answer different questions.
+
+  **Dependency chain, corrected:** V1 authenticated read-only observation → define the *observed*
+  builder/provenance contract → only then step 3's assertion. Steps 1–3 are one chain; step 4 is a
+  separate decision that does not follow from them and is not scheduled behind them.
 - **Files likely affected.** `scripts/release/build_release_image.sh`; `.github/workflows/release.yml`,
   `ci.yml`; `backend/tests/test_release_build_script.py`, `test_release_image_completeness.py`; later
   `deployment/helm/cap/README.md` and the production checklist.
@@ -211,7 +216,9 @@ tag with no `buildx-version` input in all four jobs that use it, and the BuildKi
   tracked `docs/quality/artifacts/cap-1.0.6-rc1-artifact-closure/`, and the measurement itself came from
   an ad-hoc HTTPS method with no checked-in generator.
 - **Proposed remediation, ordered so the cheap half does not wait for the expensive half.**
-  1. `backend/tests/test_third_party_image_lock.py`: every `provenance.evidence` path must exist **and**
+  1. *(proposed as written; **superseded by the status note below** — the sentence "a pointer to an
+     untracked path must fail" is not this repository's contract and no document states it as one)*
+     `backend/tests/test_third_party_image_lock.py`: every `provenance.evidence` path must exist **and**
      be git-tracked; an entry without one must carry an explicit reason field (R4: two entries are
      silent today). `test_harness` ⇒ inheritable, lands immediately.
      **As executed (batch 1, stage 3) — differently, and necessarily so: the landed contract is
