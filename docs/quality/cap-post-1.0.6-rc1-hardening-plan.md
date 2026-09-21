@@ -392,7 +392,8 @@ it is not restated here and not reopened.
 | Batch | Items | Classifier cost | Recert needed |
 | --- | --- | --- | --- |
 | 1 (CI-only) — **executed; status per item** | **A (F-33 gate) DONE** · **B1 (verify attestation) UNVERIFIED**, probe attempted and inaccessible · **B2 (pin buildx/BuildKit) DEFERRED**, nothing pinned · **E1 (evidence guard) DONE as a transitional tracked-twin contract** · **E2 (tracked generator) DEFERRED**, not implemented · **G(i) (two-build measurement) PARTIAL**, no same-SHA independent pair produced · **H (F-25 record) DEFERRED**, precondition unavailable | only what landed is audited: `ci_workflow` + `test_harness` + `docs` → INHERITED, no runtime-affecting path | no — CI cycle only |
-| 2 (next RC) | C (compose pinning) + D (schema widening) + E step 3 (repoint) + B steps 3–4 (assert, attest) | `deployment/` → runtime-affecting | yes — CI + Linux + K8s + soak + strict GA at one SHA, ≈ 3.5 h serial |
+| 2 (next RC) | C (compose pinning) + D (schema widening) + E step 2 (tracked generator) and step 3 (repoint) + B step 2 (pin buildx/BuildKit) + **B step 3 (assert) only once V1 has been read and the observed builder/provenance contract is written** | `deployment/` → runtime-affecting | yes — CI + Linux + K8s + soak + strict GA at one SHA, ≈ 3.5 h serial |
+| 2′ (separate decision, not part of batch 2) | B step 4 (GitHub/Sigstore attestation) | depends on the design chosen | its own round if taken |
 | 3 (later) | F (24 h multi-leg soak roll-up) | `ci_workflow`/`test_harness`, or recert if GA-gate accounting changes | decide after batch 2 |
 | 4 (own round) | **finish G(i) first** (the same-SHA two-build comparison job), then G steps (ii)–(v) (deterministic metadata, hash pins, apt policy, pins) | Dockerfiles ⇒ full recert, image bytes change | yes, dedicated round |
 
