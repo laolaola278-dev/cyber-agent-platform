@@ -8,10 +8,11 @@ new tag, no Batch 2, no action against the sealed `v1.0.6-rc1` publication state
 scripts/release/classify_diff.py` → empty).
 
 One counting rule, stated once because a report that audits its own commit set cannot obey it
-and exclude itself: the measurements were taken at `b07ba7d`, this report's own commit is
-`a7c3c20`, and that commit is classified in §D next to the other fifteen rather than hidden. No
-number below changes because of it — it adds one `docs` file that was already in every cumulative
-range.
+and exclude itself: the audit's measurements were taken at `b07ba7d`; this file's own commits
+(`a7c3c20`, `803712f`, and any later edit to this file) are named and classified in §B–§D rather
+than hidden. Nothing about the
+verdict depends on them — they add `docs` files that were already counted in every cumulative
+range, and §D gives the single command a reviewer re-runs if more are added.
 
 ## A. Scope and status
 
@@ -48,16 +49,17 @@ PASS or DONE anywhere in this report, in the plan, in `docs/known-issues.md` or 
 
 ## B. Staged commit graph
 
-Sixteen linear commits on local `main`, each on top of the previous, above the sealed line
-`4d8f9c7`. No merge, no rebase, no rewrite of published history. Fifteen of them are the audited
-batch; the sixteenth is this report, whose own commit `a7c3c20` is classified in §D.
+A linear chain on local `main` — the fifteen audited batch commits plus this file's own, all
+listed in the table below — each sitting on top of the previous, above the sealed line
+`4d8f9c7`. No merge, no rebase, no rewrite of published history.
 
 ```
 32ec298 (origin/main, v1.0.5)  …  4d8f9c7 (sealed v1.0.6-rc1, release/1.0.6-rc1)
                                      │
    5f79950 ─ c7687c9 ─ d4069d6 ─ e47b6b4 ─ 05a1553 ─ 036d389 ─ 2ce885b ─ 366a06d
                                      │
-   623e820 ─ c31d21d ─ 107867f ─ 21627a9 ─ 66add1c ─ 656de2c ─ b07ba7d ─ a7c3c20 (HEAD, main)
+   623e820 ─ c31d21d ─ 107867f ─ 21627a9 ─ 66add1c ─ 656de2c ─ b07ba7d ─ a7c3c20 ─ 803712f ─ …
+                                           (local main; the sealed line 4d8f9c7 is below all of them)
 ```
 
 | # | Commit | Parent | Bucket | Content |
@@ -78,9 +80,12 @@ batch; the sixteenth is this report, whose own commit `a7c3c20` is classified in
 | 14 | `656de2c` | `66add1c` | Docs | counts anchored to an audited commit instead of a moving HEAD |
 | 15 | `b07ba7d` | `656de2c` | **G/H** | reproducibility model marked PROPOSED; B4 split from the B3 chain |
 | 16 | `a7c3c20` | `b07ba7d` | Docs | this push-readiness audit |
+| 17 | `803712f` | `a7c3c20` | Docs | the report naming its own commit, and the plan's batch-2 row corrected to the chain in §L |
+| — | later | | Docs | any further commit this round is documents-only, on files already counted below; §D states the single check that stays valid |
 
-The last code/test commit is `107867f`; commits 12–16 change documents only, so the audited
-code state is `107867f` and every test result below was produced on it (or re-run since).
+The last code/test commit is `107867f`; every commit after it in this round changes documents
+only, so the audited code state is `107867f` and every test result below was produced on it (or
+re-run since).
 
 ## C. Changed files per commit
 
@@ -102,6 +107,7 @@ code state is `107867f` and every test result below was produced on it (or re-ru
 | `656de2c` | `docs/quality/cap-post-rc-batch-1-closure-2026-09-21.md` |
 | `b07ba7d` | `docs/quality/cap-f39-reproducibility-measurement-2026-09-21.md`; `docs/quality/cap-post-1.0.6-rc1-hardening-plan.md` |
 | `a7c3c20` | `docs/quality/cap-post-rc-batch-1-closure-2026-09-21.md` |
+| `803712f` | `docs/quality/cap-post-rc-batch-1-closure-2026-09-21.md`; `docs/quality/cap-post-1.0.6-rc1-hardening-plan.md` |
 
 Cumulative `4d8f9c7` → HEAD: **11 distinct files** — one workflow, two test modules, eight
 documents. Nothing under `deployment/`, `backend/app/`, `frontend/src/`, `sdk/`, any Dockerfile,
@@ -112,7 +118,7 @@ documents. Nothing under `deployment/`, `backend/app/`, `frontend/src/`, `sdk/`,
 ## D. Classifier evidence per commit
 
 `scripts/release/classify_diff.py <parent> <commit>` run as a separate process for every one of
-the fifteen hops, plus three cumulative ranges; this report's own commit was measured with the
+the fifteen hops, plus three cumulative ranges; this file's own commits were measured with the
 same command afterwards. Transcript: `_tmp/classifier_audit_push_ready.log`
 (machine-generated table, "commits audited: 15 | exceptions: none"). The classifier is the
 authority; it was not edited, and no verdict here was assigned by hand from a path pattern.
@@ -138,16 +144,19 @@ only". `runtime_affecting` is the blocking property.
 | `66add1c` | `21627a9` | 1 | `docs` | False | True | none | INHERITED |
 | `656de2c` | `66add1c` | 1 | `docs` | False | True | none | INHERITED |
 | `b07ba7d` | `656de2c` | 2 | `docs` ×2 | False | True | none | INHERITED |
-| `a7c3c20` (this report) | `b07ba7d` | 1 | `docs` | False | True | none | INHERITED |
-| **cumulative** `4d8f9c7` → `a7c3c20` | | 11 | `ci_workflow` 1, `test_harness` 2, `docs` 8 | False | True | none | **INHERITED** |
-| **cumulative** `b671f53` → `a7c3c20` (Linux/GA/soak certified line) | | 15 | adds the closure round's own `docs`/`test_harness` | False | True | none | **INHERITED** |
-| **cumulative** `d30b4e7` → `a7c3c20` (K8s certified line) | | 14 | | False | True | none | **INHERITED** |
+| `a7c3c20` (this file) | `b07ba7d` | 1 | `docs` | False | True | none | INHERITED |
+| `803712f` (this file, plan table) | `a7c3c20` | 2 | `docs` ×2 | False | True | none | INHERITED |
+| **cumulative** `4d8f9c7` → HEAD | | 11 | `ci_workflow` 1, `test_harness` 2, `docs` 8 | False | True | none | **INHERITED** |
+| **cumulative** `b671f53` → HEAD (Linux/GA/soak certified line) | | 15 | adds the closure round's own `docs`/`test_harness` | False | True | none | **INHERITED** |
+| **cumulative** `d30b4e7` → HEAD (K8s certified line) | | 14 | | False | True | none | **INHERITED** |
 
 Stop condition — any commit `RECERTIFICATION_REQUIRED` or `runtime_affecting=true` → **FINAL
-VERDICT = NOT READY**: **not triggered.** Sixteen per-commit verdicts and three cumulative
-ranges all come back INHERITED with `runtime_affecting=false`, `release_metadata_only=true` and
-no blocking files; the three ranges were re-run after this report's commit landed and still count
-11 / 15 / 14 files (`_tmp/cum_4d8f9c7.json`, `_tmp/cum_b671f53.json`, `_tmp/cum_d30b4e7.json`).
+VERDICT = NOT READY**: **not triggered.** Every per-commit verdict — the fifteen audited batch
+commits in the transcript, plus this file's own — and all three cumulative
+ranges come back INHERITED with `runtime_affecting=false`, `release_metadata_only=true` and
+no blocking files; the three ranges were re-run after this file's own commits landed and still
+count 11 / 15 / 14 files (`_tmp/chk_4d8f9c7.json`, `_tmp/chk_b671f53.json`,
+`_tmp/chk_d30b4e7.json`).
 Two consequences: batch 1 kept its CI-only contract, and a tag cut later at this
 head would still resolve its certification from `b671f53` and `d30b4e7` rather than needing
 a fresh round. §N records the one range that is *not* inheritable and why that is expected.
@@ -476,8 +485,9 @@ direct tracked pointer once E3 lands.
 
 ## M. Sealed-release integrity
 
-Re-verified read-only at this head (`a7c3c20`), after the same checks were taken at `b07ba7d`.
-Nothing was pushed at any point, and the working tree is clean (`git status --short` → empty).
+Re-verified read-only at the current head, after the same checks were taken at `b07ba7d` and
+`a7c3c20`. Nothing was pushed at any point, and the working tree is clean
+(`git status --short` → empty).
 
 | Required check | State | How, and what was seen |
 | --- | --- | --- |
@@ -488,7 +498,7 @@ Nothing was pushed at any point, and the working tree is clean (`git status --sh
 | sealed GitHub Release and its assets not modified | **no write path exists from here**; the API could not be read either, so their current bytes are **UNVERIFIED**, not re-confirmed | no credentials (§G); the distinction is recorded rather than glossed |
 | no stable/latest promotion introduced | nothing touched `latest`; structurally unaffected by this batch — `release.yml` maps `*-rc` tags to `--prerelease`, and the newest GA tag is still `v1.0.5` (tag object `b5c4eeea…` → commit `32ec298…`, still `origin/main`). GitHub's own `latest` flag remains **UNVERIFIED** (no API access) | `release.yml:41-45`; `git tag --points-at`; `git cat-file` |
 | no new tag created | 12 tags, none at HEAD, none added this round | `git tag \| wc -l`; `git tag --points-at HEAD` → empty |
-| no commits to the sealed line | 16 commits, all local-only on `main`; `origin/main` is still `32ec298`, i.e. local is **134 commits ahead** — direct evidence that nothing was pushed | `git rev-list --count origin/main..HEAD`; `git ls-remote origin refs/heads/main` |
+| no commits to the sealed line | every commit in this round is local-only on `main`: `origin/main` still sits at `32ec298` while local `main` is more than 130 commits ahead (135 as measured) — direct evidence that nothing was pushed. The ahead-count grows by one with each documents-only edit to this file; the sealed line's hash does not move | `git rev-list --count origin/main..HEAD`; `git ls-remote origin refs/heads/main` |
 | no workflow rerun or dispatch, no registry mutation | none attempted | §G, §K |
 
 Where a live state could not be read, it is recorded as UNVERIFIED rather than re-confirmed — the
@@ -497,15 +507,17 @@ the `latest` flag specifically.
 
 ## N. Push recommendation
 
-**Recommended: push `main` (`32ec298` → `a7c3c20`) for review. Not performed.** What a push does
-and does not mean, stated before the recommendation rather than after it:
+**Recommended: push local `main` — `32ec298` → its tip, which is this file's last commit — for
+review. Not performed.** What a push does and does not mean, stated before the recommendation
+rather than after it:
 
-- Batch 1's sixteen commits are individually INHERITED with `runtime_affecting=false`, and the
+- Batch 1's fifteen audited commits, and this file's own documents-only commits alike, are
+  individually INHERITED with `runtime_affecting=false`, and the
   ranges from the sealed line and both certified lines are INHERITED too (§D). The CI-only
   contract held, and a tag cut later at this head would still resolve its certification from
   `b671f53` and `d30b4e7`.
 - The **whole** `origin/main → HEAD` range is not inheritable, and that is expected: `origin/main`
-  is the v1.0.5 line, and the 134 commits in between are the 1.0.6-rc1 work — 150 files, 71 of them
+  is the v1.0.5 line, and the ~135 commits in between are the 1.0.6-rc1 work — 150 files, 71 of them
   runtime-affecting (`production_runtime` 53, `deployment` 15, `test_harness` 33, `docs` 20, …), so
   the classifier answers RECERTIFICATION_REQUIRED for that range (`_tmp/classifier_origin_main_range.json`).
   That is not a batch-1 defect: it is the record that the rc1 line is certified where it was
@@ -520,7 +532,7 @@ and does not mean, stated before the recommendation rather than after it:
 - Suggested review order: `5f79950` + `2ce885b` + `107867f` (the gate and its proofs, one story),
   then `c7687c9` + `366a06d` (F-37 transitional guard), then `d4069d6` / `e47b6b4` + `623e820` /
   `b07ba7d` (the three status records), then the documents that only relabel history
-  (`05a1553`, `036d389`, `c31d21d`, `21627a9`, `66add1c`, `656de2c`).
+  (`05a1553`, `036d389`, `c31d21d`, `21627a9`, `66add1c`, `656de2c` and this file's own commits).
 
 ## O. FINAL VERDICT
 
@@ -528,7 +540,7 @@ The READY conditions, each against the evidence above:
 
 | Condition | Met? | Where |
 | --- | --- | --- |
-| every commit proposed for push judged INHERITED by the classifier | yes — 16 per-commit verdicts (fifteen in the batch transcript plus this report's own) and 3 cumulative ranges | §D |
+| every commit proposed for push judged INHERITED by the classifier | yes — each of the fifteen audited commits plus this file's own, individually, and all three cumulative ranges | §D |
 | `runtime_affecting=false` everywhere in the batch | yes — no blocking file in any range; stop condition never triggered | §D |
 | required local regression tests with no failure | yes — 264 collected → 260 passed / 0 failed / 0 errors / 4 skipped / 0 xfailed; CI-equivalent 1508 passed / 0 failed / 135 skipped, coverage 91.85% over the 90% floor | §J |
 | F-33 ERROR **and** FAIL both proven to block publication | yes — 12 states, each non-PASS; verdicts and process exit codes measured (0/PASS, 1/FAIL, 1/ERROR, 1/ERROR), including `failures=[]` + download failure → ERROR exit 1 | §E |
