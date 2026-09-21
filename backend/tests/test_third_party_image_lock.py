@@ -206,18 +206,24 @@ def test_lock_records_the_retirement_with_evidence() -> None:
     assert entry["provenance"]["open_gap"], "provenance must state what was NOT verified"
 
 
-# -- evidence pointers (F-37) -------------------------------------------------
+# -- evidence pointers: the transitional tracked-twin contract (F-37) ---------
 
-#: Where a clone can read the proof a ``provenance.evidence`` path cites.
+#: **What this contract is, and what it is not.** The final shape of F-37 is a lock
+#: whose `provenance.evidence` strings name files a clone can open. Getting there
+#: means editing those strings, and `classify_diff.py` charges every `deployment/`
+#: path as runtime-affecting -- so the pointer rewrite belongs in a round that
+#: re-certifies anyway, not in a CI-only batch.
 #:
-#: The cited paths live under ``outputs/``, which is gitignored on purpose -- it
-#: is where a run drops what it measured -- so neither requirement can be met the
-#: obvious way: requiring the cited path to exist would fail every fresh clone and
-#: every CI job that has not run the measurement, and requiring it to be tracked
-#: is a `deployment/` edit that costs a full re-certification (the pointers are
-#: what F-37 is about; rewriting them is batch 2's job). What a clone MUST be able
-#: to resolve is the claim: a tracked copy of the same measurement, stating the
-#: same digests.
+#: What *can* be guaranteed here is the substance the pointer exists to convey: for
+#: every cited path there must be a tracked copy of the same measurement, and the
+#: two must state the same digests. The cited file itself may be generated output
+#: under `outputs/`, and its absence from a clone is expected. Once the pointers are
+#: repointed, this test tightens to demanding the cited path be tracked directly --
+#: that change is the second half of F-37, not this file's.
+#:
+#: Why digests and not bytes: two copies of one measurement can be taken on
+#: different days. The tree's copies differ in exactly one date field, and refusing
+#: that would be refusing paperwork, not evidence.
 EVIDENCE_ROOTS = ("docs/quality/artifacts/",)
 
 #: What an entry with no evidence pointer has to carry instead, by field name.
@@ -308,8 +314,17 @@ def _pointer_problems(
         ]
     evidenced = [copy for copy in copies if claims.get(copy)]
     if not evidenced:
+        # `git ls-files` answers from the index, so a path can be tracked and still
+        # not be in this checkout; that is a broken tree, not a twin that proves
+        # nothing, and the two need different fixes.
+        absent = [copy for copy in copies if copy not in claims]
+        detail = (
+            "is tracked but absent from this checkout"
+            if len(absent) == len(copies)
+            else "asserts no digest at all"
+        )
         return [
-            f"{name}: the tracked copy {copies} asserts no digest at all, so it "
+            f"{name}: the tracked copy of {cited.rsplit('/', 1)[-1]} {detail}, so it "
             f"cannot stand in for {cited}"
         ]
     if measured is None:
@@ -393,13 +408,18 @@ def test_pointer_checker_refuses_a_claim_no_clone_can_read() -> None:
 
 
 def test_pointer_checker_refuses_a_tracked_twin_that_proves_nothing() -> None:
-    problems = _pointer_problems(
-        "probe",
-        "outputs/x/evidence.json",
-        ["docs/quality/artifacts/evidence.json"],
-        {"outputs/x/evidence.json": {"$.d": "sha256:" + "a" * 64}},
+    cited = "outputs/x/evidence.json"
+    copy = "docs/quality/artifacts/evidence.json"
+    empty_twin = _pointer_problems(
+        "probe", cited, [copy], {cited: {"$.d": "sha256:" + "a" * 64}, copy: {}}
     )
-    assert problems and "asserts no digest" in problems[0]
+    assert empty_twin and "asserts no digest at all" in empty_twin[0]
+    # `git ls-files` answers from the index: a tracked file can still be missing
+    # from this checkout, which is a broken tree rather than an empty proof.
+    missing_twin = _pointer_problems(
+        "probe", cited, [copy], {cited: {"$.d": "sha256:" + "a" * 64}}
+    )
+    assert missing_twin and "tracked but absent from this checkout" in missing_twin[0]
 
 
 def test_pointer_checker_notices_a_diverged_copy_but_not_a_different_date() -> None:

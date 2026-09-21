@@ -200,15 +200,22 @@ costs a CI cycle. The classifier is the arbiter and this plan does not propose e
   1. `backend/tests/test_third_party_image_lock.py`: every `provenance.evidence` path must exist **and**
      be git-tracked; an entry without one must carry an explicit reason field (R4: two entries are
      silent today). `test_harness` ⇒ inheritable, lands immediately.
-     **As executed (batch 1, stage 3) — differently, and necessarily so.** Requiring the *cited* path to
-     be tracked is red until step 3 rewrites it, so a CI-only batch cannot contain both halves as
-     written. The guard that landed demands what a fresh clone must actually be able to resolve: for
-     every cited pointer, a tracked twin under `docs/quality/artifacts/` that asserts the same digests,
-     with the dates and formatting of the two copies explicitly not the claim (the tree's two copies
-     differ in exactly one date field today). An entry that names no pointer must justify that by named
-     field, and the allowed set is compared against the lock's own entries so the convention cannot
-     widen by silence. Five controls with the real data, each noticed. Step 2 (a tracked generator
-     under `scripts/release/`) was not executed in this stage.
+     **As executed (batch 1, stage 3) — differently, and necessarily so: the landed contract is
+     transitional.** Requiring the *cited* path to be tracked is red until step 3 rewrites it, so a
+     CI-only batch cannot contain both halves. `test_third_party_image_lock.py` instead guarantees
+     the substance a pointer conveys — for every cited path, a tracked twin under
+     `docs/quality/artifacts/` stating the **same digests** — and proves six cases: cited ignored
+     file plus a matching twin → pass; cited file with no twin → fail; twin whose digest claims
+     differ → fail; twin tracked but absent from the checkout → its own diagnosis, because
+     `git ls-files` answers from the index; entry with neither pointer nor a justification named in
+     the test's table → fail; and the allow-set is compared against the lock's own entries, so the
+     absence convention cannot widen silently. The guard was also executed **inside a fresh clone**
+     (`git clone` into a scratch directory, where the cited `outputs/` file does not exist at all):
+     green, and red again once the tracked twin is removed from that clone — so the claims the test
+     depends on really are resolvable from a clone. Dates and formatting of the two copies are
+     explicitly not the claim; the tree's two copies differ in one date field and that is legal.
+     E3 tightens this to a direct tracked pointer once the strings are repointed. Step 2 (a tracked
+     generator under `scripts/release/`) was not executed in this stage.
   2. Add a tracked generator under `scripts/release/` (`certification_generator` ⇒ inheritable) that
      performs the documented registry method, writes to a tracked path, and records a machine-readable
      `verified_on` — the pattern this round already established for the date field.

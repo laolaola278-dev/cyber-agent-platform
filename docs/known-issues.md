@@ -288,7 +288,11 @@ listed so that an import name is not mistaken for a working capability.
    have a tracked twin under `docs/quality/artifacts/` asserting the **same
    digests** -- the dates and layout of the two copies are explicitly not the claim
    -- and refuses any entry that has neither a pointer nor a justification named in
-   the test's own table. The report's own captures are tracked beside it
+   the test's own table. That guard is a **transitional contract**: it verifies the
+   claim a clone must be able to resolve, and it was executed inside a fresh clone
+   where the cited generated file does not exist at all. Once the five strings point
+   at tracked paths, the guard tightens to requiring the cited path itself to be
+   tracked. The report's own captures are tracked beside it
    (`docs/quality/artifacts/cap-1.0.6-rc1-artifact-closure/`); the five pointers
    in the lock were deliberately not rewritten, because `classify_diff.py` puts
    every path under `deployment/` in the runtime-affecting `deployment` category,
