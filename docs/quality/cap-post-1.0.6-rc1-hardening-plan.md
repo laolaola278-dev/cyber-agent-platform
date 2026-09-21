@@ -38,6 +38,12 @@ costs a CI cycle. The classifier is the arbiter and this plan does not propose e
 
 ## A. F-33 — publication gate cannot distinguish strict GA from development GA — P0
 
+**Status (batch-1 closure): DONE.** The gate reads each round's own verdict artifact, refuses on
+every listed condition, and computes its verdict in one place that cannot reconcile a recorded
+refusal with a PASS. What this does *not* claim: the new code has never run inside a release — no
+tag, no dispatch — and the run-resolution half was last exercised live by the sealed publication
+run, which predates it. See the closure report §D and §J.
+
 - **Issue.** The gate that decides whether a tag may publish cannot tell a final-strict GA round from a
   development-mode one.
 - **Root cause / current limitation.** `release.yml`'s `verify-certification` job (the step
@@ -90,6 +96,14 @@ costs a CI cycle. The classifier is the arbiter and this plan does not propose e
   round's own SHA and three strict-but-incomplete rounds.
 
 ## B. Provenance builder identity — P0 verification, P1 implementation
+
+**Status (batch-1 closure): B1 attempted, UNVERIFIED · B2 DEFERRED · B3 and B4 NOT STARTED.**
+The read-only probe was run and answered nothing (no `gh`, no token, anonymous ghcr reads 404 — see
+`docs/quality/cap-provenance-identity-observation-2026-09-21.md`), so the attestation content is
+still unobserved: an attempted probe is not a completed step, and B3's assertion has nothing to be
+written against. Nothing was pinned: `docker/setup-buildx-action@v3` is still referenced by minor
+tag with no `buildx-version` input in all four jobs that use it, and the BuildKit image behind the
+`docker-container` driver is unpinned.
 
 - **Issue.** Published attestations are not asserted anywhere and are not cryptographically bound to
   the workflow identity that produced them.
@@ -223,10 +237,19 @@ costs a CI cycle. The classifier is the arbiter and this plan does not propose e
      inside C/D's recert round.
 - **Runtime impact:** step 1–2 none; step 3 runtime-affecting. **Certification impact:** 1–2 INHERITED;
   step 3 rides C/D.
-- **Validation:** the new lock test with a mutation control (a pointer to an untracked path must fail);
-  the test running from a fresh clone in CI; the generator re-run reproducing identical digests for
-  unchanged bases (digests as the invariant, not formatting).
-- **Priority / target:** P1 — steps 1–2 in the first CI-only batch, step 3 in the recert round.
+- **Status (batch-1 closure): E1 DONE as a transitional contract · E2 DEFERRED · E3 DEFERRED.**
+- **Validation (what the landed guard accepts and refuses, replacing the earlier "a pointer to an
+  untracked path must fail", which was never landed and would have been red here):**
+  - cited path ignored or absent + tracked twin with matching digest claims → allowed, temporarily;
+  - no tracked twin → fail; twin whose digest claims differ → fail;
+  - path the index calls tracked but the checkout does not contain → fail, with that diagnosis;
+  - an entry with no pointer and no justification named in the test's table → fail;
+  - the allow-set growing without the lock's own no-evidence entries agreeing → fail;
+  - the whole module executed inside a fresh clone resolves every claim from tracked files only.
+  The contract becomes "the cited pointer itself must be tracked" only when E3 repoints the five
+  strings; until then the transitional rule is the one under test, and the test says so.
+  E2's validation (a re-run reproducing identical digests for unchanged bases) waits with it.
+- **Priority / target:** P1 — E1 in the CI-only batch (done), E2 and E3 in the recert round.
 
 ## F. 24-hour soak coverage — P2
 
@@ -257,6 +280,14 @@ costs a CI cycle. The classifier is the arbiter and this plan does not propose e
 
 ## G. F-39 — CAP images are not reproducible by digest — P2, investigate first
 
+**Status (batch-1 closure): G(i) PARTIAL · G(ii)–(v) NOT STARTED.** The two independent builds of
+one commit were never produced — this machine's container engine is down and a CI comparison job
+needs a push — so the structural comparison the step calls for does not exist, and reporting this
+as DONE would be exactly the mistake the finding is about. What exists instead: a coverage
+measurement over 17 captured clean-runner records (15 distinct builds) showing that ten of the
+fifteen comparison fields were never recorded and that no captured pair is two builds of one SHA,
+and the acceptance spec for whoever can run it.
+
 - **Issue.** "Reproducible build" in this project's title is not a verification an operator can perform.
 - **Root cause (measured; the list below is candidates, not demonstrated causes).** Two
   clean-runner builds of `cap-sandbox-http` and `cap-egress-proxy` with identical
@@ -267,9 +298,8 @@ costs a CI cycle. The classifier is the arbiter and this plan does not propose e
   format records none of the variables these hypotheses name (no layer digests, no diff IDs, no
   manifest composition, no attestation descriptors, no buildx/BuildKit version, no runner
   metadata), and that not one captured pair is two independent builds of the same commit.
-  candidates, none of them confirmed by the batch-1 measurement. Each says what the
-  repository makes observable; the effect on a digest is a hypothesis until the
-  two-build comparison in (i) runs.
+  Each numbered item below says what the repository makes observable; the effect on a digest
+  is a hypothesis until the two-build comparison in (i) actually runs.
   1. **Timestamps (unverified)** — no `SOURCE_DATE_EPOCH` anywhere in the build path, so
      the image config's `created` and history entries carry build time. Source mtimes may
      additionally influence `COPY` layer contents, depending on the pinned frontend and
@@ -328,6 +358,12 @@ costs a CI cycle. The classifier is the arbiter and this plan does not propose e
 
 ## H. F-25 closure record — P3, documentation only
 
+**Status (batch-1 closure): DEFERRED — no document was written.** The record's own precondition is
+read-only access to run `35553750674`'s artifacts (V2), and this environment has none: no `gh`, no
+token, no package credential. Writing the record from memory or from the repository's own dry-build
+captures would state numbers it cannot cite, so nothing was produced. F-25 stays CLOSED by that run;
+it is not restated here and not reopened.
+
 - **Issue.** F-25 ("the release image graph has never executed") is closed by live run `35553750674` at
   `4d8f9c7`, while the shipped `known-issues.md` asset and the closure report's §10 entry legitimately
   describe the pre-publication world.
@@ -348,10 +384,10 @@ costs a CI cycle. The classifier is the arbiter and this plan does not propose e
 
 | Batch | Items | Classifier cost | Recert needed |
 | --- | --- | --- | --- |
-| 1 (CI-only) | A (F-33 gate), B steps 1–2 (verify + pin builder), E steps 1–2 (pointer test + tracked generator), G step (i) (two-build measurement), H (closure record) | `ci_workflow` + `test_harness` + `certification_generator` + `docs` → INHERITED | no — CI cycle only |
+| 1 (CI-only) — **executed; status per item** | **A (F-33 gate) DONE** · **B1 (verify attestation) UNVERIFIED**, probe attempted and inaccessible · **B2 (pin buildx/BuildKit) DEFERRED**, nothing pinned · **E1 (evidence guard) DONE as a transitional tracked-twin contract** · **E2 (tracked generator) DEFERRED**, not implemented · **G(i) (two-build measurement) PARTIAL**, no same-SHA independent pair produced · **H (F-25 record) DEFERRED**, precondition unavailable | only what landed is audited: `ci_workflow` + `test_harness` + `docs` → INHERITED, no runtime-affecting path | no — CI cycle only |
 | 2 (next RC) | C (compose pinning) + D (schema widening) + E step 3 (repoint) + B steps 3–4 (assert, attest) | `deployment/` → runtime-affecting | yes — CI + Linux + K8s + soak + strict GA at one SHA, ≈ 3.5 h serial |
 | 3 (later) | F (24 h multi-leg soak roll-up) | `ci_workflow`/`test_harness`, or recert if GA-gate accounting changes | decide after batch 2 |
-| 4 (own round) | G steps (ii)–(v) (deterministic metadata, hash pins, apt policy, pins) | Dockerfiles ⇒ full recert, image bytes change | yes, dedicated round |
+| 4 (own round) | **finish G(i) first** (the same-SHA two-build comparison job), then G steps (ii)–(v) (deterministic metadata, hash pins, apt policy, pins) | Dockerfiles ⇒ full recert, image bytes change | yes, dedicated round |
 
 ## Open verification items (read-only; V1 and V2 attempted in batch 1, still unanswered)
 

@@ -73,7 +73,7 @@ sealed rounds' artifacts and accept them — was exercised on 13 real artifacts 
 compat check) but against fixture run listings, because this machine cannot reach the
 Actions API. It is not a live gate run, and §11 says so again.
 
-## 4. F-33 status: closed, within the scope reviewed
+## 4. F-33 — DONE (A), within the scope reviewed
 
 `verify-certification` now reads, for the GA and K8s rounds, the artifact the selected
 run uploaded, and requires: `mode == "final-strict"`, `full_ga_certified is True`
@@ -117,7 +117,7 @@ comparable verdict artifact, so their evidence remains the job-set rule — a PR
 of the Linux workflow cannot produce `cap-production-certification` plus
 `postgres-version-matrix`. The GA run's `supply-chain-evidence` artifact is not read.
 
-## 5. V1 / V2: UNVERIFIED
+## 5. V1 / V2 — UNVERIFIED (B1); B2 DEFERRED, B3/B4 NOT STARTED
 
 Full detail in `docs/quality/cap-provenance-identity-observation-2026-09-21.md`.
 Summary: no `gh` binary anywhere on the machine, no token in the environment, an empty
@@ -135,7 +135,7 @@ those flags; the completeness gate asserts that derived field; all 17 captured b
 records are dry builds; and `cap.provenance.v1` has no builder-id, predicate or
 invocation field at all.
 
-## 6. F-37 status: guarded, not closed
+## 6. F-37 — E1 DONE as a transitional contract; E2/E3 DEFERRED, finding OPEN
 
 The guard landed and is green (`test_cited_evidence_resolves_to_a_tracked_copy_of_the_
 same_measurement`, plus the absence-convention test and five controls). The defect is
@@ -155,7 +155,7 @@ exists on exactly the five base entries and on neither `minio-object-store` nor
 has neither a pointer nor a listed justification. No new lock field was invented, so no
 schema change was needed.
 
-## 7. Reproducibility: measured, deliberately unattributed
+## 7. F-39 G(i) — PARTIAL: coverage measured, the two-build comparison not produced
 
 Full detail in `docs/quality/cap-f39-reproducibility-measurement-2026-09-21.md`.
 The 17 captured clean-runner build records (15 distinct builds) carry five of the 15
@@ -175,7 +175,7 @@ One measured item that is not a hypothesis: all four `cap-sandbox-browser` recor
 their base as `cap-sandbox-http:1.0.6-rc1` — a mutable tag — while the other four images
 record `@sha256:` bases.
 
-## 8. F-25 documentation: not written, on instruction
+## 8. F-25 / H — DEFERRED: no record written, on instruction
 
 Stage 5 was conditioned on V2 being available. V2 is not: neither the published digests
 nor the attestation state from run `35553750674` are reachable from here, and the only
