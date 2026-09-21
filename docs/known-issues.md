@@ -247,18 +247,28 @@ listed so that an import name is not mistaken for a working capability.
    `docker-compose.yml` to digest references, or dropping the compose stack in
    favour of the chart; both are larger than the artifact-closure scope and were
    left alone deliberately rather than half-done.
-5. **The certification gate cannot tell a strict GA round from a development one (F-33).**
-   `release.yml`'s `verify-certification` accepts a *successful* run of `cap-ga-certification.yml`
-   that carried the release job set — but development mode exits 0 with `PLANNED` gates, so a green
-   `ga-certification` job is not by itself "FULL GA 40/40". This was checked, not assumed: the
-   Actions API serving this repository returns no `inputs` field for a run at all (a
-   `workflow_dispatch` soak run started with `soak_seconds=7200` has no `inputs` key in its
-   response), so the gate cannot filter on how a round was dispatched. The remedy is to read the
-   round's own decision out of its artifact — `cap-28.7-ga-certification.json` carries `mode`,
-   `full_ga_certified`, `commit` and `gate_summary` — and require `full_ga_certified` with `commit`
-   equal to the run's `head_sha`. Until that exists, whoever authorises a publication must confirm
-   the GA run was dispatched with `ga_strict=true` **and** that its artifact reports FULL GA
-   CERTIFIED; the release notes on this line quote the artifact, never the green tick.
+5. **The certification gate could not tell a strict GA round from a development one
+   (F-33) — closed post-rc, on 2026-09-21.**
+   `release.yml`'s `verify-certification` used to accept a *successful* run of
+   `cap-ga-certification.yml` that carried the release job set. That is not "FULL GA
+   40/40": every push to `main` runs the workflow with `CAP_GA_STRICT=0`, and in that mode
+   a gate with no evidence in the job is `PLANNED` instead of failing, so nothing fails and
+   the job is legitimately green. This was checked, not assumed: the Actions API serving
+   this repository returns no `inputs` field for a run at all (a `workflow_dispatch` soak
+   run started with `soak_seconds=7200` has no `inputs` key in its response), so the gate
+   cannot filter on how a round was dispatched.
+   The remedy is in place: the gate now reads the round's own decision out of the artifact
+   it uploaded -- `cap-28.7-ga-certification.json`, with `mode`, `full_ga_certified`,
+   `commit` and `gate_summary` -- and requires `mode: final-strict`,
+   `full_ga_certified: true` read exactly as stored (never recomputed from junit or job
+   colours), `commit` equal to the selected run's `head_sha`, and zero `failed`, `not_run`,
+   `skipped` and `planned` counts with `passed == total`. Kubernetes is held to its own
+   artifact's counts and commit. An absent, duplicated, expired, unparseable or ambiguous
+   artifact refuses the release; a refused download is reported as `verdict: ERROR`, which
+   blocks publication too but says what actually happened. So an authoriser no longer has to
+   confirm the dispatch inputs by hand -- the gate refuses when the round's own artifact does
+   not say FULL GA CERTIFIED -- and the release notes on this line still quote the artifact,
+   never the green tick.
 6. **The release image graph has never run (F-25).** `release.yml` builds and
    publishes all five CAP images, and its completeness gate refuses a partial
    set, but the workflow triggers only on a `v*` tag and publication is not
@@ -272,9 +282,13 @@ listed so that an import name is not mistaken for a working capability.
    `deployment/third-party-images.json` names
    `outputs/artifact-closure/registry-base-digests.json` as the proof behind five
    digest pins, and the 1.0.6-rc1 artifact-closure report cited three more paths
-   under that same ignored directory. A fresh clone resolves none of them, and no
-   test looks, which is why CI said nothing about it. The report's own captures
-   are tracked beside it now
+   under that same ignored directory. A fresh clone resolves none of them.
+   It used to be true that no test looked, which is why CI said nothing about it;
+   since 2026-09-21 `test_third_party_image_lock.py` requires every cited path to
+   have a tracked twin under `docs/quality/artifacts/` asserting the **same
+   digests** -- the dates and layout of the two copies are explicitly not the claim
+   -- and refuses any entry that has neither a pointer nor a justification named in
+   the test's own table. The report's own captures are tracked beside it
    (`docs/quality/artifacts/cap-1.0.6-rc1-artifact-closure/`); the five pointers
    in the lock were deliberately not rewritten, because `classify_diff.py` puts
    every path under `deployment/` in the runtime-affecting `deployment` category,
@@ -282,20 +296,31 @@ listed so that an import name is not mistaken for a working capability.
    not change -- and the only cheap way round that cost is a metadata-only
    classifier exception, which is the manoeuvre the release governance refuses.
    Closing it means either generating the measurement inside the check that consumes
-   it, or deciding that evidence lives at a path the lock may name.
-8. **CAP images are not reproducible by digest (F-39).** Two clean-runner builds of
-   `cap-sandbox-http` -- same `dockerfile_sha256`, same `context_sha256`, same pinned
-   base, same builder -- produced different config and index digests at `a79d29c` and
-   `b671f53`; the same holds for `cap-egress-proxy`. Those Dockerfiles carry no
-   `VERSION`/`REVISION` label, so what differs is build metadata: timestamps in the
-   image config and layer history. What still holds: `values-release-<version>.yaml`
-   pins the *published* index digest, so an operator runs the bytes that were scanned
-   and certified, and the recorded input hashes say what went into them. What does
-   not: rebuild at the tag and compare digests -- that verification fails today.
-   Closing it means `--timestamp`/`SOURCE_DATE_EPOCH` discipline across all five
-   Dockerfiles plus layer metadata and copied-in file times, which changes what every
-   image is and so costs a full re-certification. See the 1.0.6-rc1 artifact closure
-   report, §10.
+   it, or deciding that evidence lives at a path the lock may name; the repoint is
+   scheduled into the round that re-certifies anyway.
+8. **CAP images are not reproducible by digest (F-39) -- divergence measured, cause
+   not established.** Two clean-runner builds of `cap-sandbox-http` with the same
+   `dockerfile_sha256`, the same `context_sha256` and the same pinned base produced
+   different config digests -- and different index digests on the buildx-produced pair --
+   at `a79d29c` and `b671f53`; the same holds for `cap-egress-proxy`. What that does
+   *not* show is why: every such pair spans different commits, and the only same-commit
+   pair in the captured evidence is one build's record downloaded twice from two jobs of
+   one run. The claim that image-config and layer-history timestamps account for it, or
+   that a missing `VERSION`/`REVISION` label is involved, is not demonstrated and has been
+   removed: the build evidence records no layer digests, no diff IDs, no manifest
+   composition, no attestation descriptors, no buildx or BuildKit version and no runner
+   metadata, so the variables that move together with a commit change are precisely the
+   ones never captured. `docs/quality/cap-f39-reproducibility-measurement-2026-09-21.md`
+   lists the fifteen elements a real comparison needs and which six the evidence has.
+   What still holds: `values-release-<version>.yaml` pins the *published* index digest, so
+   an operator runs the bytes that were scanned and certified, and the recorded input
+   hashes say what went into them. What does not: rebuild at the tag and compare digests --
+   that verification fails today. Closing it is expected to mean
+   `--timestamp`/`SOURCE_DATE_EPOCH` discipline across all five Dockerfiles plus layer
+   metadata and copied-in file times, which changes what every image is and so costs a full
+   re-certification -- but the acceptance criterion is two independent clean builds of one
+   commit matching on the digests the measurement file defines, not the fix being in
+   place. See also the 1.0.6-rc1 artifact closure report, §10.
 9. **The chart schema forbids a digest-only pin for two of six coordinates
    (F-41, half closed).** `helm lint` in CI and the `helm install`s in the
    certification rounds do apply `values.schema.json`, and the released

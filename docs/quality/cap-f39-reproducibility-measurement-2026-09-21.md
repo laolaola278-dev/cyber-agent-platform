@@ -44,9 +44,9 @@ the 17 records state it.
 | Runner / environment metadata (image, region, kernel, mtime policy) | 0/17 | nothing records the machine the build ran on |
 | Commit built | 17/17 | `source_revision` |
 
-So of the fifteen elements the criterion names, this repository records six, and it
-records none of the layer, manifest-composition, attestation-descriptor, toolchain or
-runner facts. A two-build comparison run today against this format would compare config
+So of the fifteen elements the criterion names, this repository carries five in every
+record and the index digest in the four buildx ones, and it records none of the layer,
+manifest-composition, attestation-descriptor, toolchain or runner facts. A two-build comparison run today against this format would compare config
 digests and conclude "different", with nothing else to say.
 
 ## 3. The comparisons the captured evidence does allow

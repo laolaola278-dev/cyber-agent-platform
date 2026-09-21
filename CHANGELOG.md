@@ -285,6 +285,41 @@ published release contents are immutable.
 
 ### Fixed
 
+- **A green GA round no longer stands for GA certification (F-33).** `release.yml`'s
+  `verify-certification` accepted any completed, successful run of
+  `cap-ga-certification.yml` that carried the release job set — but every push to `main`
+  runs that workflow with `CAP_GA_STRICT=0`, and in development mode a gate with no
+  evidence in the job is `PLANNED` rather than failing, so nothing fails and the job is
+  legitimately green while its own artifact says `mode: development`,
+  `full_ga_certified: false`. The run object exposes no `inputs`, so the job colour and the
+  dispatch could not be distinguished from inside the gate. The gate now reads the decision
+  where the round wrote it: `ga-cert-artifacts` → `cap-cert-ga/cap-28.7-ga-certification.json`,
+  requiring `mode: final-strict`, `full_ga_certified` taken exactly as stored (type-strict,
+  never recomputed from junit or job colours), `commit` equal to the selected run's
+  `head_sha`, zero `failed`/`not_run`/`skipped`/`planned`, and `passed == total` rather than
+  a hardcoded count so a legitimate older round is not refused for its smaller gate table.
+  Kubernetes is held to its own artifact's commit and counts. An absent, duplicated,
+  expired, unparseable or internally ambiguous artifact refuses the release as a finding; a
+  refused download is still `verdict: ERROR`, because "could not look" and "it says no" need
+  different remedies — both block publication. A rejected artifact does not send the gate
+  searching for an older ancestor. Fourteen new executed tests, plus a fifteenth that
+  checks the live Actions-API shape and skips wherever `gh` cannot answer; nine
+  guard-by-guard mutation
+  controls (each caught by its own test and no others), and a read-only pass of 13
+  artifacts from sealed and superseded rounds — including the development-mode soak run at
+  the strict round's own SHA — every one read the way the round that produced it recorded.
+- **Cited evidence must be readable from the clone (F-37, guarded; the finding stays
+  open).** Five `provenance.evidence` strings in `deployment/third-party-images.json` name
+  a path under gitignored `outputs/`, and nothing looked. `test_third_party_image_lock.py`
+  now requires every cited path to have a tracked twin under `docs/quality/artifacts/`
+  asserting the **same digests** — the dates and formatting of the two copies are
+  explicitly not the claim, because the tree's two copies differ in exactly one date field
+  and that is not a defect — and refuses any lock entry that has neither a pointer nor a
+  justification named in the test's own table, with that table compared against the lock's
+  entries so the convention cannot widen by silence. Five controls against the real data,
+  each noticed. The pointers themselves still name the ignored path: rewriting them is a
+  `deployment/` edit, which `classify_diff.py` charges as runtime-affecting, so the repoint
+  rides the next round that re-certifies anyway.
 - **A healthy long-running acquisition could be cancelled under load.** The execution-lease
   heartbeat in `WorkerRuntime` renews the lease while the sandbox operation runs, and it did so on
   the *same* `AsyncSession` as the main execute flow at every construction site that omitted

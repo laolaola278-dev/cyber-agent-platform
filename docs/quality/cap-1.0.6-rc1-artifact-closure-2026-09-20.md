@@ -626,6 +626,11 @@ this purpose, and no round in these tables is claimed green before its run finis
   remedy rather than folded in silently. What this round does guarantee is the *dispatch*: the
   strict verdict in §11 is quoted from a run of `cap-ga-certification.yml` with
   `ga_strict=true`, whose artifact is the source of the numbers, not from a green tick.
+  *Follow-up, 2026-09-21: the remedy above landed in `5f79950` on the post-rc line — the gate
+  now reads the round's own artifact, requires the fields named here, and fails closed on an
+  absent, duplicated, expired, unparseable or ambiguous one. It reran, moved or rebuilt
+  nothing of the sealed `v1.0.6-rc1`; executed detail in
+  `cap-post-rc-batch-1-execution-2026-09-21.md` §4 and `docs/known-issues.md` item 5.*
 - **F-37** (new and open) — five `evidence` fields in `deployment/third-party-images.json`, and three
   citations in this report when §1 was written, point into `outputs/`, which `.gitignore` excludes. A
   pointer to a gitignored path resolves only inside a working tree where the measurement happened to
@@ -638,6 +643,12 @@ this purpose, and no round in these tables is claimed green before its run finis
   manoeuvre §17–§20 forbids for a digest pin "only to inherit". Closing this for real means either
   generating the measurement inside the check that consumes it, or deciding explicitly that evidence
   lives at a path the lock may name; both are governance changes outside F-7/F-20.
+  *Follow-up, 2026-09-21: the first of those two options is now partly in place — `c7687c9` made
+  `test_third_party_image_lock.py` require every cited path to have a tracked twin asserting the
+  same digests, and refuse an entry with neither a pointer nor a justification named in the test's
+  own table. This bullet's "no test looks" is the sentence that follow-up supersedes. The five
+  pointers themselves are unchanged and the finding stays open: the strings still name the ignored
+  path, and rewriting them is the `deployment/` edit that costs a re-certification.*
 - **F-41** (found, half closed, half open) — the sentence this entry first carried was **that nothing in
   this repository runs the chart's `values.schema.json`.** It was wrong, and wrong in the direction that
   makes a gap look bigger than it is: `ci.yml`'s "Validate Helm chart" step runs `helm lint
@@ -678,6 +689,17 @@ this purpose, and no round in these tables is claimed green before its run finis
   browser set in the sandbox image is the obvious one). It changes what every image *is*, so it costs a
   full re-certification — F-38 was the same rule on a much smaller scale — and belongs to a round of its
   own rather than to the last hour of this one.
+  *Follow-up, 2026-09-21: the attribution in this bullet is withdrawn. The compared pairs differ in a
+  recorded field too — `source_revision` — so "nothing but build metadata distinguishes them" is not
+  what the evidence says, and the missing `VERSION`/`REVISION` label identifies nothing: a label would
+  add content, not explain a difference. `cap-f39-reproducibility-measurement-2026-09-21.md` walks the
+  fifteen elements a real comparison names and finds the evidence carrying five of them in every record
+  (plus the index digest in the buildx ones): no layer digests, no diff IDs, no manifest composition, no
+  attestation descriptors, no buildx/BuildKit version, no runner metadata — which is to say the
+  candidates that would explain the divergence are precisely the variables nothing captured. The
+  `--timestamp`/`SOURCE_DATE_EPOCH` remedy stands as the hypothesis it is, and the acceptance criterion
+  is two independent clean builds of one commit agreeing on the digests that file defines, not the fix
+  being in place.*
 - Still true from the previous round: registry digests, SBOM and provenance **attestations** exist
   only once images are pushed; the rollback exercise cannot exist before 1.0.6 does.
 
