@@ -59,6 +59,15 @@ jobs:
   # (INHERITED). Certification therefore happens before the tag is pushed; a tag
   # on a runtime change with no certification of its own fails here, which is
   # the point.
+  #
+  # A green job set is necessary and not sufficient (F-33): every push to `main`
+  # runs `ga-certification` in development mode, where a gate with no evidence in
+  # that job is PLANNED rather than failing, so the round finishes green without
+  # certifying GA. An Actions run object reports no dispatch inputs either, so the
+  # job colour cannot tell a full GA round from a preview. Where a workflow
+  # publishes an authoritative verdict -- the GA and K8s artifacts named in
+  # AUTHORITY below -- this gate reads that verdict and requires it to bind to the
+  # commit of the run that produced it.
   # ---------------------------------------------------------------------
   verify-certification:
     needs: validate-tag
@@ -77,11 +86,13 @@ jobs:
       - name: Require green certification for this commit or an inheritable ancestor
         run: |
           python3 - <<'RELEASE_GATE_PY'
+          import io
           import json
           import os
           import pathlib
           import subprocess
           import sys
+          import zipfile
 
           TAG_SHA = os.environ["CERT_TAG_SHA"]
           REPO = os.environ["CERT_REPOSITORY"]
@@ -91,6 +102,7 @@ jobs:
           #: not release evidence, so the job set is checked, not the run colour.
           #: `postgres-version-matrix` legs share the base name and all legs
           #: must be green; a job skipped by its `if` is absent, hence "missing".
+          #: Which jobs ran is still not what they decided -- see AUTHORITY.
           REQUIRED = {
               "cap-linux-certification.yml": (
                   "cap-production-certification",
@@ -107,6 +119,47 @@ jobs:
           #: stopped somewhere, not that nothing exists beyond it, so the gate
           #: reports the difference instead of quietly flattening it.
           PAGE_SIZE = 100
+          #: Workflow -> the artifact that holds the round's OWN verdict, and what
+          #: that verdict has to say for the gate to accept it (F-33).
+          #:
+          #: A green `ga-certification` job is not GA certification. Every push to
+          #: `main` runs that workflow with CAP_GA_STRICT=0, and in development
+          #: mode a gate with no evidence in this job is PLANNED instead of failing
+          #: -- so the job finishes green while its own artifact records
+          #: `mode: development` and `full_ga_certified: false`. The Actions run
+          #: object exposes no `inputs`, so nothing above can see which mode ran;
+          #: the decision has to be read where the round wrote it.
+          #: `full_ga_certified` is taken exactly as stored: recomputing it from
+          #: junit or from job colours would substitute a weaker copy of the
+          #: generator's own rule for the rule itself.
+          AUTHORITY = {
+              "cap-ga-certification.yml": {
+                  "artifact": "ga-cert-artifacts",
+                  "member": "cap-28.7-ga-certification.json",
+                  "commit": "commit",
+                  "fields": {"mode": "final-strict", "full_ga_certified": True},
+                  "summary": {"failed": 0, "not_run": 0, "skipped": 0, "planned": 0},
+                  "passed_all_gates": True,
+              },
+              "cap-k8s-certification.yml": {
+                  "artifact": "k8s-cert-artifacts",
+                  "member": "cap-28.6-k8s-certification.json",
+                  "commit": "commit",
+                  "fields": {},
+                  "summary": {"failed": 0, "not_run": 0},
+                  "passed_all_gates": True,
+              },
+          }
+
+
+          class AuthorityRejected(Exception):
+              """The gate read the round's own verdict and it was not "certified".
+
+              Deliberately not a `RuntimeError`, which the bottom of this script
+              reports as ERROR: "I could not look" and "I looked and it says NO"
+              are different messages to whoever holds the tag, and only one of
+              them is answerable by dispatching a certification round.
+              """
 
 
           def gh(path: str) -> dict:
@@ -119,6 +172,20 @@ jobs:
               if proc.returncode != 0:
                   raise RuntimeError(f"gh api {path} failed: {proc.stderr.strip()}")
               return json.loads(proc.stdout)
+
+
+          def gh_bytes(path: str) -> bytes:
+              """A `gh api` call whose answer is an archive rather than JSON.
+
+              Separate from `gh()` on purpose: decoding a zip as text dies in the
+              decoder instead of in the reader, and a failed download is still "the
+              gate could not look", never "the artifact says uncertified".
+              """
+              proc = subprocess.run(("gh", "api", path), capture_output=True)
+              if proc.returncode != 0:
+                  detail = proc.stderr.decode("utf-8", "replace").strip()
+                  raise RuntimeError(f"gh api {path} failed: {detail}")
+              return proc.stdout
 
 
           def ancestor_chain() -> list[str]:
@@ -205,6 +272,117 @@ jobs:
               return {"missing": True, "runs_examined": len(runs), "window_full": window_full}
 
 
+          def authoritative_artifact(workflow: str, found: dict) -> dict:
+              """Read the selected run's own verdict out of the artifact it uploaded.
+
+              Structural problems -- no artifact, two of them, an unreadable archive
+              -- raise, because the gate has nothing to quote. Content problems are
+              collected: a development-mode round with five PLANNED gates is three
+              complaints at once, and an operator reading one at a time would rerun
+              the round three times to find out.
+              """
+              spec = AUTHORITY[workflow]
+              listing = gh(
+                  f"repos/{REPO}/actions/runs/{found['run_id']}/artifacts?per_page=100"
+              )
+              matches = [
+                  artifact
+                  for artifact in listing.get("artifacts") or []
+                  if artifact.get("name") == spec["artifact"]
+              ]
+              if len(matches) != 1:
+                  raise AuthorityRejected(
+                      f"run {found['run_id']} holds {len(matches)} artifacts named "
+                      f"{spec['artifact']!r}; the gate needs exactly one to read the "
+                      "verdict from and will not choose between them"
+                  )
+              artifact = matches[0]
+              if artifact.get("expired"):
+                  raise AuthorityRejected(
+                      f"{spec['artifact']} (id {artifact.get('id')}) has expired, so "
+                      "the verdict it recorded can no longer be read back"
+                  )
+              blob = gh_bytes(f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip")
+              try:
+                  archive = zipfile.ZipFile(io.BytesIO(blob))
+                  members = [
+                      name
+                      for name in archive.namelist()
+                      if not name.endswith("/")
+                      and name.rsplit("/", 1)[-1] == spec["member"]
+                  ]
+                  if len(members) != 1:
+                      raise AuthorityRejected(
+                          f"{spec['member']} matched {len(members)} entries inside "
+                          f"{spec['artifact']}: the artifact does not hold one "
+                          "unambiguous verdict file"
+                      )
+                  payload = json.loads(archive.read(members[0]).decode("utf-8"))
+              except AuthorityRejected:
+                  raise
+              except (zipfile.BadZipFile, OSError, ValueError) as error:
+                  # ValueError covers json.JSONDecodeError: an artifact the gate
+                  # cannot parse is not a verdict it can read as agreement.
+                  raise AuthorityRejected(
+                      f"{spec['artifact']} (id {artifact.get('id')}) carries no "
+                      f"readable {spec['member']}: {type(error).__name__}: {error}"
+                  ) from error
+              if not isinstance(payload, dict):
+                  raise AuthorityRejected(
+                      f"{spec['member']} is a {type(payload).__name__}, not the object "
+                      "whose verdict fields the gate reads"
+                  )
+
+              rejects: list[str] = []
+              recorded = payload.get(spec["commit"])
+              if recorded != found["sha"]:
+                  rejects.append(
+                      f"records commit {str(recorded)[:12]!r} while the run it came "
+                      f"from is {found['sha'][:12]} -- the artifact describes a "
+                      "different checkout than the certification being inherited"
+                  )
+              for field, wanted in spec["fields"].items():
+                  got = payload.get(field)
+                  # Type-strict as well as equal: the stored value is the round's
+                  # own decision, and 1 or "true" is not the True it recorded.
+                  if got != wanted or type(got) is not type(wanted):
+                      rejects.append(f"records {field}={got!r}, which is not {wanted!r}")
+              summary = payload.get("gate_summary")
+              if not isinstance(summary, dict):
+                  rejects.append(
+                      f"has no gate_summary object to read gate counts from "
+                      f"(found {type(summary).__name__})"
+                  )
+                  summary = {}
+              for key, wanted in spec["summary"].items():
+                  if key not in summary:
+                      rejects.append(
+                          f"gate_summary has no {key} count, and the gate will not "
+                          f"read an unreported count as the {wanted} it needs"
+                      )
+                  elif summary[key] != wanted:
+                      rejects.append(f"gate_summary.{key}={summary[key]!r}, requires {wanted}")
+              if spec["passed_all_gates"] and summary.get("passed") != summary.get("total"):
+                  rejects.append(
+                      f"gate_summary counts {summary.get('passed')} of "
+                      f"{summary.get('total')} gates passed, so a gate has no PASS "
+                      "behind it"
+                  )
+              return {
+                  "artifact": spec["artifact"],
+                  "artifact_id": artifact.get("id"),
+                  "artifact_digest": artifact.get("digest"),
+                  "member": members[0],
+                  "read": {
+                      spec["commit"]: recorded,
+                      "gate_summary": payload.get("gate_summary"),
+                      **{field: payload.get(field) for field in spec["fields"]},
+                  },
+                  "verdict": "PASS" if not rejects else "REJECTED",
+                  "rejects": rejects,
+              }
+
+
           def resolve_sha(rev: str) -> str:
               """Full commit SHA, or a complaint that names the input.
 
@@ -249,6 +427,9 @@ jobs:
                   "tag_ref": os.environ.get("GITHUB_REF_NAME"),
                   "version": os.environ.get("CERT_VERSION"),
                   "required": {job: list(jobs) for job, jobs in REQUIRED.items()},
+                  "authority": {
+                      workflow: dict(spec) for workflow, spec in AUTHORITY.items()
+                  },
               }
               payload.update(extra)
               return payload
@@ -280,6 +461,27 @@ jobs:
                       f"{workflow}: run {found['run_id']} at {found['sha'][:8]} "
                       f"(+{found['distance']} commits from the tag)"
                   )
+                  # A rejected artifact does not send the gate looking further back:
+                  # the newest green release-scoped round is the one this release
+                  # would be relying on, and if that round says it did not
+                  # certify, "certified somewhere older" is not the answer.
+                  if workflow in AUTHORITY:
+                      try:
+                          found["authority"] = authoritative_artifact(workflow, found)
+                      except AuthorityRejected as rejection:
+                          found["authority"] = {
+                              "verdict": "REJECTED",
+                              "rejects": [str(rejection)],
+                          }
+                      for reason in found["authority"]["rejects"]:
+                          failures.append(f"{workflow}: {reason}")
+                          print(f"  AUTHORITY REJECTED: {reason}", file=sys.stderr)
+                      if found["authority"]["verdict"] == "PASS":
+                          print(
+                              f"  authority: {found['authority']['member']} "
+                              f"(artifact {found['authority']['artifact_id']}) "
+                              "certifies this run"
+                          )
                   if found["distance"]:
                       inheritable, report = classify(found["sha"])
                       found["diff_verdict"] = report["inheritance"]
