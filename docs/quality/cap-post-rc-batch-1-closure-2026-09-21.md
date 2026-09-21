@@ -47,6 +47,16 @@ These unfinished items do **not** block push-readiness, and none of them is desc
 PASS or DONE anywhere in this report, in the plan, in `docs/known-issues.md` or in the
 `CHANGELOG.md`.
 
+> **Follow-up, 2026-09-21 (same day, after the push).** The table above freezes the pre-push
+> state and is left as written. Two rows changed afterwards and are corrected where they are
+> discussed rather than here: **V1 and V2 are no longer UNVERIFIED** — the pushed attestations
+> and the publication run's evidence have been read read-only, and §G's ghcr 404 turns out to
+> have been a wrong ref (`1.0.6-rc1` is the image tag; the `v` belongs to the git tag). See
+> `docs/quality/cap-provenance-identity-observation-2026-09-21.md` §6 and
+> `docs/quality/cap-post-rc-batch-1-remote-validation-2026-09-21.md`. **A/F-33's remote half also
+> moved**: CI ran this gate's test module green at the pushed head, but the two live Actions/API
+> checks still skip in CI, so their leg stays PENDING (§K).
+
 ## B. Staged commit graph
 
 A linear chain on local `main` — the fifteen audited batch commits plus this file's own, all
@@ -316,6 +326,21 @@ evidence for OCI/buildx pushed provenance.
 no `buildx-version`, and the BuildKit image behind the `docker-container` driver is unpinned.
 **B3 and B4 were not executed** in this round, and no registry content was mutated.
 
+**Follow-up, 2026-09-21 (after the push): V1 and V2 are answered, and §G's own 404 had a different
+cause.** The registry and the Actions API were read read-only over HTTPS — the image tag is
+`1.0.6-rc1`, without the git tag's `v`, so the probe above asked for a ref that never existed and
+the packages are readable; the publication run's own artifacts were listed and downloaded the same
+way. Observed, verbatim: all five images serve SLSA **v1** provenance (`predicateType
+https://slsa.dev/provenance/v1`) whose `runDetails.builder.id` is **the empty string**, with the
+`subject` bound to the *platform manifest* digest rather than the index, `buildkit_completeness`
+self-declaring `resolvedDependencies: false`, and `vcs.revision` present on only two of the five
+(`cap-backend`, `cap-frontend`). No `.sig`/`.att` tag exists, so nothing there is signed. The five
+index digests served today equal the publication record, which verifies the sealed images
+unchanged from the registry side. Everything above about what the gate reads therefore still
+stands — and B2, B3 and B4 are still unexecuted; the full table, its limits (hand-parsed, no
+`gh attestation verify`) and what it does to the B chain are in
+`docs/quality/cap-provenance-identity-observation-2026-09-21.md` §6.
+
 ## H. F-39 status
 
 **G(i) = PARTIAL.** No two independent builds of one commit were produced, so the structural
@@ -358,6 +383,14 @@ Claims allowed, which are all that is claimed:
 
 No `SOURCE_DATE_EPOCH`, no package-resolution change, no Dockerfile edit, no pin.
 
+**Follow-up, 2026-09-21 (after the push).** Reading the pushed attestations supplies part of what
+§H lists as unrecorded: each image's provenance carries per-step **layer digests** (3–10 records
+per image) and its `subject` is the platform manifest digest, so two of the ten fields are
+available *from the registry* even though they are absent from CAP's own 17 records. That changes
+where missing metadata can be fetched, not what has been compared: **no two independent builds of
+one commit exist**, so G(i) stays PARTIAL, the reproducibility model stays PROPOSED, and the
+measurement note's field table is left as measured on the records it actually examined.
+
 ## I. F-25 / H status
 
 **H = DEFERRED; no record was written.** Stage 5's own precondition is V2, and V2 is unavailable:
@@ -370,6 +403,15 @@ What stands: **F-25 remains CLOSED by live run `35553750674`** — unchanged, no
 restated here. No sealed GitHub Release asset was touched; every change to `docs/known-issues.md`
 and `CHANGELOG.md` in this batch is a HEAD-side record on the post-rc line, and the assets shipped
 inside the tag remain as published. §L lists what the record needs; §L puts it first in batch 2.
+
+**Follow-up, 2026-09-21 (after the push): the blocker is gone; the record is still not written.**
+Run `35553750674`'s 21 artifacts can now be listed and downloaded read-only, its gate evidence and
+per-image records (`release-images-1.0.6-rc1.json`: five refs, index digests,
+`attestations.{sbom,provenance}`) have been read, and the registry independently confirms all five
+index digests it serves for `1.0.6-rc1`. Writing the closure record from those bytes is Batch-2
+work, and this stage's own rules forbid starting unreviewed new scope, so **H stays DEFERRED** —
+with the difference that it is now blocked on a decision rather than on access. F-25 remains CLOSED
+by live run `35553750674`, unchanged.
 
 ## J. Exact test results
 

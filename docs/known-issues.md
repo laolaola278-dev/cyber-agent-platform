@@ -340,6 +340,33 @@ listed so that an import name is not mistaken for a working capability.
    `classify_diff.py` charges as runtime-affecting, so the change is scheduled in
    front of its own re-certification rather than slipped into a docs-only round;
    the test above asserts the difference, and will fail when it is removed.
+10. **A skipped release job still reads as executed evidence (F-42) — found by the
+    batch-1 remote validation, not fixed by it.** The comment above `REQUIRED` in
+    `release.yml` says "the jobs that must be present **and successful**" and "a job
+    skipped by its `if` is absent, hence 'missing'". Both remote reality and the code
+    disagree with the second half: `find_evidence` filters on the *run* conclusion and then
+    checks whether each required job name appears in the job list, and GitHub's jobs API
+    reports a job skipped by an `if` as present with `conclusion: "skipped"`. Measured on the
+    run this push produced — `cap-linux-certification.yml` run `35594554182` at
+    `49de1081`, `cap-production-certification: ["skipped"]`, `postgres-version-matrix:
+    ["success", "success", "success"]` — the gate selected it at `+0 commits from the tag`
+    and the leg went green (`_tmp/stage5_dryrun_before_ga.log`, the gate's own code executed
+    read-only against the live API).
+
+    Consequence, and its limit: the Linux workflow has no `AUTHORITY` entry, so nothing else
+    checks what that run decided, and the distance-0 selection *shadows* the genuine
+    release-layer round at `b671f53` (+35) that the gate would otherwise inherit — here the
+    evidence exists either way, so nothing wrong was published. The case that matters is a
+    head with no older release-layer run inside `MAX_ANCESTRY_DISTANCE`: presence of a skipped
+    job would then stand in for certification that never executed. It is the same failure mode
+    F-33 closed for GA ("a colour where a decision should be"), one layer down.
+
+    The reviewed fix is one predicate in `find_evidence` — accept a run only when every listed
+    job's conclusions are all `"success"` — plus a fixture whose required job is `skipped`, so
+    the negative case is pinned and the comment becomes true. That is a
+    `.github/workflows/release.yml` edit (`ci_workflow`, inheritable): it costs a CI cycle and
+    no re-certification, and it was deliberately **not** made during a validation stage, where
+    the rule is to observe rather than to edit the thing under observation.
 
 ## Live verification against a real PostgreSQL server
 
