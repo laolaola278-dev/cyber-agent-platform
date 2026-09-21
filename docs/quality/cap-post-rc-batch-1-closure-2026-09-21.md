@@ -102,11 +102,15 @@ its definition: it means **every changed path is in an inheritable category** (n
 | `21627a9` | `107867f` | 1 | `docs` | False | True | none | INHERITED |
 | **cumulative** `4d8f9c7` → HEAD | | 11 | `ci_workflow` 1, `test_harness` 2, `docs` 8 | False | True | none | **INHERITED** |
 | **cumulative** `b671f53` → HEAD | | 15 | adds the closure round's own `docs`/`test_harness` | False | True | none | **INHERITED** |
-| **cumulative** `d30b4e7` → HEAD | | 13 | | False | True | none | **INHERITED** |
+| **cumulative** `d30b4e7` → HEAD | | 14 | | False | True | none | **INHERITED** |
 
 Stop condition — any commit `RECERTIFICATION_REQUIRED` or `runtime_affecting=true`:
 **not triggered** (all twelve measured; `_tmp/classifier_audit3.log`, plus `21627a9` and the
-cumulative ranges re-run afterwards — 11 files from `4d8f9c7`, 15 from `b671f53`, both INHERITED). Two
+cumulative ranges re-run afterwards. Anchored to a commit rather than to a moving HEAD, because
+the audited head was `66add1c` and the file set cannot change under edits to these same documents:
+**13 commits, all INHERITED; cumulative 11 files from `4d8f9c7`, 15 from `b671f53`, 14 from
+`d30b4e7`; `runtime_affecting=false` and no blocking files anywhere; stop condition never
+triggered.** Two
 consequences worth stating: batch 1 kept its CI-only contract, and a tag cut at this head
 would still resolve its certification from `b671f53` (Linux/GA/soak) and `d30b4e7`
 (K8s) rather than needing a fresh round.
@@ -350,9 +354,9 @@ which needs a push to produce.
 
 ## M. Working-tree and sealed-release integrity
 
-Verified at `107867f`, the last commit before this report; the working tree was clean at that
-point and nothing was pushed. This file's own commit is deliberately not named here, so the
-statement cannot go stale by being committed:
+Verified at `66add1c` — the audited head for this table — and re-confirmed after every commit
+that followed it, which touch only documents already counted. Nothing was pushed at any point, and
+the working tree is clean at each measurement:
 
 | Item | State | How |
 | --- | --- | --- |
@@ -386,6 +390,9 @@ the required local regression suites pass — 1508 / 260 / 46 with zero failures
 clears CI's floor (§J); the sealed release is untouched in every respect checkable from here and
 labelled UNVERIFIED where it is not (§M); and no PARTIAL item is reported as DONE — G(i), B2,
 E2, E3 and H say so themselves (§A, §F, §G, §H, §K).
+
+Anchored to the audited head `66add1c`: thirteen commits, all INHERITED, and the further commits
+after that point edit only documents already in the audited set, so nothing in the verdict below depends on counting them.
 
 **FINAL VERDICT: READY FOR REVIEW / PUSH**
 
