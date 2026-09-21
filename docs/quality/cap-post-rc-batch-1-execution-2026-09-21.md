@@ -17,16 +17,18 @@ release run `35553750674`, F-25 CLOSED by that run.
 | `c7687c9` | `backend/tests/test_third_party_image_lock.py` | Stage 3 / **F-37 E1**: cited evidence must be readable from the clone; absence must be justified by name |
 | `d4069d6` | `docs/quality/cap-provenance-identity-observation-2026-09-21.md` | Stage 2 / **B-V1, V2**: the attestation observation attempt and its UNVERIFIED verdict |
 | `e47b6b4` | `docs/quality/cap-f39-reproducibility-measurement-2026-09-21.md`, `docs/quality/cap-post-1.0.6-rc1-hardening-plan.md` | Stage 4 / **G(i)** measurement; and the reviewed plan, with each item's executed outcome written back into it |
-| *this commit* | `CHANGELOG.md`, `docs/known-issues.md`, `docs/quality/cap-1.0.6-rc1-artifact-closure-2026-09-20.md`, the measurement file, this report | Follow-through on finding 8: prose the batch made false, the F-39 attribution withdrawn against the measurement, two closure-report follow-up notes, the Unreleased CHANGELOG entries, and this report |
+| `05a1553` | `CHANGELOG.md`, `docs/known-issues.md`, `docs/quality/cap-1.0.6-rc1-artifact-closure-2026-09-20.md`, the measurement file, this report | Follow-through on finding 8: prose the batch made false, the F-39 attribution withdrawn against the measurement, two closure-report follow-up notes, the Unreleased CHANGELOG entries, and this report |
+| one further commit | this report only | Re-measures this file's own tables now that the report has a commit of its own; no code and no other document changes |
 
 Stage 5 (**F-25 historical record**) produced no commit, because its own precondition —
 "only after V2 available" — did not hold. See §8.
 
 Measured with `git diff --numstat`: `5f79950` +836/−8, `c7687c9` +251/−2, `d4069d6`
-+102/−0, `e47b6b4` +479/−0 — cumulatively **6 files changed, 1668 insertions, 10
-deletions**. All ten deletions are prose lines the reworded comments and docstrings
-replaced; nothing was deleted from any sealed artifact, and no file under `deployment/`,
-`backend/app/`, `frontend/src/`, any Dockerfile, or `VERSION` was modified at all.
++102/−0, `e47b6b4` +479/−0, `05a1553` +405/−32 — **10 files changed, 2073 insertions,
+42 deletions**. All 42 deletions are prose lines that the reworded comments, docstrings
+and register entries replaced; nothing was deleted from any sealed artifact, and no file
+under `deployment/`, `backend/app/`, `frontend/src/`, any Dockerfile, or `VERSION` was
+modified at all.
 
 ## 2. Tests executed
 
@@ -57,9 +59,10 @@ the artifact path and verdict-file shape get verified for real rather than by fi
 | `5f79950` → `c7687c9` | 0 | INHERITED | `test_harness` 1 |
 | `c7687c9` → `d4069d6` | 0 | INHERITED | `docs` 1 |
 | `d4069d6` → `e47b6b4` | 0 | INHERITED | `docs` 2 |
-| **cumulative** `4d8f9c7` → HEAD | 0 | **INHERITED**, `runtime_affecting=False`, 6 files | `ci_workflow` 1, `test_harness` 2, `docs` 3 |
-| **cumulative** `b671f53` (last strict GA) → HEAD | 0 | **INHERITED**, `runtime_affecting=False`, 13 files | as above plus the closure round's own `docs`/`test_harness` |
-| **cumulative** `d30b4e7` (last K8s round) → HEAD | 0 | INHERITED | |
+| `e47b6b4` → `05a1553` | 0 | INHERITED | `docs` 5 |
+| **cumulative** `4d8f9c7` → HEAD | 0 | **INHERITED**, `runtime_affecting=False`, 10 files | `ci_workflow` 1, `test_harness` 2, `docs` 7 |
+| **cumulative** `b671f53` (last strict GA) → HEAD | 0 | **INHERITED**, `runtime_affecting=False`, 14 files | as above plus the closure round's own `docs`/`test_harness` |
+| **cumulative** `d30b4e7` (last K8s round) → HEAD | 0 | **INHERITED**, `runtime_affecting=False`, 13 files | |
 
 Two halves to this, and they are measured differently. The *classification* half is
 measured: `classify_diff.py` returns INHERITED for every commit above and for the
