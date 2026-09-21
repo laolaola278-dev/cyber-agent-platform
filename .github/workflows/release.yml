@@ -435,6 +435,35 @@ jobs:
               return payload
 
 
+          def decide(evidence: dict, failures: list) -> str:
+              """The one place the verdict is computed, so no signal can be ignored.
+
+              A refusal is only as good as the line that records it: if a future edit
+              dropped one `failures.append`, the gate would publish a PASS whose own
+              evidence says REJECTED. So the recorded verdicts are checked against the
+              failure list here, and a contradiction raises -- it becomes `ERROR`,
+              which blocks publication exactly as `FAIL` does while telling the truth
+              about a gate that could not keep its own story straight.
+              """
+              if failures:
+                  return "FAIL"
+              for workflow, record in evidence.items():
+                  authority = record.get("authority")
+                  if authority is not None and authority.get("verdict") != "PASS":
+                      raise RuntimeError(
+                          f"{workflow}: authority verdict {authority.get('verdict')!r} "
+                          "with no failure line recorded -- the gate cannot report PASS "
+                          "against evidence that says otherwise"
+                      )
+                  if record.get("diff_verdict", "INHERITED") != "INHERITED":
+                      raise RuntimeError(
+                          f"{workflow}: distance classified {record['diff_verdict']!r} "
+                          "with no failure line recorded -- refusing to call that "
+                          "inheritance"
+                      )
+              return "PASS"
+
+
           def main() -> int:
               chain = ancestor_chain()
               evidence: dict[str, dict] = {}
@@ -507,7 +536,7 @@ jobs:
                       ancestors_considered=len(chain),
                       evidence=evidence,
                       failures=failures,
-                      verdict="PASS" if not failures else "FAIL",
+                      verdict=decide(evidence, failures),
                   )
               )
               if failures:

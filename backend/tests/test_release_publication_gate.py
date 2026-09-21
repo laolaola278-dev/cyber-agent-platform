@@ -349,19 +349,27 @@ def _exec_gate(
     monkeypatch: pytest.MonkeyPatch,
     api: FakeActionsApi,
     tag_sha: str = SHA_TAG,
+    ns_out: dict | None = None,
 ) -> tuple[int, dict | None]:
-    """Run the gate's own code in ``tmp_path``; return (exit code, evidence)."""
+    """Run the gate's own code in ``tmp_path``; return (exit code, evidence).
+
+    ``ns_out`` receives the executed script's globals. That is how a test reaches
+    ``decide`` -- the verdict rule -- without restating it: a check that reimplements
+    the gate's logic proves the reimplementation, not the release path.
+    """
     monkeypatch.setenv("CERT_TAG_SHA", tag_sha)
     monkeypatch.setenv("CERT_REPOSITORY", "octo/repo")
     monkeypatch.setenv("CERT_VERSION", "1.0.6-rc1")
     monkeypatch.setenv("GITHUB_REF_NAME", "v1.0.6-rc1")
     monkeypatch.chdir(tmp_path)
     api.installed(monkeypatch)
+    namespace = ns_out if ns_out is not None else {}
+    namespace["__name__"] = "cap_release_certification_gate"
     code = 0
     try:
         exec(  # noqa: S102 -- executing the product's own release gate
             compile(_gate_source(), "<release certification gate>", "exec"),
-            {"__name__": "cap_release_certification_gate"},
+            namespace,
         )
     except SystemExit as exit_info:  # noqa: PERF203 -- single handler, not a loop
         code = exit_info.code if isinstance(exit_info.code, int) else 1
@@ -409,6 +417,33 @@ def test_gate_reads_release_history_and_holds_the_read_scope_it_needs() -> None:
     assert scopes.get("actions") == "read", (
         "listing other workflows' runs is an Actions API read, and once "
         "`permissions` is declared the undeclared scopes become `none`"
+    )
+
+
+def test_nothing_in_the_gate_job_tolerates_its_own_failure() -> None:
+    """This is what makes `ERROR` block publication, so it is pinned, not assumed.
+
+    A refusal returns 1 and an inability to decide re-raises; either way the step
+    fails, the job fails, and every publishing job behind `needs` never runs. One
+    `continue-on-error` or one trailing `|| true` would turn the honest "could not
+    decide" into a green light, which is a worse failure than the one F-21 was.
+    """
+    doc = _release_doc()
+    job = doc["jobs"][GATE_JOB]
+    assert not job.get("continue-on-error"), "the gate job may not tolerate its own failure"
+    for step in job["steps"]:
+        assert not step.get("continue-on-error"), (
+            f"{step.get('name') or step.get('uses')}: a gate step that may fail "
+            "without failing the job makes the gate advisory"
+        )
+    gate = next(step for step in job["steps"] if step.get("name") == GATE_STEP)
+    script = gate["run"]
+    assert "|| true" not in script, "a swallowed exit code is a swallowed verdict"
+    assert script.rstrip().endswith("RELEASE_GATE_PY"), (
+        "the gate step must end with the script, not with a command that reports success"
+    )
+    assert "raise SystemExit(GATE_EXIT)" in script, (
+        "the gate's exit code is the verdict's only route out of this step"
     )
 
 
@@ -923,6 +958,197 @@ def test_a_failed_artifact_download_says_could_not_decide_not_uncertified(
         "the error has to name the artifact download, or the operator goes looking "
         "for a certification that was never the problem"
     )
+
+
+#: Every state in which the gate reads an authoritative artifact and refuses it. The
+#: assertion is the same for all of them and is the one that matters for a release:
+#: the verdict may not be PASS.
+REFUSED = {
+    "development mode": {
+        "verdict": _verdict(
+            GA_WORKFLOW, SHA_TAG, mode="development", full_ga_certified=False,
+            summary={"passed": 35, "planned": 5},
+        )
+    },
+    "planned gates": {
+        "verdict": _verdict(GA_WORKFLOW, SHA_TAG, summary={"passed": 35, "planned": 5})
+    },
+    "failing gates": {
+        "verdict": _verdict(
+            GA_WORKFLOW, SHA_TAG, full_ga_certified=False,
+            summary={"passed": 33, "failed": 2, "planned": 5},
+        )
+    },
+    "wrong commit": {"verdict": _verdict(GA_WORKFLOW, "e" * 40)},
+    "absent artifact": {"artifacts": []},
+    "duplicated artifact": {
+        "artifacts": [
+            {"id": 9001, "name": AUTHORITY[GA_WORKFLOW]["artifact"]},
+            {"id": 9002, "name": AUTHORITY[GA_WORKFLOW]["artifact"]},
+        ]
+    },
+    "expired artifact": {
+        "artifacts": [{"id": 9003, "name": AUTHORITY[GA_WORKFLOW]["artifact"], "expired": True}]
+    },
+    "two verdict files in one artifact": {
+        "zip": _zip(
+            {
+                MEMBER_PATH[GA_WORKFLOW]: json.dumps(_verdict(GA_WORKFLOW, SHA_TAG)),
+                "ga-dr/replay/cap-28.7-ga-certification.json": "{}",
+            }
+        )
+    },
+    "malformed json": {"zip": _zip({MEMBER_PATH[GA_WORKFLOW]: '{"mode": "final-strict"'})},
+    "a count the artifact does not report": {
+        "verdict": {
+            k: v
+            for k, v in _verdict(GA_WORKFLOW, SHA_TAG).items()
+            if k != "gate_summary"
+        }
+        | {"gate_summary": {"total": 40, "passed": 40, "failed": 0, "not_run": 0, "skipped": 0}}
+    },
+}
+
+
+@pytest.mark.parametrize("reason", sorted(REFUSED))
+def test_no_refused_authority_state_leaves_the_release_able_to_pass(
+    reason: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One table, one assertion: whatever the gate refuses, PASS is not on the menu."""
+    runs, jobs = _green_runs(SHA_TAG)
+    code, evidence = _exec_gate(
+        tmp_path,
+        monkeypatch,
+        FakeActionsApi(
+            runs=runs,
+            jobs=jobs,
+            chain=CHAIN_TAG,
+            authority={GA_WORKFLOW: REFUSED[reason]},
+        ),
+    )
+    assert code != 0, f"{reason}: the gate refused the artifact and still exited successfully"
+    assert evidence["verdict"] != "PASS", f"{reason}: refused, and published a PASS anyway"
+    assert evidence["failures"], f"{reason}: a refusal with no recorded reason"
+    authority = evidence["evidence"][GA_WORKFLOW]["authority"]
+    assert authority["verdict"] == "REJECTED", f"{reason}: {authority}"
+
+
+def test_error_and_fail_refuse_publication_by_different_routes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The diagnosis differs; the consequence for the tag does not.
+
+    `FAIL` is the gate reading evidence that says uncertified. `ERROR` is the gate
+    unable to read anything -- and an uninformed gate is not a licence, so this
+    asserts the route that a `PASS` could come from is closed in both cases.
+    """
+    runs, jobs = _green_runs(SHA_TAG)
+    accepted = tmp_path / "accepted"
+    accepted.mkdir()
+    failure_code, failure_evidence = _exec_gate(
+        accepted,
+        monkeypatch,
+        FakeActionsApi(runs=runs, jobs=jobs, chain=CHAIN_TAG),
+    )
+    assert failure_code == 0 and failure_evidence["verdict"] == "PASS"
+
+    refused = tmp_path / "refused"
+    refused.mkdir()
+    code, evidence = _exec_gate(
+        refused,
+        monkeypatch,
+        FakeActionsApi(
+            runs=runs,
+            jobs=jobs,
+            chain=CHAIN_TAG,
+            authority={
+                GA_WORKFLOW: {
+                    "verdict": _verdict(GA_WORKFLOW, SHA_TAG, mode="development")
+                }
+            },
+        ),
+    )
+    assert code == 1 and evidence["verdict"] == "FAIL"
+
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    with pytest.raises(RuntimeError):
+        _exec_gate(
+            broken,
+            monkeypatch,
+            FakeActionsApi(
+                runs=runs, jobs=jobs, chain=CHAIN_TAG,
+                authority={GA_WORKFLOW: {"fail": True}},
+            ),
+        )
+    errored = json.loads((broken / EVIDENCE_FILE).read_text("utf-8"))
+    assert errored["verdict"] == "ERROR"
+    assert errored["tag_sha"] == SHA_TAG and errored["authority"] == AUTHORITY, (
+        "the ERROR evidence has to carry the same context, or the refusal is unexplained"
+    )
+    assert {evidence["verdict"], errored["verdict"]} == {"FAIL", "ERROR"}, (
+        "collapsing the two would lose which of them the operator can answer by dispatching"
+    )
+
+
+def test_the_verdict_is_computed_from_every_signal_the_gate_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`decide()` cannot let a recorded refusal coexist with a PASS.
+
+    Reached through the executed gate rather than reimplemented here, because the
+    thing under test is the release path's own verdict rule.
+    """
+    namespace: dict = {}
+    runs, jobs = _green_runs(SHA_TAG)
+    code, evidence = _exec_gate(
+        tmp_path,
+        monkeypatch,
+        FakeActionsApi(runs=runs, jobs=jobs, chain=CHAIN_TAG),
+        ns_out=namespace,
+    )
+    assert code == 0
+    decide = namespace["decide"]
+    assert decide(evidence["evidence"], []) == "PASS"
+    assert decide({}, ["any refusal"]) == "FAIL"
+    with pytest.raises(RuntimeError, match="no failure line"):
+        decide({GA_WORKFLOW: {"authority": {"verdict": "REJECTED", "rejects": []}}}, [])
+    with pytest.raises(RuntimeError, match="no failure line"):
+        decide({K8S_WORKFLOW: {"authority": {"verdict": None}}}, [])
+    with pytest.raises(RuntimeError, match="no failure line"):
+        decide({"cap-linux-certification.yml": {"diff_verdict": "RECERTIFICATION_REQUIRED"}}, [])
+    assert decide({"cap-linux-certification.yml": {"diff_verdict": "INHERITED"}}, []) == "PASS", (
+        "an inherited distance the classifier accepted is not a contradiction"
+    )
+
+
+@pytest.mark.parametrize("total", [32, 33, 34])
+def test_an_older_round_with_a_smaller_gate_table_still_certifies(
+    total: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing in the authority rule may hardcode today's gate count.
+
+    Measured, not assumed: earlier Kubernetes rounds recorded 32/32 and 33/33, so a
+    fixed 34 -- or 40 on the GA side -- would refuse certification that the
+    classifier says is inheritable, which is the opposite failure to F-33 and just
+    as expensive for whoever holds the tag.
+    """
+    runs, jobs = _green_runs(SHA_TAG)
+    payload = _verdict(K8S_WORKFLOW, SHA_TAG, summary={"total": total, "passed": total})
+    target = tmp_path / f"table-{total}"
+    target.mkdir()
+    code, evidence = _exec_gate(
+        target,
+        monkeypatch,
+        FakeActionsApi(
+            runs=runs,
+            jobs=jobs,
+            chain=CHAIN_TAG,
+            authority={K8S_WORKFLOW: {"verdict": payload}},
+        ),
+    )
+    assert code == 0, f"a {total}-gate round was refused: {evidence['failures']}"
+    assert evidence["evidence"][K8S_WORKFLOW]["authority"]["verdict"] == "PASS"
 
 
 def test_gate_refuses_a_runtime_affecting_distance_between_evidence_and_tag(
