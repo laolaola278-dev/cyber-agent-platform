@@ -278,8 +278,13 @@ published release contents are immutable.
   another two-hour soak. One last thing is stated rather than assumed: CAP
   images are not reproducible by digest (F-39). Two clean-runner builds of
   `cap-sandbox-http` with the same Dockerfile hash, the same staged-context hash and
-  the same pinned base produced different digests, because nothing but build
-  timestamps differs. The release contract pins the *published* index digest, so
+  the same pinned base produced different digests. What was *not* established then --
+  and what the post-rc batch-1 measurement withdrew in writing -- is the reason: no
+  captured pair is two independent builds of one commit, and none of the layer,
+  diff-ID, manifest-composition, attestation-descriptor, buildx/BuildKit-version or
+  runner fields that would explain a difference is recorded at all, so "nothing but
+  build timestamps differs" was an inference, not a finding. The release contract
+  pins the *published* index digest, so
   what an operator deploys is still exactly what was certified; "rebuild it and
   compare" is not a check that works today.
 

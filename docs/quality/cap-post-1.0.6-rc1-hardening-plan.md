@@ -267,21 +267,37 @@ costs a CI cycle. The classifier is the arbiter and this plan does not propose e
   format records none of the variables these hypotheses name (no layer digests, no diff IDs, no
   manifest composition, no attestation descriptors, no buildx/BuildKit version, no runner
   metadata), and that not one captured pair is two independent builds of the same commit.
-  1. **Timestamps** — no `SOURCE_DATE_EPOCH` anywhere: image config `created` and history carry build
-     time, and `git checkout` mtimes flow into `COPY` layer tars (all five images).
-  2. **Repository state** — apt (`backend:37`, `sandbox-http:29`, `egress-proxy:13`) and
-     `apk upgrade` (`frontend:22`) resolve whatever the distro serves that day. That is *content*, not
-     metadata: removing it means shipping older packages, a security decision to make explicitly, not to
-     take quietly inside a reproducibility change.
-  3. **Unlocked resolvers** — `pip install "httpx==0.27.2" "pydantic==2.9.2"` (`sandbox-http:33`) and
-     `playwright==1.49.1` plus `playwright install --with-deps chromium` (`sandbox-browser:30`) are
-     version-pinned but not hash-pinned, and the browser fetch is a CDN download; `uv sync --frozen`
-     (`backend:12`) and `npm ci` (`frontend:5`) *are* locked. The two sandbox images are the weak pair —
-     and they are the two that produced the differing digests.
-  4. **Toolchain float** — unpinned syntax directive in two images (R3), unpinned buildx/BuildKit (B2),
-     and the console's `npm run build` output feeding `COPY --from=builder /app/dist` (`frontend:30`).
-  5. **Attestations inside the index digest** — SBOM/provenance manifests carry invocation timestamps, so
-     the index digest can move while every layer matches.
+  candidates, none of them confirmed by the batch-1 measurement. Each says what the
+  repository makes observable; the effect on a digest is a hypothesis until the
+  two-build comparison in (i) runs.
+  1. **Timestamps (unverified)** — no `SOURCE_DATE_EPOCH` anywhere in the build path, so
+     the image config's `created` and history entries carry build time. Source mtimes may
+     additionally influence `COPY` layer contents, depending on the pinned frontend and
+     BuildKit behaviour — **not demonstrated here**, and the evidence records neither
+     mtimes nor layer digests, so nothing in this batch can confirm or exclude it.
+  2. **Repository state (unverified)** — apt (`backend:37`, `sandbox-http:29`,
+     `egress-proxy:13`) and `apk upgrade` (`frontend:22`) are, from the Dockerfiles,
+     operations against whatever the distro serves that day. If a package differs, the
+     layer content differs — that is *content*, not metadata, and whether any of the
+     captured pairs actually differed this way is unmeasured. Removing it would mean
+     shipping older packages, a security decision to make explicitly, not to take
+     quietly inside a reproducibility change.
+  3. **Unlocked resolvers (unverified)** — `pip install "httpx==0.27.2" "pydantic==2.9.2"`
+     (`sandbox-http:33`) and `playwright==1.49.1` plus `playwright install --with-deps
+     chromium` (`sandbox-browser:30`) are version-pinned but not hash-pinned, and the
+     browser fetch is a CDN download; `uv sync --frozen` (`backend:12`) and `npm ci`
+     (`frontend:5`) *are* locked. So the two sandbox images are the weak pair on paper —
+     whether the resolver is what moved a digest is not shown by any captured evidence,
+     which records no layers at all.
+  4. **Toolchain float (unrecorded)** — the syntax directive is unpinned in two images
+     (R3) and `docker/setup-buildx-action@v3` is referenced with no `buildx-version`, so
+     the buildx and BuildKit versions are whatever the runner resolved. Whether that
+     variation reached any digest cannot be said: no record captured either version.
+  5. **Attestations inside the index digest (unread)** — whether the SBOM and provenance
+     manifests carry invocation timestamps that land in the index digest depends on the
+     pushed attestation content, which V1 could not read (§V1). This is the reason the
+     reproducibility model below excludes attestation manifests by *definition*, not
+     because their content has been observed to differ.
 - **Define the model before claiming anything.** Proposed reproducibility target = the per-platform
   manifest digest and the config digest with timestamps normalised, **excluding** attestation manifests;
   the published `index_digest` remains what `values-release-<version>.yaml` pins (the "what an operator

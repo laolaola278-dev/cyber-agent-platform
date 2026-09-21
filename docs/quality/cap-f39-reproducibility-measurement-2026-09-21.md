@@ -74,23 +74,36 @@ That is a measurement of the evidence format, not of Docker.
 same commit: the only same-commit pairs in the whole set are the same build's evidence
 file downloaded from two jobs of one run (byte-identical: `6d6f5a6f…` and
 `f7b19104…` respectively). Every differing pair also differs in `source_revision`, and
-the variables that move with a commit change — checkout timestamps, the state of the
-Debian/Alpine package mirrors that day, the buildx and BuildKit versions the runner
-resolved, the runner image itself — are exactly the ones §2 shows are never recorded.
-So this evidence cannot attribute the divergence to any of them, and does not.
+the candidate explanations — checkout mtimes, the state of the Debian/Alpine package
+mirrors that day, the buildx and BuildKit versions the runner resolved, the runner image
+itself — are exactly the ones §2 shows are never recorded. They remain candidates: this
+evidence attributes the divergence to none of them, and plan item G keeps them listed
+as hypotheses for the same reason.
 
 One further measured fact: `cap-sandbox-browser`'s base is recorded as
 `cap-sandbox-http:1.0.6-rc1`, a mutable tag rather than a digest, in all four of its
 records. Whatever else is true of that build's reproducibility, its base was not pinned
 in the way the other four images' bases are.
 
+**The measurement gap, in two parts.** (a) There is no independent two-build pair at one
+SHA anywhere in the captured evidence — every genuine cross-build comparison here crosses
+commits, and the same-commit records are one build read twice. (b) Ten of the comparison
+fields are missing from every record: layer compressed digests, layer diff IDs, the
+platform manifest digest, index/manifest-list composition, the SBOM and provenance
+descriptors, the buildx version, the BuildKit version, the builder endpoint, and runner
+metadata. So the comparison the acceptance criterion asks for cannot be performed with
+what is on file, at any commit, on any of the five images — and that, not a diff between
+two builds, is the finding of this stage.
+
 ## 4. What must be decided before anything claims reproducibility
 
 Plan item G states this and it is repeated here because it is the part that cannot be
 derived from the bytes: *which* digest is the reproducibility claim. Recommended —
 platform manifest digest plus OCI config digest, with attestation manifests excluded
-(their own invocation timestamps make an index digest differ even when every layer
-matches), and the index digest kept as a "verify against the published value" check
+(on the assumption that their own invocation timestamps can move an index digest while
+every layer matches — the pushed attestations were never read, so this is a definitional
+choice made in the absence of evidence, not a measured behaviour), and the index digest
+kept as a "verify against the published value" check
 rather than a rebuild comparison. Until that is agreed, a "reproducible" badge would be
 a statement about an undefined quantity.
 
