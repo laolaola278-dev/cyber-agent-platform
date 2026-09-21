@@ -9,14 +9,18 @@ failure only surfaced as ``pull access denied`` deep inside a certification job
 that had otherwise been counted as passing evidence for a release line. A lock
 file nobody checks rots the same way, so this module *is* the check: every
 reference site must match the lock, the lock must not name an image nothing uses,
-and the negative controls at the bottom prove the checker can fail -- in both
-directions.
+a cited evidence path must resolve to a tracked copy of the same measurement
+(F-37 -- the pointer may live in ignored output, the claim it vouches for may
+not), and an entry that names no evidence file must justify that inline rather
+than by silence. The negative controls at the bottom prove the checker can fail
+-- in both directions.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -200,6 +204,251 @@ def test_lock_records_the_retirement_with_evidence() -> None:
     assert entry["previous_ref"] == "docker.io/" + STALE_MINIO_REF
     assert entry["provenance"]["image_config_labels"]["vendor"] == "MinIO Inc <dev@min.io>"
     assert entry["provenance"]["open_gap"], "provenance must state what was NOT verified"
+
+
+# -- evidence pointers (F-37) -------------------------------------------------
+
+#: Where a clone can read the proof a ``provenance.evidence`` path cites.
+#:
+#: The cited paths live under ``outputs/``, which is gitignored on purpose -- it
+#: is where a run drops what it measured -- so neither requirement can be met the
+#: obvious way: requiring the cited path to exist would fail every fresh clone and
+#: every CI job that has not run the measurement, and requiring it to be tracked
+#: is a `deployment/` edit that costs a full re-certification (the pointers are
+#: what F-37 is about; rewriting them is batch 2's job). What a clone MUST be able
+#: to resolve is the claim: a tracked copy of the same measurement, stating the
+#: same digests.
+EVIDENCE_ROOTS = ("docs/quality/artifacts/",)
+
+#: What an entry with no evidence pointer has to carry instead, by field name.
+#: A leading ``image.`` names a field inside the entry, ``lock.`` a field in the
+#: file: `minio-object-store` cites a vendor-signed release tag and records what
+#: could not be checked, and `postgres` is tag-pinned because no digest could be
+#: resolved from the audit host, which `policy.postgres` states. Extending the
+#: convention means naming the justification here too -- an entry with neither is
+#: refused.
+EVIDENCE_ABSENT_JUSTIFICATION = {
+    "minio-object-store": ("image.provenance.vendor_signed_tag", "image.provenance.open_gap"),
+    "postgres": ("lock.policy.postgres",),
+}
+
+
+def _tracked_files() -> set[str]:
+    proc = subprocess.run(  # noqa: S603 -- a known command name, no shell
+        ("git", "-C", str(PROJECT_ROOT), "ls-files"),
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    assert proc.returncode == 0, f"git ls-files failed: {proc.stderr.strip()}"
+    files = {
+        line.strip().replace("\\", "/")
+        for line in proc.stdout.splitlines()
+        if line.strip()
+    }
+    assert files, "git ls-files answered with nothing -- this check would pass vacuously"
+    return files
+
+
+def _evidence_pointers() -> list[tuple[str, str]]:
+    return [
+        (entry["name"], str(entry["provenance"]["evidence"]).replace("\\", "/"))
+        for entry in LOCK["images"]
+        if (entry.get("provenance") or {}).get("evidence")
+    ]
+
+
+def _digest_claims(payload: object, path: str = "$") -> dict[str, str]:
+    """Every `sha256:...` a file asserts, at the position it asserts it at.
+
+    The digests are the claim; when the measurement was taken and how the file is
+    laid out are not. Comparing bytes instead would refuse two copies of one
+    measurement that differ only in a date -- which is the state of the tree
+    today, and is not the defect.
+    """
+    found: dict[str, str] = {}
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            found.update(_digest_claims(value, f"{path}.{key}"))
+    elif isinstance(payload, list):
+        for index, item in enumerate(payload):
+            found.update(_digest_claims(item, f"{path}[{index}]"))
+    elif isinstance(payload, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", payload):
+        found[path] = payload
+    return found
+
+
+def _justification_value(entry: dict, root: dict, dotted: str):
+    """`image.<path>` reads inside the entry, `lock.<path>` inside the file."""
+    selector, *parts = dotted.split(".")
+    node: object = entry if selector == "image" else root
+    for part in parts:
+        node = node.get(part) if isinstance(node, dict) else None
+    return node
+
+
+def _tracked_copies(cited: str, tracked: set[str]) -> list[str]:
+    basename = cited.rsplit("/", 1)[-1]
+    return sorted(
+        path
+        for path in tracked
+        if path.startswith(EVIDENCE_ROOTS) and path.rsplit("/", 1)[-1] == basename
+    )
+
+
+def _pointer_problems(
+    name: str, cited: str, copies: list[str], claims: dict[str, dict[str, str]]
+) -> list[str]:
+    measured = claims.get(cited)
+    if not copies:
+        return [
+            f"{name}: cites {cited}, which no fresh clone contains, and no tracked "
+            f"copy of it exists under {' or '.join(EVIDENCE_ROOTS)}"
+        ]
+    evidenced = [copy for copy in copies if claims.get(copy)]
+    if not evidenced:
+        return [
+            f"{name}: the tracked copy {copies} asserts no digest at all, so it "
+            f"cannot stand in for {cited}"
+        ]
+    if measured is None:
+        return []  # generated evidence: absent until a run measures it
+    problems: list[str] = []
+    for copy in evidenced:
+        in_clone = claims[copy]
+        if in_clone == measured:
+            continue
+        moved = sorted(k for k in set(measured) & set(in_clone) if measured[k] != in_clone[k])
+        only = sorted(set(measured) ^ set(in_clone))
+        differing = [(k, measured[k], in_clone[k]) for k in moved]
+        details = [f"different digests at {differing}"] if moved else []
+        if only:
+            details.append(f"{len(only)} digest(s) asserted by only one of them ({only})")
+        problems.append(
+            f"{name}: {cited} and the tracked {copy} disagree -- " + ", ".join(details)
+        )
+    return problems
+
+
+def _justification_gaps(
+    entries: list[dict], table: dict[str, tuple[str, ...]], root: dict
+) -> list[str]:
+    problems: list[str] = []
+    for entry in entries:
+        name = entry["name"]
+        if (entry.get("provenance") or {}).get("evidence"):
+            continue
+        wanted = table.get(name)
+        if not wanted:
+            problems.append(
+                f"{name}: points at no evidence file and carries no justification "
+                f"named in EVIDENCE_ABSENT_JUSTIFICATION"
+            )
+            continue
+        problems.extend(
+            f"{name}: listed justification {dotted!r} is empty or absent"
+            for dotted in wanted
+            if not _justification_value(entry, root, dotted)
+        )
+    return problems
+
+
+def test_cited_evidence_resolves_to_a_tracked_copy_of_the_same_measurement() -> None:
+    pointers = _evidence_pointers()
+    assert pointers, "no lock entry cites evidence -- this check would pass vacuously"
+    tracked = _tracked_files()
+    problems: list[str] = []
+    for name, cited in pointers:
+        copies = _tracked_copies(cited, tracked)
+        claims: dict[str, dict[str, str]] = {}
+        for path in [cited, *copies]:
+            document = PROJECT_ROOT / path
+            if document.is_file():
+                claims[path] = _digest_claims(json.loads(document.read_text("utf-8")))
+        problems.extend(_pointer_problems(name, cited, copies, claims))
+    assert not problems, "\n".join(problems)
+
+
+def test_an_entry_with_no_evidence_pointer_justifies_itself_inline() -> None:
+    """`provenance` is free-form, so absence has to be a stated rule, not a gap."""
+    without = {
+        entry["name"]
+        for entry in LOCK["images"]
+        if not (entry.get("provenance") or {}).get("evidence")
+    }
+    assert without == set(EVIDENCE_ABSENT_JUSTIFICATION), (
+        f"the lock's no-evidence entries and the listed justifications drifted apart "
+        f"(lock: {sorted(without)})"
+    )
+    assert not _justification_gaps(LOCK["images"], EVIDENCE_ABSENT_JUSTIFICATION, LOCK)
+
+
+def test_pointer_checker_refuses_a_claim_no_clone_can_read() -> None:
+    digest = "sha256:" + "a" * 64
+    problems = _pointer_problems(
+        "probe", "outputs/x/evidence.json", [], {"outputs/x/evidence.json": {"$.d": digest}}
+    )
+    assert problems and "no fresh clone contains" in problems[0]
+
+
+def test_pointer_checker_refuses_a_tracked_twin_that_proves_nothing() -> None:
+    problems = _pointer_problems(
+        "probe",
+        "outputs/x/evidence.json",
+        ["docs/quality/artifacts/evidence.json"],
+        {"outputs/x/evidence.json": {"$.d": "sha256:" + "a" * 64}},
+    )
+    assert problems and "asserts no digest" in problems[0]
+
+
+def test_pointer_checker_notices_a_diverged_copy_but_not_a_different_date() -> None:
+    def payload(digest: str, when: str) -> dict:
+        return {"verified_on_utc": when, "bases": [{"index_digest": digest}]}
+
+    cited = "outputs/x/evidence.json"
+    copy = "docs/quality/artifacts/evidence.json"
+    moved = _pointer_problems(
+        "probe",
+        cited,
+        [copy],
+        {
+            cited: _digest_claims(payload("sha256:" + "a" * 64, "2026-09-20")),
+            copy: _digest_claims(payload("sha256:" + "b" * 64, "2026-09-20")),
+        },
+    )
+    assert moved and "disagree" in moved[0], "a twin with different digests is not the same proof"
+    dated = _pointer_problems(
+        "probe",
+        cited,
+        [copy],
+        {
+            cited: _digest_claims(payload("sha256:" + "a" * 64, "2026-09-20")),
+            copy: _digest_claims(payload("sha256:" + "a" * 64, "2026-08-01")),
+        },
+    )
+    assert dated == [], (
+        "two copies of one measurement taken on different days is the tree's actual "
+        "state and not a defect -- only the digests are the claim"
+    )
+
+
+def test_justification_checker_notices_a_new_silent_entry() -> None:
+    assert _justification_gaps(
+        [{"name": "surprise-entry", "provenance": {}}], EVIDENCE_ABSENT_JUSTIFICATION, LOCK
+    )
+    assert not _justification_gaps(
+        [{"name": "surprise-entry", "provenance": {"evidence": "docs/x.json"}}],
+        EVIDENCE_ABSENT_JUSTIFICATION,
+        LOCK,
+    )
+    emptied = json.loads(json.dumps(LOCK))
+    silent = next(e for e in emptied["images"] if e["name"] == "minio-object-store")
+    silent["provenance"]["vendor_signed_tag"] = ""
+    problems = _justification_gaps([silent], EVIDENCE_ABSENT_JUSTIFICATION, emptied)
+    assert problems and "empty or absent" in problems[0], (
+        "a justification field that was emptied must not keep passing"
+    )
 
 
 # -- the binary bootstrap contract -------------------------------------------
