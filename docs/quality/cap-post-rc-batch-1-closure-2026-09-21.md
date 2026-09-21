@@ -26,8 +26,10 @@ same thing (commit `c31d21d`).
 
 ## B. Staged commits
 
-Eleven commits on local `main`, in order above the sealed line `4d8f9c7`, with the
-reviewer's bucket each one belongs to:
+Twelve commits on local `main`, in order above the sealed line `4d8f9c7`, with the reviewer's
+bucket each one belongs to — twelve counting this report's own commit `21627a9`, which is listed
+below. The commit that writes that sentence adds a thirteenth and changes nothing else; a report
+that tried to exclude itself would only be stale in a different direction.
 
 | # | Commit | Bucket | Content |
 | --- | --- | --- | --- |
@@ -42,6 +44,7 @@ reviewer's bucket each one belongs to:
 | 9 | `623e820` | **G** | every F-39 cause kept a hypothesis, in the notes as well as the report |
 | 10 | `c31d21d` | **Docs** | the DONE/PARTIAL/DEFERRED/UNVERIFIED model applied to the plan and the report |
 | 11 | `107867f` | **A** | the last way a verdict could be optional: unconditional job and step, pinned |
+| 12 | `21627a9` | **Docs** | this closure report, with the per-commit classifier audit and measured test results |
 
 Buckets recorded as they actually landed rather than reshaped to fit the scheme:
 commits 4 and 5 each carry two documents (all `docs`), so the plan travelled with the
@@ -66,10 +69,11 @@ verified.
 | `623e820` | `CHANGELOG.md`; `docs/quality/cap-f39-reproducibility-measurement-2026-09-21.md`; `docs/quality/cap-post-1.0.6-rc1-hardening-plan.md` |
 | `c31d21d` | `docs/quality/cap-post-1.0.6-rc1-hardening-plan.md`; `docs/quality/cap-post-rc-batch-1-execution-2026-09-21.md` |
 | `107867f` | `backend/tests/test_release_publication_gate.py` |
+| `21627a9` | `docs/quality/cap-post-rc-batch-1-closure-2026-09-21.md` (new) |
 | this report | `docs/quality/cap-post-rc-batch-1-closure-2026-09-21.md` |
 
-Cumulative `4d8f9c7` → HEAD: **10 files** — one workflow, two test modules, seven
-documents. Nothing under `deployment/`, `backend/app/`, `frontend/src/`, any
+Cumulative `4d8f9c7` → HEAD: **11 files** — one workflow, two test modules, eight documents
+(including this report). Nothing under `deployment/`, `backend/app/`, `frontend/src/`, any
 Dockerfile, `VERSION`, `pyproject.toml` or a lockfile was touched.
 
 ## D. Classifier result per commit
@@ -95,12 +99,14 @@ its definition: it means **every changed path is in an inheritable category** (n
 | `623e820` | `366a06d` | 3 | `docs` ×3 | False | True | none | INHERITED |
 | `c31d21d` | `623e820` | 2 | `docs` ×2 | False | True | none | INHERITED |
 | `107867f` | `c31d21d` | 1 | `test_harness` | False | True | none | INHERITED |
-| **cumulative** `4d8f9c7` → HEAD | | 10 | `ci_workflow` 1, `test_harness` 2, `docs` 7 | False | True | none | **INHERITED** |
-| **cumulative** `b671f53` → HEAD | | 14 | adds the closure round's own `docs`/`test_harness` | False | True | none | **INHERITED** |
+| `21627a9` | `107867f` | 1 | `docs` | False | True | none | INHERITED |
+| **cumulative** `4d8f9c7` → HEAD | | 11 | `ci_workflow` 1, `test_harness` 2, `docs` 8 | False | True | none | **INHERITED** |
+| **cumulative** `b671f53` → HEAD | | 15 | adds the closure round's own `docs`/`test_harness` | False | True | none | **INHERITED** |
 | **cumulative** `d30b4e7` → HEAD | | 13 | | False | True | none | **INHERITED** |
 
 Stop condition — any commit `RECERTIFICATION_REQUIRED` or `runtime_affecting=true`:
-**not triggered** (measured for all eleven in `_tmp/classifier_audit3.log`). Two
+**not triggered** (all twelve measured; `_tmp/classifier_audit3.log`, plus `21627a9` and the
+cumulative ranges re-run afterwards — 11 files from `4d8f9c7`, 15 from `b671f53`, both INHERITED). Two
 consequences worth stating: batch 1 kept its CI-only contract, and a tag cut at this head
 would still resolve its certification from `b671f53` (Linux/GA/soak) and `d30b4e7`
 (K8s) rather than needing a fresh round.
