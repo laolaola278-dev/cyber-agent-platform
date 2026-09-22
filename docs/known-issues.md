@@ -269,6 +269,12 @@ listed so that an import name is not mistaken for a working capability.
    confirm the dispatch inputs by hand -- the gate refuses when the round's own artifact does
    not say FULL GA CERTIFIED -- and the release notes on this line still quote the artifact,
    never the green tick.
+   It has now been seen refusing on live state: run read-only against `0561a7e` on 2026-09-22,
+   the gate selected *that head's own* GA round -- complete, green, its recorded `commit`
+   genuinely equal to the head -- and refused it on `mode='development'`,
+   `full_ga_certified=False`, `planned=5` and `35 of 40` alone, exiting 1 with `RELEASE BLOCKED`
+   where the pre-fix gate printed `PASS` on the identical remote state. No tag was created, so
+   the refusal at real tag time remains demonstrated by executed code rather than a publication.
 6. **The release image graph has never run (F-25).** `release.yml` builds and
    publishes all five CAP images, and its completeness gate refuses a partial
    set, but the workflow triggers only on a `v*` tag and publication is not

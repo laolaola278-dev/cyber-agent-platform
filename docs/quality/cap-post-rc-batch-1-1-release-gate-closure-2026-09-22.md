@@ -212,8 +212,11 @@ reconciliation:
 All ranges measured with the real classifier as a separate process, re-run after the volume
 recovery rather than quoted from the pre-interruption transcripts, and re-run again at the final
 tip: the four cumulative ranges read 11/15/19/18 files when `HEAD` was `7da216c`, and the rows
-above are the new measurements rather than edited ones. `RECERTIFICATION_REQUIRED` never
-appeared, and the classifier itself is unmodified (`git diff --name-only 49de108..HEAD --
+above are the new measurements rather than edited ones. The report commits stacked on top of this
+tip are `docs`-only hops (`0561a7e` → report: INHERITED, 4 `docs` files), and re-measuring every
+cumulative range there leaves these counts as they are — the pages they add already appear in
+those ranges — except `7da216c → HEAD`, which grows from 5 files to 7. `RECERTIFICATION_REQUIRED`
+never appeared, and the classifier itself is unmodified (`git diff --name-only 49de108..HEAD --
 scripts/release/classify_diff.py` → empty).
 
 ## J. Push and the runs it triggered
@@ -302,7 +305,7 @@ did *not* push:
   | `35689729682` | `ci.yml` | **completed / success**, 10/10 jobs success (§K.1) |
   | `35689729683` | `cap-linux-certification.yml` | completed / **success** — but `fast-certification` and `cap-production-certification` are `skipped`, i.e. the same green-with-skipped-release-jobs shape that *is* F-42 |
   | `35689729714` | `cap-k8s-certification.yml` | completed / success — `k8s-certification` success, uploaded `k8s-cert-artifacts` (id `10677309453`, 3 323 bytes) |
-  | `35689729668` | `cap-ga-certification.yml` | **in progress** while this report was written; development mode by construction, so it cannot certify a release either way (§L of batch 1) |
+  | `35689729668` | `cap-ga-certification.yml` | completed / **success** (`05:11:18Z`→`06:09:32Z`, 58 m 14 s) — `ga-certification` and `supply-chain` both success, uploading `ga-cert-artifacts` (id `10678749549`, 2 223 793 bytes) and `supply-chain-evidence` (id `10677698049`, 623 045 bytes). A development round: green, and still unable to certify a release, which §J.2 measures |
 
 - **The gate, again against live state, at the new head** — same read-only method (gate source from
   `release.yml`, `gh api` answered by GETs, `git` and the classifier real, nothing tagged), log at
@@ -319,6 +322,37 @@ did *not* push:
   would proceed: `False`. The same remote state, two gate versions, one of them ready to publish a
   release whose production-certification leg never ran — which is the defect batch 1.1 was for,
   demonstrated on the repository's actual runs at the new head rather than on a fixture.
+
+### J.2 The same dry-run once this head's GA round landed
+
+The refusal in §J.1 still had an available excuse: the head's own GA round had not finished, so the
+leg resolved to an older one. That excuse is now gone. The round completed at `06:09:32Z`, and the
+identical read-only dry-run was re-taken (`_tmp/b11/dryrun_0561a7e_ga_finished.log`):
+
+| | gate at `4d8f9c7` | gate at the pushed head |
+| --- | --- | --- |
+| GA | selects `35689729668` at `0561a7ea`, **+0** — its own round, complete — and does not read what it says | selects the **same run at the same +0**, downloads its own `ga-cert-artifacts` (`10678749549`, member `cap-cert-ga/cap-28.7-ga-certification.json`), and **REJECTS** it |
+| Linux | accepts `35689729683` at `+0`, `cap-production-certification` skipped | passed over, as in §J.1, to `35506716466` at `b671f537` (+43, INHERITED) |
+| Whole gate | **exit 0 / `PASS`** | **exit 1 / `FAIL`**, `RELEASE BLOCKED` |
+
+What the GA rejection rests on, quoted from the artifact it just read: `commit = "0561a7eafe73…"` —
+the binding check *passes*, this is unambiguously this commit's own round — and then
+
+```
+read mode = "development"            → refused: records mode='development', which is not 'final-strict'
+read full_ga_certified = false       → refused: records full_ga_certified=False, which is not True
+read gate_summary.planned = 5        → refused: gate_summary.planned=5, requires 0
+read gate_summary 35 passed/40 total → refused: counts 35 of 40 gates passed, so a gate has no PASS behind it
+```
+
+so the refusal is about **what the round says about itself**, not about staleness, distance or
+colour: a complete, correctly-bound, entirely green development round is still not certification.
+`ancestors_considered = 80`; the selection and walk-back policy did not move; nothing was tagged —
+the tag SHA was an environment value, and no remote call in either pass was anything but a `GET`.
+
+Which is also why this is not, and does not claim to be, the end-to-end proof: the tag-time path
+stays **PENDING** (§M.4), because demonstrating it would require cutting a release tag, and the
+sealed-release rules for this line forbid that.
 
 ## K. The two live checks, unsilenced
 
@@ -477,9 +511,11 @@ What this verdict does **not** claim, stated as plainly as what it does:
   by executing the gate's own code against live state, not by a publication. A publication round
   would additionally require the GA leg's `final-strict` authority, which no development round —
   including this head's — can supply.
-- **This head's own GA round was still running** when this report was written. It is a development
-  round, so it cannot certify a release and cannot un-certify one either; the gate's behaviour with
-  it in flight and after it lands is the same refusal on the same four fields.
+- **This head's own GA round landed green and was still refused.** `35689729668` completed success
+  (58 m 14 s) as a development round; the re-taken dry-run (§J.2) has the GA leg select *that* run at
+  `+0`, confirm its recorded `commit` is this very SHA, and then reject it on four things it says
+  about itself. So the block is not staleness, distance or a colour — it is certification's content
+  requirement, and no development round can satisfy it.
 - **The stale sentence in §M.2** stays in the tree, on purpose, with its correction written down here
   rather than a code edit slipping past the tip CI validated.
 - Nothing was loosened to obtain the green: no test deleted, narrowed, skipped or re-marked, no
