@@ -20,77 +20,139 @@ import subprocess
 import sys
 from collections.abc import Callable
 
-#: One command read, with the argv that answers it and the field it fills.
-CommandRunner = Callable[[list[str]], tuple[int, str]]
+#: One command read: exit code, stdout and stderr, with the argv that answered them.
+CommandRunner = Callable[[list[str]], tuple[int, str, str]]
+
+#: How much of a complaint to carry into the evidence. Enough to identify a usage
+#: error, short enough that a stack trace cannot bury the record it explains.
+ERROR_TEXT_LIMIT = 300
 
 
-def run_command(argv: list[str]) -> tuple[int, str]:
-    """The real runner: argv, no shell, exit code and stdout handed back."""
+def run_command(argv: list[str]) -> tuple[int, str, str]:
+    """The real runner: argv, no shell, exit code and both output streams handed back.
+
+    Stderr is part of the contract on purpose. The first version of this recorder
+    kept only stdout, and when `docker buildx version --format` was refused by the
+    CLI the evidence said `{"error": "exit 125"}` -- the number a usage error ends
+    with, with the one sentence that explains it thrown away. A reader could not
+    tell a missing binary from a bad flag from a dead daemon.
+    """
     try:
         completed = subprocess.run(
             argv, capture_output=True, text=True, timeout=120, check=False
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        return 1, f"{type(error).__name__}: {error}"
-    return completed.returncode, (completed.stdout or "").strip()
+        return 1, "", f"{type(error).__name__}: {error}"
+    return completed.returncode, (completed.stdout or "").strip(), (completed.stderr or "").strip()
 
 
 def read(run: CommandRunner, name: str, argv: list[str]) -> dict:
     """One command, recorded honestly: what it answered, or that it did not answer."""
-    code, out = run(argv)
-    text = out.splitlines()[0].strip() if out else ""
-    if code != 0 or not text:
-        return {"ok": False, "command": " ".join(shlex.quote(part) for part in argv),
-                "error": text or f"exit {code}"}
-    return {"ok": True, "command": " ".join(shlex.quote(part) for part in argv), "value": text}
+    code, out, err = run(argv)
+    command = " ".join(shlex.quote(part) for part in argv)
+    first = out.splitlines()[0].strip() if out else ""
+    if code != 0 or not first:
+        complaint = (err.splitlines() or [""])[0].strip()[:ERROR_TEXT_LIMIT]
+        return {"ok": False, "command": command, "exit": code,
+                "error": complaint or (out[:ERROR_TEXT_LIMIT] or f"exit {code}")}
+    return {"ok": True, "command": command, "exit": code, "value": first}
 
 
-def buildx_builder_container(run: CommandRunner) -> dict:
-    """The BuildKit container a `docker-container` driver builder is running, if any.
+def _inspect_sections(text: str) -> tuple[dict[str, str], dict[str, str]]:
+    """The builder block and the first node block of `docker buildx inspect`.
+
+    The command's layout carries the facts: a builder header (`Name:`, `Driver:`), then a
+    `Nodes:` section with per-node keys (`Endpoint:`, `Status:`, `Buildkit:`, `Image:`).
+    Labels are parsed rather than positions, so a buildx release that adds or reorders a
+    line cannot silently shift a value into the wrong field.
+    """
+    head: dict[str, str] = {}
+    node: dict[str, str] = {}
+    in_nodes = False
+    for line in text.splitlines():
+        if line.strip() == "Nodes:":
+            in_nodes = True
+            continue
+        key, sep, value = line.partition(":")
+        if not sep or not key.strip():
+            continue
+        target = node if in_nodes else head
+        target.setdefault(key.strip().lower(), value.strip())
+        if in_nodes and target.get("image"):
+            break  # the first node is the one this builder runs
+    return head, node
+
+
+def buildx_builder(run: CommandRunner) -> dict:
+    """The builder that actually ran: driver, name, and the BuildKit identity behind them.
 
     The image reference and the image ID are different facts -- the first says what the
-    builder was asked to run, the second says what the daemon resolved -- and the digest the
-    release cares about is only in the second one when the reference was pulled by digest.
+    builder was asked to run, the second says what the daemon resolved -- and the digest
+    the release cares about is only in the second one when the reference was pulled by
+    digest. `--format` is not available here: the buildx CLI rejects that flag on both
+    `version` and `inspect`, and the first release evidence proved it by failing with
+    nothing but an exit code.
     """
-    listed = read(run, "builders", ["docker", "buildx", "inspect", "--format",
-                                    "{{.Driver}} {{.Name}}"])
-    if not listed["ok"]:
-        return {"ok": False, "error": listed["error"], "reason": "no builder could be inspected"}
-    driver, _, builder = listed["value"].partition(" ")
+    argv = ["docker", "buildx", "inspect"]
+    command = " ".join(shlex.quote(part) for part in argv)
+    code, out, err = run(argv)
+    if code != 0 or not out.strip():
+        complaint = (err.splitlines() or [""])[0].strip()[:ERROR_TEXT_LIMIT]
+        return {"ok": False, "command": command, "exit": code,
+                "error": complaint or f"exit {code}",
+                "reason": "no builder could be inspected"}
+    head, node = _inspect_sections(out)
+    driver, builder = head.get("driver", ""), head.get("name", "")
+    observed: dict = {"ok": True, "command": command, "exit": code,
+                      "driver": driver or None, "builder": builder or None,
+                      "buildkit_version": node.get("buildkit") or None,
+                      "node_image": node.get("image") or None}
     container = f"buildx_buildkit_{builder}" if builder else ""
     if not container:
-        return {"ok": False, "error": "buildx named no builder", "driver": driver}
+        return {**observed, "ok": False, "error": "buildx named no builder"}
     image = read(run, "image", ["docker", "inspect", "--format",
-                                "{{.Config.Image}}\t{{.Image}}", container])
+                                "{{.Config.Image}}	{{.Image}}", container])
     if not image["ok"]:
         # Only the docker driver has an excuse for no container to inspect: it runs the
         # engine's embedded BuildKit. With a docker-container builder that container *is*
         # the builder, so a failed read is a lost observation, and the two must not be
         # recorded in the same shape.
         if driver == "docker":
-            return {"ok": False, "driver": driver, "error": image["error"],
+            return {**observed, "error": image["error"],
                     "reason": ("the docker driver runs the engine's embedded BuildKit, so no "
                                "BuildKit image digest exists to record")}
-        return {"ok": False, "driver": driver,
-                "error": f"{container} is this builder's BuildKit container and could not be "
-                         f"read: {image['error']}"}
-    reference, _, image_id = image["value"].partition("\t")
-    return {"ok": True, "driver": driver, "builder": builder, "container": container,
-            "reference": reference or None, "image_id": image_id or None,
+        return {**observed, "ok": False,
+                "error": f"{container} is this builder's BuildKit container and could not "
+                         f"be read: {image['error']}"}
+    reference, _, image_id = image["value"].partition("	")
+    return {**observed, "container": container, "container_reference": reference or None,
+            "image_id": image_id or None,
             "digest": (image_id.split(":", 1)[1] if image_id.startswith("sha256:") else None)}
+
+
+def buildx_version(run: CommandRunner) -> dict:
+    """The buildx binary's own version line, parsed rather than templated.
+
+    `docker buildx version` prints `<install path> <version> <commit>` on one line and
+    takes no `--format`, so parsing is the only way to ask -- and the raw line stays in
+    the record so a reader can check the parse against what the tool actually said.
+    """
+    record = read(run, "buildx_version", ["docker", "buildx", "version"])
+    if record["ok"]:
+        parts = record["value"].split()
+        record["version"] = parts[1] if len(parts) > 1 else None
+        record["commit"] = parts[2] if len(parts) > 2 else None
+    return record
 
 
 def observe(run: CommandRunner) -> dict:
     """Every producer field the tooling can be asked about, read back."""
-    buildx = read(run, "buildx_version", ["docker", "buildx", "version", "--format",
-                                          "{{.Version}}"])
-    observed = {
-        "buildx_version": buildx,
-        "builder": buildx_builder_container(run),
+    return {
+        "buildx_version": buildx_version(run),
+        "builder": buildx_builder(run),
         "docker_engine": read(run, "docker_server", ["docker", "version", "--format",
                                                      "{{.Server.Version}}"]),
     }
-    return observed
 
 
 def configured_values(lock: dict, buildkit_entry: str, buildx_entry: str = "buildx") -> dict:

@@ -137,29 +137,75 @@ def test_the_build_script_records_a_producer_it_did_not_write() -> None:
 
 # -- the recorder, driven with a stubbed `docker` ------------------------------
 
+INSPECT_DOCKER_CONTAINER = """Name:          cap-builder
+Driver:        docker-container
+Last Activity: 2026-09-22 14:30:00 +0000 UTC
+
+Nodes:
+Name:      cap-builder0
+Endpoint:  unix:///var/run/docker.sock
+Status:    running
+Buildkit:  v0.33.0
+Image:     {image}
+"""
+
+INSPECT_DOCKER_DRIVER = """Name:   default
+Driver: docker
+
+Nodes:
+Name:       default
+Endpoint:   default
+Status:     running
+Buildkit:   v0.33.0-desktop.1
+"""
+
+BUILDX_VERSION_LINE = ("github.com/docker/buildx {version} "
+                       "1e2f22f3a4c5d6e7f8090a1b2c3d4e5f60718293")
+
+
 @pytest.fixture
 def stub_runner():
-    """A `docker` that answers, with values chosen to differ from the lock's."""
+    """A `docker` that answers, with values chosen to differ from the lock's.
+
+    The keys are the exact argv the recorder must use, which makes the fixture the
+    regression guard too: `docker buildx version --format` and `docker buildx inspect
+    --format` were what the first implementation ran, the buildx CLI rejects that flag on
+    both subcommands, and CI's evidence recorded the resulting `exit 125` twice over.
+    """
 
     def build(version: str = "v0.99.9-observed", builder_image: str = "moby/buildkit:other",
-              image_id: str = "sha256:" + "ee" * 32, inspect_fails: bool = False):
-        answers = {
-            ("docker", "buildx", "version", "--format", "{{.Version}}"): (0, version),
-            ("docker", "buildx", "inspect", "--format",
-             "{{.Driver}} {{.Name}}"): (0, "docker-container cap-builder"),
+              image_id: str = "sha256:" + "ee" * 32, driver: str = "docker-container",
+              container_read_fails: bool = False, version_fails: bool = False):
+        builder = "cap-builder" if driver == "docker-container" else "default"
+        inspect_text = (INSPECT_DOCKER_CONTAINER.format(image=builder_image)
+                        if driver == "docker-container" else INSPECT_DOCKER_DRIVER)
+        answers: dict[tuple[str, ...], tuple[int, str, str]] = {
+            ("docker", "buildx", "version"): (
+                1 if version_fails else 0,
+                "" if version_fails else BUILDX_VERSION_LINE.format(version=version),
+                "ERROR: failed to connect to the docker API at npipe:////./pipe/dockerDesktop"
+                "LinuxEngine" if version_fails else "",
+            ),
+            ("docker", "buildx", "inspect"): (0, inspect_text, ""),
             ("docker", "inspect", "--format", "{{.Config.Image}}\t{{.Image}}",
-             "buildx_buildkit_cap-builder"): (
-                0 if not inspect_fails else 1,
-                "" if inspect_fails else f"{builder_image}\t{image_id}"),
-            ("docker", "version", "--format", "{{.Server.Version}}"): (0, "28.3.0"),
+             f"buildx_buildkit_{builder}"): (
+                1 if container_read_fails else 0,
+                "" if container_read_fails else f"{builder_image}\t{image_id}",
+                f"Error: No such object: buildx_buildkit_{builder}"
+                if container_read_fails else "",
+            ),
+            ("docker", "version", "--format", "{{.Server.Version}}"): (0, "28.3.0", ""),
         }
+        seen: list[tuple[str, ...]] = []
 
-        def run(argv: list[str]) -> tuple[int, str]:
+        def run(argv: list[str]) -> tuple[int, str, str]:
             key = tuple(argv)
+            seen.append(key)
             if key in answers:
                 return answers[key]
-            return 1, f"unexpected command: {key}"
+            return 2, "", f"unexpected command: {key}"
 
+        run.seen = seen  # type: ignore[attr-defined]
         return run
 
     return build
@@ -184,47 +230,74 @@ def test_observed_values_come_from_the_tool_not_from_the_pin(tmp_path: Path,
     """
     payload = recorded_payload(tmp_path, stub_runner())
     assert payload["configured"]["buildkit_image"] == BUILDKIT["image_ref"]
-    assert payload["observed"]["buildx_version"]["value"] == "v0.99.9-observed"
-    assert payload["observed"]["builder"]["image_id"] == "sha256:" + "ee" * 32
-    assert payload["observed"]["builder"]["reference"] == "moby/buildkit:other"
-    assert payload["configured"]["buildkit_image"] != payload["observed"]["builder"]["reference"]
+    observed = payload["observed"]
+    assert observed["buildx_version"]["value"] == BUILDX_VERSION_LINE.format(
+        version="v0.99.9-observed"), "the raw line stays so a parse can be checked against it"
+    assert observed["buildx_version"]["version"] == "v0.99.9-observed"
+    assert observed["buildx_version"]["commit"].startswith("1e2f22f3")
+    assert observed["builder"]["driver"] == "docker-container"
+    assert observed["builder"]["builder"] == "cap-builder"
+    assert observed["builder"]["buildkit_version"] == "v0.33.0"
+    assert observed["builder"]["image_id"] == "sha256:" + "ee" * 32
+    assert observed["builder"]["digest"] == "ee" * 32
+    assert observed["builder"]["container_reference"] == "moby/buildkit:other"
+    assert payload["configured"]["buildkit_image"] != observed["builder"]["container_reference"]
     assert payload["runner"]["runner_environment"] == "GitHub-ACTIONS"
+
+
+def test_a_buildx_lookup_never_asks_the_cli_for_a_flag_it_does_not_have(
+        tmp_path: Path, stub_runner) -> None:
+    """`--format` belongs to the docker CLI, not to buildx's `version`/`inspect`.
+
+    The original failure was invisible for exactly one reason: the recorder treated a
+    non-zero exit with empty stdout as the whole story. Asserting the argv shape is the
+    half a stub can check locally, where no buildx is installed to refuse the flag.
+    """
+    run = stub_runner()
+    recorded_payload(tmp_path, run)
+    buildx_reads = [argv for argv in run.seen if argv[:2] == ("docker", "buildx")]
+    assert buildx_reads, "the recorder stopped reading buildx at all"
+    for argv in buildx_reads:
+        assert "--format" not in argv, f"buildx rejects this: {argv}"
 
 
 def test_a_mismatch_between_pin_and_run_is_visible(tmp_path: Path, stub_runner) -> None:
     """Nothing here asserts they agree -- the release reviewer decides that, from the record."""
     payload = recorded_payload(tmp_path, stub_runner(builder_image="moby/buildkit:v0.20.0"))
     pinned = payload["configured"]["buildkit_image"]
-    ran = payload["observed"]["builder"]["reference"]
+    ran = payload["observed"]["builder"]["container_reference"]
     assert not pinned.endswith(ran), "the fixture stopped being a mismatch"
 
 
-def test_a_command_that_does_not_answer_is_recorded_as_such(tmp_path: Path,
-                                                            stub_runner) -> None:
-    payload = recorded_payload(tmp_path, stub_runner(inspect_fails=True))
+def test_a_failed_read_carries_the_complaint_not_just_an_exit_code(
+        tmp_path: Path, stub_runner) -> None:
+    """`{"error": "exit 125"}` told a reader nothing; the CLI's own sentence is the point."""
+    payload = recorded_payload(tmp_path, stub_runner(version_fails=True))
+    buildx = payload["observed"]["buildx_version"]
+    assert buildx["ok"] is False and buildx["exit"] == 1, buildx
+    assert "failed to connect" in buildx["error"], (
+        f"a failed lookup has to say why it failed: {buildx['error']!r}")
+    assert "buildx_version" in payload["incomplete"], payload.get("incomplete")
+
+
+def test_a_container_that_cannot_be_read_is_a_lost_observation(tmp_path: Path,
+                                                               stub_runner) -> None:
+    payload = recorded_payload(tmp_path, stub_runner(container_read_fails=True))
     builder = payload["observed"]["builder"]
     assert builder["ok"] is False and builder["error"], builder
-    assert "incomplete" in payload, "an unread producer must be named, not left implicit"
-    assert "builder" in payload["incomplete"] or "buildx_version" in payload["incomplete"]
+    assert "No such object" in builder["error"], builder["error"]
+    assert "builder" in payload["incomplete"], (
+        "an unread producer must be named, not left implicit")
 
 
-def test_the_docker_driver_says_there_is_no_buildkit_container(tmp_path: Path) -> None:
+def test_the_docker_driver_says_there_is_no_buildkit_container(tmp_path: Path,
+                                                               stub_runner) -> None:
     """`--local-docker` really has no BuildKit image to read; that is stated, not faked."""
-
-    def run(argv: list[str]) -> tuple[int, str]:
-        if argv[:3] == ["docker", "buildx", "version"]:
-            return 0, "v0.37.1"
-        if "--format" in argv and "{{.Driver}}" in " ".join(argv):
-            return 0, "docker default"
-        if "buildx_buildkit_default" in argv:
-            return 1, "No such object"
-        if argv[:2] == ["docker", "version"]:
-            return 0, "28.3.0"
-        return 1, f"unexpected: {argv}"
-
-    payload = recorded_payload(tmp_path, run)
+    payload = recorded_payload(tmp_path,
+                               stub_runner(driver="docker", container_read_fails=True))
     builder = payload["observed"]["builder"]
-    assert builder["ok"] is False
+    assert builder["ok"] is True and builder["driver"] == "docker", builder
+    assert builder["buildkit_version"] == "v0.33.0-desktop.1"
     assert "embedded BuildKit" in builder["reason"], builder
     assert "incomplete" not in payload, (
         f"a stated absence is not a read failure: {payload.get('incomplete')}")
@@ -232,7 +305,7 @@ def test_the_docker_driver_says_there_is_no_buildkit_container(tmp_path: Path) -
 
 def test_run_command_reports_instead_of_raising(tmp_path: Path) -> None:
     """A missing binary is a recorded fact; the build must not die behind the recorder."""
-    code, out = recorder.run_command([str(tmp_path / "no-such-binary"), "--version"])
+    code, out, err = recorder.run_command([str(tmp_path / "no-such-binary"), "--version"])
     assert code != 0
-    assert "FileNotFoundError" in out, (
-        f"a missing binary has to read as a failed command, not as silence: {out!r}")
+    assert "FileNotFoundError" in err, (
+        f"a missing binary has to read as a failed command, not as silence: {err!r}")
