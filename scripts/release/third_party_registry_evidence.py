@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # The design this implements is §F.1 of
 # docs/quality/cap-post-rc-batch-2-design-freeze-2026-09-22.md. Read that contract before
 # changing a failure mode below: each one exists because something here was once claimed

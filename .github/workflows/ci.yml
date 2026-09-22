@@ -231,7 +231,11 @@ jobs:
         run: |
           set -euo pipefail
           PATHS="backend.image worker.image frontend.image worker.sandbox.image worker.sandbox.browserImage egressProxy.image"
-          DIGEST="sha256:$(printf 'ab%.0s' $(seq 1 64))"
+          DIGEST="sha256:$(printf 'ab%.0s' $(seq 1 32))"
+          # The fixture has to be the shape it claims: 64 hex characters. A pair
+          # printed 64 times is 128, and the chart would then be refusing the test
+          # value rather than answering it, so the guard checks its own tools.
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "the fixture digest is not 64 hex: $DIGEST"; exit 1; }
           run_case() {
             local -a args=()
             for p in $PATHS; do
@@ -241,7 +245,7 @@ jobs:
                   tag)    args+=(--set "$p.tag=v9.9.9") ;;
                   notag)  args+=(--set "$p.tag=null") ;;
                   digest) args+=(--set-string "$p.digest=$DIGEST") ;;
-                  nodigest) args+=(--set-string "$p.digest=null") ;;
+                  nodigest) args+=(--set "$p.digest=null") ;;
                 esac
               done
             done
@@ -271,8 +275,8 @@ jobs:
             fi
           }
           for p in $PATHS; do
-            refuse "$p with no tag and no digest" --set "$p.tag=null" --set-string "$p.digest=null"
-            refuse "$p with an empty tag" --set-string "$p.tag=" --set-string "$p.digest=null"
+            refuse "$p with no tag and no digest" --set "$p.tag=null" --set "$p.digest=null"
+            refuse "$p with an empty tag" --set-string "$p.tag=" --set "$p.digest=null"
             refuse "$p with an empty digest" --set "$p.tag=null" --set-string "$p.digest="
             refuse "$p with a malformed digest" --set-string "$p.digest=sha256:abc"
           done
