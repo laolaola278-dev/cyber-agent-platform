@@ -160,6 +160,15 @@ fixtures model them. Closing that needs one reviewed change — a job-level
 `permissions: actions: read` on the `backend` job — and that is a workflow edit with a CI cost, not
 something to do unreviewed inside a validation stage.
 
+> **Follow-up, 2026-09-22 (batch 1.1): that hypothesis was incomplete, and the record says so.**
+> `actions: read` was granted and pinned by a contract test, and the two checks then **executed** —
+> but failed, on `gh`'s own words: `` `gh api` exited 4: To use GitHub CLI in a GitHub Actions
+> workflow, set the GH_TOKEN environment variable ``. A scope was necessary, not sufficient: nothing
+> in that job puts a token into `gh`'s environment, so what remains is one step-level
+> `env: GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` and a re-run. `LIVE API READ PATH` stays PENDING; what
+> changed is that the gap now announces itself as a red job instead of a green one full of skips.
+> Detail: `docs/quality/cap-post-rc-batch-1-1-release-gate-closure-2026-09-22.md` §K.
+
 ## G. F-33 development-GA rejection evidence
 
 **What the push produced is the F-33 scenario in the flesh.** `cap-ga-certification.yml:37` sets

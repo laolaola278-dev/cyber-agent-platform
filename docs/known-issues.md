@@ -363,11 +363,16 @@ listed so that an import name is not mistaken for a working capability.
     workflow file (never refuse; blocklist-only) redden 19 and 11 tests respectively, which is what
     says the tests are load-bearing rather than descriptive.
 
-    **Still PENDING, and not counted as closed here:** the remote half. The CI run at a head carrying
-    this fix has to show the twenty F-42 cases green *and* the two live Actions/API checks executing
-    rather than skipping for want of `actions: read` — the scope that made them inert is new in the
-    same batch. And no tag was created to watch the gate refuse one at tag time, so the end-to-end
-    publication path remains unobserved (as it was for F-33).
+    **What the batch-1.1 CI run settled, and what it did not.** Remotely, the fix is confirmed: the
+    twenty F-42 cases passed in CI, and the gate's own code, run read-only against the pushed head's
+    live state, passed over three green runs whose release jobs were skipped (including the one at
+    this head) to reach the real release-layer round at `b671f53` (+40) — where the pre-fix gate had
+    accepted the `+0` skipped run. Two things remain open: the **live Actions/API read path**, which
+    now executes and *fails* on `gh` receiving no `GH_TOKEN` in the job (one step-level `env:` line
+    and a re-run away, and no longer hideable as a skip), and the **tag-time execution** — no tag was
+    created, so the gate's refusal at publication is demonstrated by executed code and live-state
+    dry-run, not by a real release. Both are the same pending items F-33 left behind, now with their
+    cause measured rather than assumed.
 
 ## Live verification against a real PostgreSQL server
 
