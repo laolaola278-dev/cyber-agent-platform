@@ -1,0 +1,408 @@
+{
+  "generator": "scripts/release/third_party_registry_evidence.py",
+  "images": [
+    {
+      "child_count": 4,
+      "digest_kind": "manifest-list (multi-arch index)",
+      "index_digest": "sha256:ef11ed817e6a5385c02cd49fdcc99c23d02426088252a8eace6b6e6a2a511f36",
+      "linux_amd64_child": {
+        "digest": "sha256:88baae1f9fa298996f8313e44559163c535937406d217f1c8ac9d4b86a2020fd",
+        "size": 669,
+        "variant": null
+      },
+      "media_type": "application/vnd.oci.image.index.v1+json",
+      "name": "astral-sh-uv-0.8.3-base",
+      "pinned_by_surfaces": "sha256:ef11ed817e6a5385c02cd49fdcc99c23d02426088252a8eace6b6e6a2a511f36",
+      "pinned_digest_still_resolves": null,
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "ref": "ghcr.io/astral-sh/uv:0.8.3",
+      "refetch_by_digest_byte_identical": true,
+      "registry": "ghcr.io",
+      "repository": "astral-sh/uv",
+      "served_digest_verified_against_body": true,
+      "sources": [
+        "backend/Dockerfile",
+        "backend/Dockerfile:2"
+      ],
+      "tag": "0.8.3",
+      "tag_currently_serves_pin": true
+    },
+    {
+      "child_count": 22,
+      "digest_kind": "manifest-list (multi-arch index)",
+      "index_digest": "sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32",
+      "linux_amd64_child": {
+        "digest": "sha256:34b128e419449565adc5ed7f487a6f503a73f1077012cfed86354c731338c44f",
+        "size": 1134,
+        "variant": null
+      },
+      "media_type": "application/vnd.oci.image.index.v1+json",
+      "name": "docker-dockerfile-1",
+      "pinned_by_surfaces": "",
+      "pinned_digest_still_resolves": null,
+      "platforms": [
+        "linux/386",
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64",
+        "linux/mips",
+        "linux/mips64",
+        "linux/mips64le",
+        "linux/mipsle",
+        "linux/ppc64le",
+        "linux/riscv64",
+        "linux/s390x"
+      ],
+      "ref": "docker.io/docker/dockerfile:1",
+      "refetch_by_digest_byte_identical": true,
+      "registry": "docker.io",
+      "repository": "docker/dockerfile",
+      "served_digest_verified_against_body": true,
+      "sources": [
+        "backend/Dockerfile:1#syntax",
+        "frontend/Dockerfile:1#syntax"
+      ],
+      "tag": "1",
+      "tag_currently_serves_pin": null
+    },
+    {
+      "child_count": 4,
+      "digest_kind": "manifest-list (multi-arch index)",
+      "index_digest": "sha256:8a68677a97b8c8d1427dc915672a26d2c4a04376916a68256f53d669d6171be7",
+      "linux_amd64_child": {
+        "digest": "sha256:2fbd14f87cfc030917cc3602acea551e2b2d7167501ac54f09af17b19c094645",
+        "size": 3335,
+        "variant": null
+      },
+      "media_type": "application/vnd.oci.image.index.v1+json",
+      "name": "dpage-pgadmin4-8",
+      "pinned_by_surfaces": "",
+      "pinned_digest_still_resolves": null,
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "ref": "docker.io/dpage/pgadmin4:8",
+      "refetch_by_digest_byte_identical": true,
+      "registry": "docker.io",
+      "repository": "dpage/pgadmin4",
+      "served_digest_verified_against_body": true,
+      "sources": [
+        "docker-compose.yml:266"
+      ],
+      "tag": "8",
+      "tag_currently_serves_pin": null
+    },
+    {
+      "child_count": 3,
+      "digest_kind": "manifest-list (multi-arch index)",
+      "index_digest": "sha256:fa801ab6e1ae035135309580891e09f7eb94d1abdbd2106bdc288030b028158c",
+      "linux_amd64_child": {
+        "digest": "sha256:cc51212998c91d624fdbb6d1a6903234ddcf97108d56a7a2d1c85bffdb749b6a",
+        "size": 2416,
+        "variant": null
+      },
+      "media_type": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "name": "grafana-grafana-11.3.1",
+      "pinned_by_surfaces": "",
+      "pinned_digest_still_resolves": null,
+      "platforms": [
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64"
+      ],
+      "ref": "docker.io/grafana/grafana:11.3.1",
+      "refetch_by_digest_byte_identical": true,
+      "registry": "docker.io",
+      "repository": "grafana/grafana",
+      "served_digest_verified_against_body": true,
+      "sources": [
+        "docker-compose.yml:247"
+      ],
+      "tag": "11.3.1",
+      "tag_currently_serves_pin": null
+    },
+    {
+      "child_count": 16,
+      "digest_kind": "manifest-list (multi-arch index)",
+      "index_digest": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+      "linux_amd64_child": {
+        "digest": "sha256:ca0acbb137c1dc3339c8b147a58fd6f42775d4599327b50e7b116c23de501af2",
+        "size": 2288,
+        "variant": null
+      },
+      "media_type": "application/vnd.oci.image.index.v1+json",
+      "name": "library-redis-7-alpine",
+      "pinned_by_surfaces": "",
+      "pinned_digest_still_resolves": null,
+      "platforms": [
+        "linux/386",
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64",
+        "linux/ppc64le",
+        "linux/riscv64",
+        "linux/s390x"
+      ],
+      "ref": "docker.io/library/redis:7-alpine",
+      "refetch_by_digest_byte_identical": true,
+      "registry": "docker.io",
+      "repository": "library/redis",
+      "served_digest_verified_against_body": true,
+      "sources": [
+        "docker-compose.yml:27"
+      ],
+      "tag": "7-alpine",
+      "tag_currently_serves_pin": null
+    },
+    {
+      "child_count": 3,
+      "digest_kind": "manifest-list (multi-arch index)",
+      "index_digest": "sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
+      "linux_amd64_child": {
+        "digest": "sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb",
+        "size": 2275,
+        "variant": null
+      },
+      "media_type": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "name": "minio-object-store",
+      "pinned_by_surfaces": "sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
+      "pinned_digest_still_resolves": null,
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64",
+        "linux/ppc64le"
+      ],
+      "ref": "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z",
+      "refetch_by_digest_byte_identical": true,
+      "registry": "quay.io",
+      "repository": "minio/minio",
+      "served_digest_verified_against_body": true,
+      "sources": [
+        ".github/workflows/cap-ga-certification.yml",
+        ".github/workflows/cap-ga-reliability.yml",
+        ".github/workflows/cap-k8s-certification.yml",
+        ".github/workflows/cap-linux-certification.yml",
+        "docker-compose.yml",
+        "docker-compose.yml:101",
+        "scripts/certification/setup.sh"
+      ],
+      "tag": "RELEASE.2025-04-22T22-12-26Z",
+      "tag_currently_serves_pin": true
+    },
+    {
+      "child_count": 16,
+      "digest_kind": "manifest-list (multi-arch index)",
+      "index_digest": "sha256:dc5069ad14f19660b141b21236140b91656bf89bbc3e2417c70ae650cd66104c",
+      "linux_amd64_child": {
+        "digest": "sha256:862dc06c359bfe5d3211e4106269f040d261e269e58ebf17060d8328c45067c0",
+        "size": 2493,
+        "variant": null
+      },
+      "media_type": "application/vnd.oci.image.index.v1+json",
+      "name": "nginx-1.30.4-alpine-base",
+      "pinned_by_surfaces": "sha256:dc5069ad14f19660b141b21236140b91656bf89bbc3e2417c70ae650cd66104c",
+      "pinned_digest_still_resolves": null,
+      "platforms": [
+        "linux/386",
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64",
+        "linux/ppc64le",
+        "linux/riscv64",
+        "linux/s390x"
+      ],
+      "ref": "docker.io/library/nginx:1.30.4-alpine",
+      "refetch_by_digest_byte_identical": true,
+      "registry": "docker.io",
+      "repository": "library/nginx",
+      "served_digest_verified_against_body": true,
+      "sources": [
+        "frontend/Dockerfile",
+        "frontend/Dockerfile:11"
+      ],
+      "tag": "1.30.4-alpine",
+      "tag_currently_serves_pin": true
+    },
+    {
+      "child_count": 10,
+      "digest_kind": "manifest-list (multi-arch index)",
+      "index_digest": "sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85",
+      "linux_amd64_child": {
+        "digest": "sha256:b64da1de5a51067ab8e75f0bc8dbd0905d8894baa22261f439a4572f41291e50",
+        "size": 1720,
+        "variant": null
+      },
+      "media_type": "application/vnd.oci.image.index.v1+json",
+      "name": "node-22-alpine-base",
+      "pinned_by_surfaces": "sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85",
+      "pinned_digest_still_resolves": null,
+      "platforms": [
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64",
+        "linux/s390x"
+      ],
+      "ref": "docker.io/library/node:22-alpine",
+      "refetch_by_digest_byte_identical": true,
+      "registry": "docker.io",
+      "repository": "library/node",
+      "served_digest_verified_against_body": true,
+      "sources": [
+        "frontend/Dockerfile",
+        "frontend/Dockerfile:2"
+      ],
+      "tag": "22-alpine",
+      "tag_currently_serves_pin": true
+    },
+    {
+      "child_count": 16,
+      "digest_kind": "manifest-list (multi-arch index)",
+      "index_digest": "sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
+      "linux_amd64_child": {
+        "digest": "sha256:1a66d744c1b459e13b05a8fca341da84cb63383e99ce262210efee5a319d4551",
+        "size": 3054,
+        "variant": null
+      },
+      "media_type": "application/vnd.oci.image.index.v1+json",
+      "name": "postgres",
+      "pinned_by_surfaces": "",
+      "pinned_digest_still_resolves": null,
+      "platforms": [
+        "linux/386",
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64",
+        "linux/ppc64le",
+        "linux/riscv64",
+        "linux/s390x"
+      ],
+      "ref": "docker.io/library/postgres:16-alpine",
+      "refetch_by_digest_byte_identical": true,
+      "registry": "docker.io",
+      "repository": "library/postgres",
+      "served_digest_verified_against_body": true,
+      "sources": [
+        ".github/workflows/cap-ga-certification.yml",
+        ".github/workflows/cap-ga-reliability.yml",
+        ".github/workflows/cap-k8s-certification.yml",
+        ".github/workflows/cap-linux-certification.yml",
+        "docker-compose.yml",
+        "docker-compose.yml:10",
+        "scripts/certification/setup.sh"
+      ],
+      "tag": "16-alpine",
+      "tag_currently_serves_pin": null
+    },
+    {
+      "child_count": 5,
+      "digest_kind": "manifest-list (multi-arch index)",
+      "index_digest": "sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3",
+      "linux_amd64_child": {
+        "digest": "sha256:b1935d181b6dd8e9c827705e89438815337e1b10ae35605126f05f44e5c6940f",
+        "size": 2824,
+        "variant": null
+      },
+      "media_type": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "name": "prom-prometheus-v2.55.1",
+      "pinned_by_surfaces": "",
+      "pinned_digest_still_resolves": null,
+      "platforms": [
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64",
+        "linux/ppc64le",
+        "linux/s390x"
+      ],
+      "ref": "docker.io/prom/prometheus:v2.55.1",
+      "refetch_by_digest_byte_identical": true,
+      "registry": "docker.io",
+      "repository": "prom/prometheus",
+      "served_digest_verified_against_body": true,
+      "sources": [
+        "docker-compose.yml:231"
+      ],
+      "tag": "v2.55.1",
+      "tag_currently_serves_pin": null
+    },
+    {
+      "child_count": 16,
+      "digest_kind": "manifest-list (multi-arch index)",
+      "index_digest": "sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+      "linux_amd64_child": {
+        "digest": "sha256:37134a49d21d2120e4c4d73bb76f8a4ab9aef31f096f7ec2ead48c2feead4332",
+        "size": 1746,
+        "variant": null
+      },
+      "media_type": "application/vnd.oci.image.index.v1+json",
+      "name": "python-3.13-slim-base",
+      "pinned_by_surfaces": "sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e7c32e85e3ddf0",
+      "pinned_digest_still_resolves": null,
+      "platforms": [
+        "linux/386",
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64",
+        "linux/ppc64le",
+        "linux/riscv64",
+        "linux/s390x"
+      ],
+      "ref": "docker.io/library/python:3.13-slim",
+      "refetch_by_digest_byte_identical": true,
+      "registry": "docker.io",
+      "repository": "library/python",
+      "served_digest_verified_against_body": true,
+      "sources": [
+        "backend/Dockerfile",
+        "backend/Dockerfile:14",
+        "backend/Dockerfile:4"
+      ],
+      "tag": "3.13-slim",
+      "tag_currently_serves_pin": true
+    },
+    {
+      "child_count": 14,
+      "digest_kind": "manifest-list (multi-arch index)",
+      "index_digest": "sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6",
+      "linux_amd64_child": {
+        "digest": "sha256:3121f8b0804aa3698ab750d9a39ea4a42657a385c9b133722b915e55c51551a6",
+        "size": 1752,
+        "variant": null
+      },
+      "media_type": "application/vnd.oci.image.index.v1+json",
+      "name": "python-3.13.12-slim-bookworm-base",
+      "pinned_by_surfaces": "sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6",
+      "pinned_digest_still_resolves": null,
+      "platforms": [
+        "linux/386",
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64",
+        "linux/ppc64le",
+        "linux/s390x"
+      ],
+      "ref": "docker.io/library/python:3.13.12-slim-bookworm",
+      "refetch_by_digest_byte_identical": true,
+      "registry": "docker.io",
+      "repository": "library/python",
+      "served_digest_verified_against_body": true,
+      "sources": [
+        "backend/docker/egress-proxy/Dockerfile",
+        "backend/docker/egress-proxy/Dockerfile:7",
+        "backend/docker/sandbox-http/Dockerfile",
+        "backend/docker/sandbox-http/Dockerfile:11"
+      ],
+      "tag": "3.13.12-slim-bookworm",
+      "tag_currently_serves_pin": true
+    }
+  ],
+  "observation": {
+    "method": "Accept lists the OCI index and the Docker manifest list only; the served Docker-Content-Digest must equal sha256(body); the same content refetched by that digest must be byte-identical; an index must carry exactly one linux/amd64 child; unknown/unknown attestation entries are excluded from the platform list",
+    "target_count": 12,
+    "verified_on": "2026-09-22"
+  },
+  "schema": "cap.third-party-registry-evidence/v1"
+}
