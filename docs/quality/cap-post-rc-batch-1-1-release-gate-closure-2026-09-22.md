@@ -216,7 +216,7 @@ Four runs were created by the push, all `head_sha == 7da216ce`, `event: push`
 | `35683797478` | `ci.yml` | **completed / failure** | 10: 9 success, `backend` failure |
 | `35683797484` | `cap-linux-certification.yml` | completed / success | `full-certification` + 3 `postgres-version-matrix` legs success; `cap-production-certification` and `fast-certification` **skipped** — the same shape that produced F-42 |
 | `35683797517` | `cap-k8s-certification.yml` | completed / success | `k8s-certification` success; uploaded `k8s-cert-artifacts` (id `10676491468`) |
-| `35683797529` | `cap-ga-certification.yml` | in progress at the time of writing (development mode, as every push run is) | `supply-chain` success, `ga-certification` running |
+| `35683797529` | `cap-ga-certification.yml` | completed / **success** (62 m, `03:36:45Z`→`04:38:39Z`) | `supply-chain` and `ga-certification` both success; uploaded `ga-cert-artifacts` (id `10677074002`, 2 294 050 bytes) — green, development mode, and now the **newest** GA evidence for this head |
 
 **CI's own junit** (`backend-evidence` → `junit-backend.xml`), for the backend job:
 `tests=1664 · failures=2 · errors=0 · skipped=133`. Coverage and the other jobs are irrelevant until
@@ -235,9 +235,14 @@ lifted from `release.yml`, `gh api` answered by GETs, `git` and the classifier r
 
 | | pre-F-33/F-42 gate (`4d8f9c7`) | gate at the pushed head |
 | --- | --- | --- |
-| Linux evidence | run `35683797484` at `7da216ce`, **+0** — green, names present, `cap-production-certification: ["skipped"]` | that run **passed over**, and so were two more green-with-skipped-jobs runs (`35594554182` at `49de1081`, `35553750491` at `4d8f9c72` whose `postgres-version-matrix` legs were skipped); it landed on `35506716466` at `b671f537` (**+40**), all legs `success`, distance INHERITED |
-| K8s | — | run `35683797517` at `+0`, authority **PASS** on `34/34`, `commit` bound to `7da216ce0ece…` |
-| GA | accepted the newest green run | run `35594554041` at `49de1081` (+5) **REJECTED** — `mode='development'`, `full_ga_certified=False`, `planned=5`, `35 of 40` → exit 1 |
+| Linux evidence | run `35683797484` at `7da216ce`, **+0** — green, names present, `cap-production-certification: ["skipped"]` | that run **passed over**, and so were two more green-with-skipped-jobs runs (`35594554182` at `49de1081`, `35553750491` at `4d8f9c72` whose `postgres-version-matrix` legs were skipped); it landed on `35506716466` at `b671f537`, all legs `success`, distance INHERITED |
+| K8s | — | run `35683797517` at `7da216ce`, authority **PASS** on `34/34`, `commit` bound to `7da216ce0ece…` |
+| GA | accepted the newest green run | first pass (`7da216c` as the tag, while this head's own GA round was still running): run `35594554041` at `49de1081` (+5) **REJECTED**. Second pass, after `35683797529` finished: the leg selects **this head's own** development round (`10677074002`, `mode='development'`, `full_ga_certified=False`, `planned=5`, `35 of 40`) and refuses it, so the gate exits 1 with `RELEASE BLOCKED` |
+
+Distances in the two passes differ by one commit (`+40`/`+41` for the walked-back legs, `+1` for the
+legs at this head) because the first was resolved with the tag `7da216ce…` and the second with
+`e9e8d8ba…`, the report commit on top; neither tag exists — the SHA was only an environment value.
+Both logs: `_tmp/b11/dryrun_7da216c.log`, `_tmp/b11/dryrun_after_ga_dev.log`.
 
 Batch 1 recorded that head's Linux leg being *accepted* at `+0` with a skipped release job; the same
 state now walks to the genuine release-layer round instead, with the distance classified INHERITED as
