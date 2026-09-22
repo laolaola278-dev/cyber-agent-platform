@@ -38,6 +38,13 @@ logger = logging.getLogger("cap.acquisition.worker_path")
 
 TERMINAL = ("COMPLETE", "BLOCKED", "CANCELLED", "FAILED")
 
+#: How many times `_finalize_cancelled` re-opens a connection to land the terminal
+#: CANCELLED write, and the backoff between attempts. A bounded budget, not a loop:
+#: the write must not be lost to a writer that clears, and must not be retried
+#: forever against a writer that does not.
+_FINALIZE_ATTEMPTS = 4
+_FINALIZE_BACKOFF_SECONDS = 0.05
+
 
 class AcquisitionRunPayload(BaseModel):
     """Serializable result crossing the worker boundary."""
@@ -321,6 +328,13 @@ class AcquisitionWorkerPath:
             # the stale result is dropped. Only finalize CANCELLED while we
             # still own the run (or it is already CANCELLED) -- never over a
             # reclaimed run owned by another worker.
+            #
+            # Roll back first, like every sibling branch: the write that finalises
+            # CANCELLED runs on a DEDICATED connection, so anything the terminated
+            # operation left uncommitted here is a writer holding the SQLite write
+            # lock that finalisation then waits for. CI run 35749438118 lost the
+            # terminal write to exactly that 30s busy_timeout exhaustion.
+            await self._service.session.rollback()
             return await self._finalize_cancelled_if_safe(
                 run_id, worker_id, "cancelled during execution"
             )
@@ -654,6 +668,7 @@ class AcquisitionWorkerPath:
         CANCELLED transition.
         """
         from sqlalchemy import update
+        from sqlalchemy.exc import DBAPIError
         from sqlalchemy.ext.asyncio import async_sessionmaker
 
         try:
@@ -672,45 +687,55 @@ class AcquisitionWorkerPath:
             return True
 
         final_factory = async_sessionmaker(bind, expire_on_commit=False)
-        async with final_factory() as final_session:
-            # release the lease held for this run (owner-agnostic best effort)
-            if run.lease_id is not None:
-                try:
-                    leases = WorkerLeaseRepository(final_session)
-                    lease = await leases.get(run.lease_id)
-                    if lease is not None:
-                        await leases.update(
-                            lease,
-                            {
-                                "status": "RELEASED",
-                                "released_at": None,
-                                "version": lease.version + 1,
-                            },
-                        )
-                except Exception:  # noqa: BLE001 -- best-effort
-                    pass
-            where = [
-                AcquisitionRun.id == run.id,
-                AcquisitionRun.status.not_in(TERMINAL),
-            ]
-            if worker_id is not None:
-                where.append(AcquisitionRun.worker_id == worker_id)
-            if require_unclaimed:
-                # never-claimed cancel: refuse to clobber a concurrently claimed run
-                where.append(AcquisitionRun.claim_token_hash.is_(None))
-            stmt = (
-                update(AcquisitionRun)
-                .where(*where)
-                .values(
-                    status="CANCELLED",
-                    cancelled_at=now,
-                    finished_at=now,
-                    checkpoint=ck_dict,
-                )
-                .execution_options(synchronize_session=False)
+        where = [
+            AcquisitionRun.id == run.id,
+            AcquisitionRun.status.not_in(TERMINAL),
+        ]
+        if worker_id is not None:
+            where.append(AcquisitionRun.worker_id == worker_id)
+        if require_unclaimed:
+            # never-claimed cancel: refuse to clobber a concurrently claimed run
+            where.append(AcquisitionRun.claim_token_hash.is_(None))
+        stmt = (
+            update(AcquisitionRun)
+            .where(*where)
+            .values(
+                status="CANCELLED",
+                cancelled_at=now,
+                finished_at=now,
+                checkpoint=ck_dict,
             )
-            result = await final_session.execute(stmt)
-            await final_session.commit()
+            .execution_options(synchronize_session=False)
+        )
+        # This is the last write a cancelled run ever makes: if it is lost the row
+        # stays non-terminal for good, so a writer that only held the lock
+        # momentarily must not decide the outcome. Retries are bounded, on a fresh
+        # connection each time, and restricted to the SQLite lock family -- any
+        # other database error propagates. The control that keeps this honest is
+        # test_a_non_transient_write_failure_still_propagates in
+        # tests/test_phase_28_2_cancellation.py.
+        busy_markers = ("database is locked", "database table is locked",
+                        "database schema is locked", "cannot commit transaction")
+        for attempt in range(1, _FINALIZE_ATTEMPTS + 1):
+            try:
+                async with final_factory() as final_session:
+                    # one session, one transaction: the lease release and the
+                    # terminal write commit together, exactly as before
+                    await self._release_run_lease(final_session, run)
+                    result = await final_session.execute(stmt)
+                    await final_session.commit()
+            except DBAPIError as error:
+                if attempt == _FINALIZE_ATTEMPTS or not any(
+                    marker in str(error).lower() for marker in busy_markers
+                ):
+                    raise
+                logger.warning(
+                    "terminal CANCELLED write for run %s hit a busy database "
+                    "(attempt %d/%d): %s",
+                    run.id, attempt, _FINALIZE_ATTEMPTS, error,
+                )
+                await asyncio.sleep(_FINALIZE_BACKOFF_SECONDS * attempt)
+                continue
             if result.rowcount == 1:
                 # refresh the in-memory run object for the caller's payload
                 run.status = "CANCELLED"
@@ -719,6 +744,44 @@ class AcquisitionWorkerPath:
                 run.finished_at = now
                 return True
             return False
+        return False
+
+    async def _release_run_lease(self, session: Any, run: Any) -> None:
+        """Give back the lease the claim took, inside the caller's transaction.
+
+        The caller's session is passed in on purpose. On a single-connection bind
+        (StaticPool, which is how an in-memory SQLite engine survives checkouts) a
+        second session that opens and closes would roll back the work the caller has
+        flushed but not committed yet, and the terminal CANCELLED update would then
+        match no row at all -- which is what a separately-sessioned release did here
+        (caught by `test_cancel_tolerates_terminate_failure`).
+
+        `WorkerLeaseManager.release` is the fenced API for this. The call it replaces
+        named a method (`WorkerLeaseRepository.update`) that does not exist, and the
+        bare `except Exception: pass` wrapped around it, so the AttributeError it
+        raised turned into every cancelled run keeping an ACTIVE lease until the
+        expiry sweep happened to find it. Losing the release race is still fine; a
+        defect in this method is logged rather than hidden.
+        """
+        from app.worker.lease import WorkerLeaseManager
+
+        if run.lease_id is None:
+            return
+        try:
+            lease = await WorkerLeaseRepository(session).get(run.lease_id)
+            if lease is None:
+                return
+            await WorkerLeaseManager(session).release(
+                lease.id,
+                owner=lease.owner,
+                fencing_token=lease.fencing_token,
+                expected_version=lease.version,
+            )
+        except WorkerLeaseConflict:
+            # released or expired by someone else first: a correct end state
+            logger.debug("run %s: lease %s was already gone", run.id, run.lease_id)
+        except Exception:  # noqa: BLE001 -- never costs the terminal write
+            logger.exception("run %s could not release lease %s", run.id, run.lease_id)
 
     # -- internals -----------------------------------------------------------
 

@@ -39,7 +39,12 @@ from app.evidence.service import EvidenceService
 from app.sandbox import SandboxPolicyEngine, SandboxRuntime
 from app.sandbox.profile import SandboxProfile
 from app.sandbox.runtime import MemorySandboxProvider
-from app.worker.contracts import WorkerHeartbeat, WorkerRecord, WorkerStatus
+from app.worker.contracts import (
+    LeaseStatus,
+    WorkerHeartbeat,
+    WorkerRecord,
+    WorkerStatus,
+)
 from app.worker.lease import WorkerLeaseManager
 from app.worker.plugin_runtime import PluginWorkerRuntime
 from app.worker.registry import WorkerRegistry
@@ -163,6 +168,27 @@ async def _make_worker_path(
     plugin = PluginWorkerRuntime(runtime, SandboxProfile(name="acquisition-lab"))
     coordinator = AcquisitionClaimCoordinator(session, leases, lease_ttl_seconds=60)
     return AcquisitionWorkerPath(plugin, service, coordinator), provider
+
+
+async def _claim_for_cancel(session: AsyncSession, run, worker):
+    """Take the lease the way `run_claimed` does, so ownership is real.
+
+    `_finalize_cancelled` guards the terminal write with `worker_id = ?`: without a
+    claim the run has no recorded owner, the guard matches nothing, and a test would
+    be measuring a shape the product never has. The fencing token is returned so a
+    caller can hand it straight to `run_claimed`.
+    """
+    from uuid import uuid4
+
+    from app.acquisition.claim import AcquisitionClaimCoordinator
+
+    token = uuid4()
+    coordinator = AcquisitionClaimCoordinator(
+        session, WorkerLeaseManager(session), lease_ttl_seconds=60
+    )
+    await coordinator.claim(run.id, worker.id, token=token)
+    await session.commit()
+    return token
 
 
 async def _cancel_via_api(db, tmp_path: Path, run_id, worker, provider) -> dict:
@@ -495,6 +521,210 @@ async def test_cancelled_runs_have_zero_evidence_writes(
         .all()
     )
     assert not late_rows, "cancellation must not add evidence after CANCELLED"
+
+
+# -- cancel finalisation durability (CI run 35749438118) ----------------------
+#
+# `test_cancelled_runs_have_zero_evidence_writes` failed there with
+# `sqlite3.OperationalError: database is locked` on the worker's OWN terminal
+# write (`UPDATE acquisition_runs SET status='CANCELLED' … AND worker_id = ?`).
+# Nothing about that statement is contentious: it is the last write a run ever
+# makes, and if it is lost the run stays non-terminal forever -- a zombie the
+# reconciler has to clean up. Three properties keep it landing; each is asserted
+# below, with a control showing the assertion is about the property and not
+# about the fixture.
+
+
+class _TerminatedExecution:
+    """A plugin whose execution ends the way a cancelled sandbox execution does."""
+
+    last_execution = None
+
+    async def execute(self, **_kwargs):  # noqa: ANN003 -- keyword-only call site
+        from app.exceptions import WorkerCancelledError
+
+        raise WorkerCancelledError("execution terminated by cancel")
+
+    async def terminate(self, execution_id) -> None:  # noqa: ANN001
+        return None
+
+
+async def test_the_cancelled_execution_branch_releases_its_own_writer(
+    db, session: AsyncSession, tmp_path, lab
+) -> None:
+    """The branch that lost CI run 35749438118 must not hand the lock to itself.
+
+    `run_claimed` finalises CANCELLED on a DEDICATED connection, so anything the
+    terminated operation left uncommitted on the worker's own session is a second
+    writer holding the SQLite write lock -- and an abandoned operation is never going
+    to release it. Four of the five except-branches rolled back first; the
+    `WorkerCancelledError` one did not, and the terminal write timed out on that lock
+    (busy_timeout 30s). Without the rollback this test waits 20s and times out.
+    """
+    from app.acquisition.claim import AcquisitionClaimCoordinator
+
+    service = await _make_service(session, tmp_path, lab)
+    run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
+    await service.commit()
+    worker = await _register_worker(session, "acq-cancel-own-writer")
+    await service.commit()
+    token = await _claim_for_cancel(session, run, worker)
+    worker_path = AcquisitionWorkerPath(  # type: ignore[arg-type]
+        _TerminatedExecution(),
+        service,
+        AcquisitionClaimCoordinator(
+            session, WorkerLeaseManager(session), lease_ttl_seconds=60
+        ),
+    )
+
+    # what the terminated operation leaves behind: a flushed, uncommitted write
+    run.checkpoint = {**(run.checkpoint or {}), "status": "CANCEL_REQUESTED"}
+    await session.flush()
+    assert session.in_transaction(), "the fixture stopped holding a writer"
+
+    payload = await asyncio.wait_for(
+        worker_path.run_claimed(run.id, worker.id, token), timeout=20
+    )
+    assert payload.status == "CANCELLED", payload
+    fresh = await service.get_run(run.id, fresh=True)
+    assert fresh.status == "CANCELLED", fresh.status
+
+
+async def test_cancel_finalize_retries_a_transient_lock_on_the_terminal_write(
+    db, session: AsyncSession, tmp_path, lab, monkeypatch
+) -> None:
+    """A busy writer that clears must not cost the run its only terminal write."""
+    import sqlite3
+
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+
+    from app.acquisition.checkpoint import AcquisitionCheckpoint
+
+    service = await _make_service(session, tmp_path, lab)
+    run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
+    await service.commit()
+    worker = await _register_worker(session, "acq-cancel-transient")
+    await service.commit()
+    wp, _provider = await _make_worker_path(session, service, worker)
+    await _claim_for_cancel(session, run, worker)
+    checkpoint = AcquisitionCheckpoint.from_dict(run.checkpoint or {})
+
+    seen = {"total": 0, "locked": 0}
+    real_execute = _AsyncSession.execute
+
+    async def flaky_execute(self, statement, *args, **kwargs):
+        rendered = str(statement)
+        if rendered.lstrip().upper().startswith("UPDATE ACQUISITION_RUNS"):
+            seen["total"] += 1
+            if seen["total"] == 1:
+                seen["locked"] += 1
+                raise OperationalError(rendered, {}, sqlite3.OperationalError("database is locked"))
+        return await real_execute(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(_AsyncSession, "execute", flaky_execute)
+    try:
+        assert await wp._finalize_cancelled(run, checkpoint, worker_id=worker.id) is True
+    finally:
+        monkeypatch.undo()
+    assert seen["locked"] == 1, "the injected lock never reached the terminal write"
+    assert seen["total"] >= 2, f"the terminal write was not retried: {seen}"
+    fresh = await service.get_run(run.id, fresh=True)
+    assert fresh.status == "CANCELLED", fresh.status
+
+
+async def test_a_non_transient_write_failure_still_propagates(
+    db, session: AsyncSession, tmp_path, lab, monkeypatch
+) -> None:
+    """Control for the retry above: it bounds a lock, it does not swallow a real error."""
+    import pytest
+    from sqlalchemy.exc import ProgrammingError
+    from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+
+    from app.acquisition.checkpoint import AcquisitionCheckpoint
+
+    service = await _make_service(session, tmp_path, lab)
+    run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
+    await service.commit()
+    worker = await _register_worker(session, "acq-cancel-not-transient")
+    await service.commit()
+    wp, _provider = await _make_worker_path(session, service, worker)
+
+    real_execute = _AsyncSession.execute
+
+    async def broken_execute(self, statement, *args, **kwargs):
+        rendered = str(statement)
+        if rendered.lstrip().upper().startswith("UPDATE ACQUISITION_RUNS"):
+            raise ProgrammingError(rendered, {}, Exception("no such column: made_up"))
+        return await real_execute(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(_AsyncSession, "execute", broken_execute)
+    try:
+        with pytest.raises(ProgrammingError):
+            await wp._finalize_cancelled(
+                run, AcquisitionCheckpoint.from_dict(run.checkpoint or {}), worker_id=worker.id
+            )
+    finally:
+        monkeypatch.undo()
+    fresh = await service.get_run(run.id, fresh=True)
+    assert fresh.status != "CANCELLED", "a rejected write must not report a cancelled run"
+
+
+async def test_cancel_finalize_releases_the_run_lease(
+    db, session: AsyncSession, tmp_path, lab
+) -> None:
+    """The lease the claim took is the lease the cancel finalisation must give back."""
+    from app.acquisition.checkpoint import AcquisitionCheckpoint
+    from app.models.worker import WorkerLease as WorkerLeaseRow
+
+    _engine, SessionFactory = db
+    service = await _make_service(session, tmp_path, lab)
+    run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
+    await service.commit()
+    worker = await _register_worker(session, "acq-cancel-lease")
+    wp, _provider = await _make_worker_path(session, service, worker)
+    await _claim_for_cancel(session, run, worker)
+    assert run.lease_id is not None, "the claim stopped recording its lease"
+
+    assert await wp._finalize_cancelled(
+        run, AcquisitionCheckpoint.from_dict(run.checkpoint or {}), worker_id=worker.id
+    ) is True
+
+    async with SessionFactory() as reader:
+        lease = await reader.get(WorkerLeaseRow, run.lease_id)
+    assert lease is not None
+    assert lease.status == LeaseStatus.RELEASED.value, (
+        f"the run was cancelled but its lease is still {lease.status}: the worker slot "
+        "stays taken until the expiry sweep finds it"
+    )
+
+
+async def test_a_lease_release_conflict_never_costs_the_terminal_write(
+    db, session: AsyncSession, tmp_path, lab, monkeypatch
+) -> None:
+    """Control for the release above: losing the lease race is fine, losing the write is not."""
+    from app.acquisition.checkpoint import AcquisitionCheckpoint
+    from app.exceptions import WorkerLeaseConflict
+
+    service = await _make_service(session, tmp_path, lab)
+    run, _ = await service.create(goal="g", url=f"{lab.origin}/static")
+    await service.commit()
+    worker = await _register_worker(session, "acq-cancel-release-conflict")
+    wp, _provider = await _make_worker_path(session, service, worker)
+    await _claim_for_cancel(session, run, worker)
+
+    async def conflict(*args, **kwargs):
+        raise WorkerLeaseConflict("someone else already moved this lease")
+
+    monkeypatch.setattr(WorkerLeaseManager, "release", conflict)
+    try:
+        assert await wp._finalize_cancelled(
+            run, AcquisitionCheckpoint.from_dict(run.checkpoint or {}), worker_id=worker.id
+        ) is True
+    finally:
+        monkeypatch.undo()
+    fresh = await service.get_run(run.id, fresh=True)
+    assert fresh.status == "CANCELLED", fresh.status
 
 
 # -- stress: cancel vs complete race (Phase 28.5-RC) -------------------------
