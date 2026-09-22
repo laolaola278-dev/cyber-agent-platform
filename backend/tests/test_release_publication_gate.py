@@ -1748,7 +1748,16 @@ def test_the_actions_api_paths_the_gate_uses_exist() -> None:
     API is a re-run, and neither may be reported as a skip that hides the question.
     It ran for real on the audit host and produced the evidence cited in §23 F-21 of
     the certification report; batch 1's remote validation recorded it skipping in CI
-    for want of `actions: read`, which is the gap this job's permissions now close.
+    for want of `actions: read`. Two separate things are required for that read to
+    answer here, and only one of them is a permission: `actions: read` supplies the
+    authorization scope the request is tested against, while `GH_TOKEN` plumbing
+    supplies the authentication `gh` refuses to run without (exit 4, before any HTTP
+    exchange). Batch 1.1 measured the difference -- skipped without the scope (§F of
+    `docs/quality/cap-post-rc-batch-1-remote-validation-2026-09-21.md`), FAILED with
+    the scope declared and no token (CI run `35683797478`), and green only once the
+    step was handed one (§K.1 of
+    `docs/quality/cap-post-rc-batch-1-1-release-gate-closure-2026-09-22.md`), so
+    neither half may be reported as sufficient on its own.
     """
     runs = _live_json(
         f"repos/{REPO_SLUG}/actions/workflows/cap-k8s-certification.yml"
