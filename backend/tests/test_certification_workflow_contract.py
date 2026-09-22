@@ -218,6 +218,34 @@ def test_ci_still_cancels_superseded_runs() -> None:
     assert (doc.get("concurrency") or {}).get("cancel-in-progress") is True
 
 
+#: The scopes `test_release_publication_gate.py`'s two live Actions/API checks need:
+#: `contents: read` to check the repository out, `actions: read` to list other
+#: workflows' runs and download the artifacts the release gate reads.
+LIVE_CHECK_SCOPES = {"contents": "read", "actions": "read"}
+
+
+def test_ci_backend_job_holds_the_scope_its_live_checks_depend_on() -> None:
+    """A job whose tests read the Actions API has to be allowed to read it.
+
+    Batch 1's remote validation found both live checks skipping *in CI* as well as
+    locally: the workflow-level `permissions: contents: read` gave the job token no
+    Actions read, so the gate's live read path was never exercised anywhere. A skip
+    that hides an unexercised path is the failure class this repository keeps meeting,
+    so the scope is now declared and pinned. Exact equality, not a subset: a
+    job-level `permissions` block replaces the workflow-level one rather than adding
+    to it, so `contents: read` must be restated (dropping it breaks the checkout),
+    and nothing here may be a write scope.
+    """
+    doc = yaml.safe_load((WORKFLOW_DIR / "ci.yml").read_text("utf-8"))
+    permissions = doc["jobs"]["backend"].get("permissions")
+    assert permissions == LIVE_CHECK_SCOPES, (
+        f"the backend job declares {permissions!r}; the live Actions/API checks need "
+        f"exactly {sorted(LIVE_CHECK_SCOPES)} -- a job-level block replaces the "
+        "workflow-level one, so `contents: read` cannot be inherited, and a write "
+        "scope here would be a change of intent, not of formatting"
+    )
+
+
 # -- control-plane isolation verdict must be derived, never pinned -------------
 
 #: The three states scripts/certification/generate_report.py can report, and the

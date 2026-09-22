@@ -18,6 +18,16 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The two live Actions/API checks in test_release_publication_gate.py read other
+    # workflows' runs and artifacts, which is an Actions API read: with only the
+    # workflow-level `contents: read` they skipped in CI exactly as they do locally,
+    # and the gate's live read path went unvalidated (batch-1 remote validation, §F).
+    # A job-level `permissions` block *replaces* the workflow-level one rather than
+    # adding to it, so `contents: read` is restated here -- without it the checkout
+    # step loses its own scope. Read scopes only; nothing in this job publishes.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v6
       # CI blind-spot governance P0 gate (docs/quality/ci-blindspot-
