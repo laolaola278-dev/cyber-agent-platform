@@ -148,8 +148,16 @@ def test_lock_base_entries_are_used_and_their_sites_agree() -> None:
         assert entry["image_ref"] in used, (
             f"{entry['name']}: locked but no Dockerfile FROMs it"
         )
+        # `referenced_by` lists every surface that names the coordinate, and a
+        # certification recorder legitimately does that: build_images.sh writes the
+        # base digest of the image it inspected. The claim this test guards is not
+        # "a Dockerfile is the only file allowed to mention a base" -- it is that
+        # something actually builds on it, and that every listed site agrees.
+        builds_on_it = [site for site in entry.get("referenced_by", []) if site in froms]
+        assert builds_on_it, (
+            f"{entry['name']}: every site that names it stopped FROMing it"
+        )
         for site in entry.get("referenced_by", []):
-            assert site in froms, f"{entry['name']}: claims {site} builds on it"
             assert entry["image_ref"] in (PROJECT_ROOT / site).read_text("utf-8"), (
                 f"{site} and the lock disagree about {entry['name']}"
             )
