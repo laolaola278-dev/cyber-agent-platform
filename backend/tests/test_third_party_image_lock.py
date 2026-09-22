@@ -223,6 +223,33 @@ def _external_compose_refs() -> dict[str, str]:
     return refs
 
 
+#: D.4 #1: on a deployment surface a reference is immutable only when it is a bare digest.
+PINNED_COMPOSE_REF = re.compile(r"(?:[a-z0-9.-]+\.[a-z]{2,}/)?[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}")
+
+
+def _unpinned_services(refs: dict[str, str]) -> dict[str, str]:
+    """service -> reference, for every service that is not pinned by digest (D.4 #1).
+
+    Pure over the mapping so a control can hand it a mutated copy of the real thing;
+    ``assert not _unpinned_services(_external_compose_refs())`` is the live check, and
+    naming a single service after one mutation is the proof the check can fail.
+    """
+    return {name: ref for name, ref in refs.items() if not PINNED_COMPOSE_REF.fullmatch(ref)}
+
+
+def _compose_lock_differences(refs: dict[str, str],
+                              entries: list[dict]) -> tuple[list[str], list[str]]:
+    """(pulled but not locked, locked but not pulled) -- D.4 #2 and #3 as one rule.
+
+    Both directions in one call, because the defect each half catches is the other half's
+    silence: an entry nobody pulls is as misleading as an image nobody pinned.
+    """
+    pulled = set(refs.values())
+    locked = {entry["image_ref"] for entry in entries
+              if "docker-compose.yml" in entry.get("referenced_by", [])}
+    return sorted(pulled - locked), sorted(locked - pulled)
+
+
 # -- the lock file itself -----------------------------------------------------
 
 
@@ -437,30 +464,49 @@ def test_compose_pulls_every_external_image_by_digest_only() -> None:
     A tag beside a digest on a compose line is not a decoration: it invites the
     next reader to change the tag and believe they changed what runs.
     """
-    pinned = re.compile(r"(?:[a-z0-9.-]+\.[a-z]{2,}/)?[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}")
-    tagged = {
-        name: ref
-        for name, ref in _external_compose_refs().items()
-        if not pinned.fullmatch(ref)
-    }
-    assert not tagged, (
+    untagged = _unpinned_services(_external_compose_refs())
+    assert not untagged, (
         "these compose services pull a reference that is not a bare digest: "
-        + ", ".join(f"{name}={ref}" for name, ref in sorted(tagged.items()))
+        + ", ".join(f"{name}={ref}" for name, ref in sorted(untagged.items()))
     )
+
+
+def test_one_tagged_compose_line_is_enough_to_name_that_service() -> None:
+    """D.4 #1's control: a copy of the real refs, one of them put back on a tag."""
+    refs = _external_compose_refs()
+    mutated = dict(refs, **{sorted(refs)[0]: "postgres:16-alpine"})
+    named = _unpinned_services(mutated)
+    assert list(named) == [sorted(refs)[0]], (
+        f"the control mutated one service and the check named {sorted(named)}")
+    assert named[sorted(refs)[0]] == "postgres:16-alpine"
+    assert not _unpinned_services(refs), (
+        "the control only means something if the untouched file passes it")
 
 
 def test_every_external_compose_image_is_in_the_lock_and_vice_versa() -> None:
     """D.4 #2 and #3 together: neither set may carry an extra member."""
-    compose_refs = set(_external_compose_refs().values())
-    locked_compose_entries = {
-        entry["image_ref"]
-        for entry in LOCK["images"]
-        if "docker-compose.yml" in entry.get("referenced_by", [])
-    }
-    assert compose_refs == locked_compose_entries, (
-        f"pulled but not locked: {sorted(compose_refs - locked_compose_entries)}; "
-        f"locked but not pulled: {sorted(locked_compose_entries - compose_refs)}"
-    )
+    pulled, locked = _compose_lock_differences(_external_compose_refs(), LOCK["images"])
+    assert not (pulled or locked), (
+        f"pulled but not locked: {pulled}; locked but not pulled: {locked}")
+
+
+def test_losing_or_inventing_a_locked_compose_entry_fails_in_both_directions() -> None:
+    """D.4 #2 and #3's controls: delete one entry, add one that nothing pulls."""
+    refs = _external_compose_refs()
+    compose_names = [entry["name"] for entry in LOCK["images"]
+                     if "docker-compose.yml" in entry.get("referenced_by", [])]
+    assert compose_names, "no lock entry claims compose, so both controls are vacuous"
+    dropped = compose_names[0]
+    removed = [entry for entry in LOCK["images"] if entry["name"] != dropped]
+    lost_ref = next(entry["image_ref"] for entry in LOCK["images"] if entry["name"] == dropped)
+    pulled, locked = _compose_lock_differences(refs, removed)
+    assert pulled == [lost_ref] and not locked, (
+        f"deleting {dropped} must leave exactly that reference unpinned: {pulled} / {locked}")
+    invented = {"name": "surprise-image", "image_ref": "example.com/nothing@sha256:" + "0" * 64,
+                "referenced_by": ["docker-compose.yml"]}
+    pulled, locked = _compose_lock_differences(refs, [*LOCK["images"], invented])
+    assert locked == [invented["image_ref"]] and not pulled, (
+        f"an entry compose does not pull has to be named, not ignored: {pulled} / {locked}")
 
 
 def test_a_locked_compose_digest_is_the_one_the_evidence_measures() -> None:
