@@ -180,6 +180,19 @@ else:
 fi
 
 mkdir -p "$(dirname "$OUT")"
+
+# B2: pinning the builder in YAML says what was asked for. This says what ran, and keeps the
+# two in separate objects -- an "actual" value the script wrote itself would be a restatement,
+# not evidence. `--local-docker` has no BuildKit container to read, and the recorder says so
+# rather than inventing one.
+PRODUCER_FILE="${OUT}.producer.json"
+if python3 scripts/release/record_build_producer.py --out "$PRODUCER_FILE" \
+     --lock deployment/third-party-images.json > /dev/null; then
+  CAP_EVIDENCE_PRODUCER_FILE="$PRODUCER_FILE"
+else
+  echo "WARNING: the producer could not be recorded; the evidence says so" >&2
+  CAP_EVIDENCE_PRODUCER_FILE=""
+fi
 CAP_EVIDENCE_OUT="$OUT" CAP_EVIDENCE_NAME="$NAME" CAP_EVIDENCE_REF="$REF" \
 CAP_EVIDENCE_REGISTRY="$REGISTRY" CAP_EVIDENCE_TAG="$VERSION" CAP_EVIDENCE_PUSHED="$PUSH" \
 CAP_EVIDENCE_INDEX="$INDEX_DIGEST" CAP_EVIDENCE_CONFIG="$CONFIG_DIGEST" \
@@ -189,6 +202,7 @@ CAP_EVIDENCE_PLATFORM_NAME="$PLATFORM_NAME" \
 CAP_EVIDENCE_DOCKERFILE_SHA="$DOCKERFILE_SHA" \
 CAP_EVIDENCE_CONTEXT_SHA="$CONTEXT_SHA" CAP_EVIDENCE_BASES="$(printf '%s\n' "$BASES")" \
 CAP_EVIDENCE_REVISION="$REVISION" \
+CAP_EVIDENCE_PRODUCER_FILE="$CAP_EVIDENCE_PRODUCER_FILE" \
 CAP_EVIDENCE_BUILD_ARGS="${BUILD_ARGS[*]}" \
 python3 - <<'PY'
 import json
@@ -214,6 +228,10 @@ evidence = {
     "context_sha256": env["CAP_EVIDENCE_CONTEXT_SHA"],
     "base_refs": [line for line in env["CAP_EVIDENCE_BASES"].splitlines() if line],
     "source_revision": env["CAP_EVIDENCE_REVISION"],
+    # Absent producer is a finding, not a blank: the release gate below refuses a pushed
+    # image whose producer was never read.
+    "producer": (json.load(open(env["CAP_EVIDENCE_PRODUCER_FILE"], encoding="utf-8"))
+                 if env.get("CAP_EVIDENCE_PRODUCER_FILE") else {"recorded": False}),
     "attestations": {
         "sbom": "--sbom=true" in build_args,
         "provenance": "--provenance=true" in build_args,
