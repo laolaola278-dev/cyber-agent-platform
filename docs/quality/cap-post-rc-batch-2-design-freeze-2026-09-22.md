@@ -491,7 +491,7 @@ revision: Batch 2 is supply-chain and deployment-contract work, not product beha
    release set equality and "no `:latest`" scan, `test_quality_gate_parity.py`,
    `test_deployment_doc_contract.py`, `test_secret_scan.py`, `test_release_diff_classifier.py`,
    and the whole `test_release_publication_gate.py` F-33/F-42 set (Batch 2 must not weaken a single
-   one of them; §M step 6 checks them against live state).
+   one of them; §M step 7 checks them against live state).
 
 Every new guard is required to carry its own mutation control: a guard that no control reddens is
 documentation, not a test. That rule has caught real things here already (the batch 1.1 controls
@@ -530,7 +530,7 @@ The with/without-B3 pair is computed as two ranges (`… → candidate-without-B
 3. The **candidate SHA is recorded in the report before any dispatch**, and it is the *last* commit
    in the tree the certification runs against: no docs commit may follow it until the round is
    over. Batch 1.1 learned this the measurable way — the two dry-run passes at `7da216c` differed by
-   one commit's distance (`+40` vs `+41`, §L of that report) purely because a report commit landed on
+   one commit's distance (`+40` vs `+41`, §J of that report) purely because a report commit landed on
    top of the SHA being resolved.
 4. Local stack before the candidate is cut is reconciled first: `ae990dd`, `d495d71`, `8879599` (and
    this freeze's own commits) sit on `0561a7e`; `origin/main` is at `0561a7e`, so the push of the
