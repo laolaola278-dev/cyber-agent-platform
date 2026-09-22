@@ -145,13 +145,72 @@ def buildx_version(run: CommandRunner) -> dict:
     return record
 
 
-def observe(run: CommandRunner) -> dict:
-    """Every producer field the tooling can be asked about, read back."""
+def observe(run: CommandRunner, docker_cli_build: bool = False) -> dict:
+    """Every producer field the tooling can be asked about, read back.
+
+    `docker_cli_build` is not a cosmetic flag. `docker build` with BuildKit on runs the
+    *daemon's embedded* BuildKit; a buildx builder created earlier in the job is then not
+    the producer of these bytes at all. CI's evidence at `d8472d0` showed exactly that
+    misreading: the record named a `docker-container` builder whose container "could not
+    be read", because the image had never been built through that container. Calling a
+    wrong question unanswered is not the same as recording an absence, so the caller says
+    which path built the image and this function answers for that path -- keeping the
+    failed `inspect` in the record as `inspected_builder` rather than dropping it.
+    """
+    buildx = buildx_version(run)
+    engine = read(run, "docker_server", ["docker", "version", "--format",
+                                         "{{.Server.Version}}"])
+    builder = buildx_builder(run)
+    if docker_cli_build and not builder.get("ok"):
+        builder = {
+            "ok": True,
+            "build_path": "docker CLI (`docker build`)",
+            "driver": "engine-embedded BuildKit",
+            "engine_version": engine.get("value"),
+            "buildx_cli": buildx.get("version"),
+            "note": ("`docker build` runs the daemon's embedded BuildKit, so no BuildKit "
+                     "container or image digest belongs to this build; the builder that "
+                     "`buildx inspect` names did not produce these bytes"),
+            "inspected_builder": builder,
+        }
+    return {"buildx_version": buildx, "builder": builder, "docker_engine": engine}
+
+
+def _images_match(pinned: str | None, seen: str | None) -> bool | None:
+    """Do the pinned BuildKit image and the one that ran name the same bytes?
+
+    By digest when both carry one, because a tag on either side is a pointer the vendor
+    can move; by whole reference otherwise. Neither side being readable is `None`, not
+    `False` -- the evidence must not turn a missing observation into an accusation.
+    """
+    if not pinned or not seen:
+        return None
+    pinned_digest = pinned.rsplit("@", 1)[-1] if "@" in pinned else None
+    seen_digest = seen.rsplit("@", 1)[-1] if "@" in seen else None
+    if pinned_digest and seen_digest:
+        return pinned_digest == seen_digest
+    return pinned == seen
+
+
+def compare(configured: dict, observed: dict) -> dict:
+    """Pin against production, as a field -- not as an editorial judgement.
+
+    The release declares a builder and then records the one that ran; until now a reader
+    had to diff the two objects by eye, which is how a `v0.37.1` pin next to an observed
+    `v0.37.0` could pass unnoticed through three CI artifacts. `matches` is None when
+    either side is unreadable: "unknown" must not be recorded as disagreement, and a
+    comparison nobody has to look at is a comparison nobody honours.
+    """
+    seen_buildx = observed["buildx_version"].get("version")
+    seen_image = observed["builder"].get("container_reference")
+    pinned_buildx = configured.get("buildx_version")
+    pinned_image = configured.get("buildkit_image")
     return {
-        "buildx_version": buildx_version(run),
-        "builder": buildx_builder(run),
-        "docker_engine": read(run, "docker_server", ["docker", "version", "--format",
-                                                     "{{.Server.Version}}"]),
+        "buildx_version": {"pinned": pinned_buildx, "observed": seen_buildx,
+                           "matches": (seen_buildx == pinned_buildx
+                                       if seen_buildx and pinned_buildx else None)},
+        "buildkit_image": {"pinned": pinned_image, "observed": seen_image,
+                           "matches": _images_match(pinned_image, seen_image)},
     }
 
 
@@ -186,6 +245,8 @@ def main(argv: list[str] | None = None, run: CommandRunner | None = None,
     parser = argparse.ArgumentParser(description="record the producer of a build")
     parser.add_argument("--out", required=True)
     parser.add_argument("--buildkit-entry", default="buildkit-buildkit")
+    parser.add_argument("--docker-cli-build", action="store_true",
+                        help="the build ran through `docker build`, whose BuildKit is the daemon")
     parser.add_argument("--lock", default="deployment/third-party-images.json")
     args = parser.parse_args(argv)
     runner = run or run_command
@@ -193,9 +254,12 @@ def main(argv: list[str] | None = None, run: CommandRunner | None = None,
 
     with open(args.lock, encoding="utf-8") as handle:
         lock = json.load(handle)
+    configured = configured_values(lock, args.buildkit_entry)
+    observed = observe(runner, docker_cli_build=args.docker_cli_build)
     payload = {
-        "configured": configured_values(lock, args.buildkit_entry),
-        "observed": observe(runner),
+        "configured": configured,
+        "observed": observed,
+        "comparison": compare(configured, observed),
         "runner": runner_identity(env),
     }
     missing = [key for key, record in payload["observed"].items()

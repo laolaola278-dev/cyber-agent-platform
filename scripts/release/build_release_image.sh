@@ -184,10 +184,15 @@ mkdir -p "$(dirname "$OUT")"
 # B2: pinning the builder in YAML says what was asked for. This says what ran, and keeps the
 # two in separate objects -- an "actual" value the script wrote itself would be a restatement,
 # not evidence. `--local-docker` has no BuildKit container to read, and the recorder says so
-# rather than inventing one.
+# rather than inventing one. It also has to be *told* which path ran: `docker build` uses the
+# daemon's embedded BuildKit, so the buildx builder installed in the job is not the producer
+# and asking its container for a digest reports a true answer to a wrong question.
 PRODUCER_FILE="${OUT}.producer.json"
-if python3 scripts/release/record_build_producer.py --out "$PRODUCER_FILE" \
-     --lock deployment/third-party-images.json > /dev/null; then
+PRODUCER_ARGS=(--out "$PRODUCER_FILE" --lock deployment/third-party-images.json)
+if [[ "$LOCAL_DOCKER" == "1" ]]; then
+  PRODUCER_ARGS+=(--docker-cli-build)
+fi
+if python3 scripts/release/record_build_producer.py "${PRODUCER_ARGS[@]}" > /dev/null; then
   CAP_EVIDENCE_PRODUCER_FILE="$PRODUCER_FILE"
 else
   echo "WARNING: the producer could not be recorded; the evidence says so" >&2

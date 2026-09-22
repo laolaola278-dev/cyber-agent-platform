@@ -309,3 +309,75 @@ def test_run_command_reports_instead_of_raising(tmp_path: Path) -> None:
     assert code != 0
     assert "FileNotFoundError" in err, (
         f"a missing binary has to read as a failed command, not as silence: {err!r}")
+
+
+# -- what CI's own evidence at d8472d0 showed, and what must not be repeated ----------------
+
+LOCK_PATH = str(PROJECT_ROOT / "deployment/third-party-images.json")
+
+
+def recorded_with(tmp_path: Path, run, *extra: str) -> dict:
+    out = tmp_path / "producer.json"
+    assert recorder.main(["--out", str(out), "--lock", LOCK_PATH, *extra], run=run,
+                         environ={}) == 0
+    return json.loads(out.read_text("utf-8"))
+
+
+def test_a_docker_cli_build_names_the_kit_that_actually_produced_it(tmp_path: Path,
+                                                                   stub_runner) -> None:
+    """`docker build` runs the daemon's embedded BuildKit; a stray builder is not the producer.
+
+    CI recorded a `docker-container` builder whose container "could not be read" for all
+    five images, because the job had installed a builder this build never used. The answer
+    is not to report a lost observation -- it is to record the path that ran and keep the
+    misfired inspect visible beside it, so nothing is hidden and nothing is invented.
+    """
+    payload = recorded_with(tmp_path, stub_runner(container_read_fails=True),
+                            "--docker-cli-build")
+    builder = payload["observed"]["builder"]
+    assert builder["ok"] is True and "embedded" in builder["driver"], builder
+    assert builder["engine_version"] == "28.3.0" and builder["buildx_cli"] == "v0.99.9-observed"
+    assert builder["inspected_builder"]["ok"] is False, "the failed inspect must stay readable"
+    assert "builder" not in payload.get("incomplete", []), (
+        f"a stated absence is not a read failure: {payload.get('incomplete')}")
+
+
+def test_the_same_build_without_the_flag_still_reports_a_lost_container(
+        tmp_path: Path, stub_runner) -> None:
+    """The control: the flag is what distinguishes the two answers, not a nicer message.
+
+    Through buildx with a docker-container builder, a missing container genuinely *is* a
+    lost observation -- the builder is the producer then -- and it has to stay incomplete.
+    """
+    payload = recorded_with(tmp_path, stub_runner(container_read_fails=True))
+    assert payload["observed"]["builder"]["ok"] is False
+    assert "builder" in payload["incomplete"], payload["incomplete"]
+
+
+def test_the_pin_and_the_producer_are_compared_in_the_record(tmp_path: Path,
+                                                             stub_runner) -> None:
+    """Three CI artifacts ran v0.37.0 under a v0.37.1 pin and nothing said so in a field.
+
+    The recorder still asserts nothing about agreement -- the release reviewer decides --
+    but the comparison is now a value a gate can read instead of two objects to diff by eye.
+    """
+    pinned = recorder.configured_values(json.loads(Path(LOCK_PATH).read_text("utf-8")),
+                                        "buildkit-buildkit")["buildx_version"]
+    mismatched = recorded_with(tmp_path, stub_runner(version="v0.37.0"))
+    matched = recorded_with(tmp_path, stub_runner(version=pinned))
+    assert mismatched["comparison"]["buildx_version"]["matches"] is False, mismatched["comparison"]
+    assert matched["comparison"]["buildx_version"]["matches"] is True, matched["comparison"]
+    assert matched["comparison"]["buildx_version"]["pinned"] == pinned
+    unreadable = recorded_with(tmp_path, stub_runner(version_fails=True))
+    assert unreadable["comparison"]["buildx_version"]["matches"] is None, (
+        "an unread producer is not a disagreement with the pin")
+
+
+def test_the_build_script_tells_the_recorder_which_path_ran(tmp_path: Path) -> None:
+    """`--local-docker` must mean `--docker-cli-build`, in the script and not in prose."""
+    script = (PROJECT_ROOT / "scripts/release/build_release_image.sh").read_text("utf-8")
+    docker_branch = script.split('if [[ "$LOCAL_DOCKER" == "1" ]]; then')
+    assert len(docker_branch) > 1, "the docker-driver branch is gone from the build script"
+    assert "--docker-cli-build" in script
+    assert script.index("PRODUCER_ARGS+=(--docker-cli-build)") < script.index(
+        "record_build_producer.py")
