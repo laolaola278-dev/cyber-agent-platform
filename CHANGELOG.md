@@ -313,6 +313,28 @@ published release contents are immutable.
   controls (each caught by its own test and no others), and a read-only pass of 13
   artifacts from sealed and superseded rounds — including the development-mode soak run at
   the strict round's own SHA — every one read the way the round that produced it recorded.
+  *(Batch 1.1 superseded one detail of that sentence: the live shape check no longer skips where the
+  workflow declares the capability — see the F-42 entry below.)*
+- **A skipped release job cannot certify a release (F-42), and CI can no longer hide that it could
+  not look.** `find_evidence` asked whether each required job *name* appeared in a run's job list, and
+  the comment above `REQUIRED` asserted a job skipped by its `if` would be absent. GitHub lists it
+  present with `conclusion: "skipped"`; the push-triggered Linux run `35594554182` was green with its
+  release gate never executed, and the gate took it as that commit's certification evidence.
+  Eligibility is now presence **and** equality against `"success"` for every conclusion recorded under
+  a required name — `skipped`, `failure`, `cancelled`, `timed_out`, `action_required`, `neutral`,
+  `stale`, an unstarted `null`, an empty list, or a value not yet enumerated are refused alike, and a
+  matrix leg is not rescued by its passing siblings. Which run gets chosen did not change: an
+  ineligible one is passed over to the next eligible ancestor, as a run missing a job already was,
+  and the gate's evidence file now records what it passed over and why. Twenty executed cases pin it —
+  ten conclusions through the real gate, one per required job across all four workflows, the mixed-leg
+  and duplicate-name cases, and a direct call of the gate's own rule so it cannot decay into a
+  blocklist — and two mutation controls over the live workflow file (never refuse; blocklist-only)
+  redden 19 and 11 tests, which is the difference between a test and a comment. The companion change
+  gives the `ci.yml` `backend` job the read scope those checks always assumed (`contents: read` +
+  `actions: read`, pinned by exact equality so neither a lost checkout scope nor a gained write scope
+  passes), and the two live Actions/API checks stop hiding: off CI a missing capability still skips,
+  inside CI — where the workflow declares it — they retry once and fail with both readings named, so
+  a degraded API and a broken contract are no longer the same grey mark.
 - **Cited evidence must be readable from the clone (F-37, guarded; the finding stays
   open).** Five `provenance.evidence` strings in `deployment/third-party-images.json` name
   a path under gitignored `outputs/`, and nothing looked. `test_third_party_image_lock.py`

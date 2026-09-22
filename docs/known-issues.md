@@ -340,33 +340,34 @@ listed so that an import name is not mistaken for a working capability.
    `classify_diff.py` charges as runtime-affecting, so the change is scheduled in
    front of its own re-certification rather than slipped into a docs-only round;
    the test above asserts the difference, and will fail when it is removed.
-10. **A skipped release job still reads as executed evidence (F-42) — found by the
-    batch-1 remote validation, not fixed by it.** The comment above `REQUIRED` in
-    `release.yml` says "the jobs that must be present **and successful**" and "a job
-    skipped by its `if` is absent, hence 'missing'". Both remote reality and the code
-    disagree with the second half: `find_evidence` filters on the *run* conclusion and then
-    checks whether each required job name appears in the job list, and GitHub's jobs API
-    reports a job skipped by an `if` as present with `conclusion: "skipped"`. Measured on the
-    run this push produced — `cap-linux-certification.yml` run `35594554182` at
-    `49de1081`, `cap-production-certification: ["skipped"]`, `postgres-version-matrix:
-    ["success", "success", "success"]` — the gate selected it at `+0 commits from the tag`
-    and the leg went green (`_tmp/stage5_dryrun_before_ga.log`, the gate's own code executed
-    read-only against the live API).
+10. **A skipped release job read as executed evidence (F-42 — implementation CLOSED by batch 1.1;
+    remote validation PENDING).** Found by the
+    batch-1 remote validation, in the same class as F-33 — a colour where a decision should be — one
+    layer down. The comment above `REQUIRED` in `release.yml` claimed "a job skipped by its `if` is
+    absent, hence 'missing'", and `find_evidence` checked only that each required job *name* appeared
+    in the run's job list. Remote reality is different: GitHub reports a skipped job present with
+    `conclusion: "skipped"`, so the push-triggered Linux run `35594554182` at `49de1081`
+    (`cap-production-certification: ["skipped"]`) satisfied the check and would have stood as that
+    commit's certification evidence.
 
-    Consequence, and its limit: the Linux workflow has no `AUTHORITY` entry, so nothing else
-    checks what that run decided, and the distance-0 selection *shadows* the genuine
-    release-layer round at `b671f53` (+35) that the gate would otherwise inherit — here the
-    evidence exists either way, so nothing wrong was published. The case that matters is a
-    head with no older release-layer run inside `MAX_ANCESTRY_DISTANCE`: presence of a skipped
-    job would then stand in for certification that never executed. It is the same failure mode
-    F-33 closed for GA ("a colour where a decision should be"), one layer down.
+    **Closed as:** the eligibility test is now presence *and* equality against `"success"` for every
+    conclusion recorded under a required name — so `skipped`, `failure`, `cancelled`, `timed_out`,
+    `action_required`, `neutral`, `stale`, an unstarted `null`, an empty list, or a value nobody has
+    enumerated yet are refused alike, and a matrix leg is not rescued by its passing siblings (the same
+    no-cherry-picking rule the authority leg applies to duplicated artifacts). An ineligible run is
+    passed over to the next eligible ancestor exactly as a run missing a job already was; the selection
+    policy did not move. The evidence file gained `ineligible`, and the failure line names the run,
+    the job and what it recorded. Pinned by ten conclusions through the executed gate, one case per
+    required job of all four workflows, the mixed-leg and duplicate-name cases, and a direct call of
+    the gate's own rule so it cannot decay into a blocklist; two mutation controls over the live
+    workflow file (never refuse; blocklist-only) redden 19 and 11 tests respectively, which is what
+    says the tests are load-bearing rather than descriptive.
 
-    The reviewed fix is one predicate in `find_evidence` — accept a run only when every listed
-    job's conclusions are all `"success"` — plus a fixture whose required job is `skipped`, so
-    the negative case is pinned and the comment becomes true. That is a
-    `.github/workflows/release.yml` edit (`ci_workflow`, inheritable): it costs a CI cycle and
-    no re-certification, and it was deliberately **not** made during a validation stage, where
-    the rule is to observe rather than to edit the thing under observation.
+    **Still PENDING, and not counted as closed here:** the remote half. The CI run at a head carrying
+    this fix has to show the twenty F-42 cases green *and* the two live Actions/API checks executing
+    rather than skipping for want of `actions: read` — the scope that made them inert is new in the
+    same batch. And no tag was created to watch the gate refuse one at tag time, so the end-to-end
+    publication path remains unobserved (as it was for F-33).
 
 ## Live verification against a real PostgreSQL server
 

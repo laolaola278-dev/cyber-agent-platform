@@ -97,13 +97,16 @@ run, which predates it. See the closure report §D and §J.
 
 ## B. Provenance builder identity — P0 verification, P1 implementation
 
-**Status (batch-1 closure): B1 attempted, UNVERIFIED · B2 DEFERRED · B3 and B4 NOT STARTED.**
-The read-only probe was run and answered nothing (no `gh`, no token, anonymous ghcr reads 404 — see
-`docs/quality/cap-provenance-identity-observation-2026-09-21.md`), so the attestation content is
-still unobserved: an attempted probe is not a completed step, and B3's assertion has nothing to be
-written against. Nothing was pinned: `docker/setup-buildx-action@v3` is still referenced by minor
-tag with no `buildx-version` input in all four jobs that use it, and the BuildKit image behind the
-`docker-container` driver is unpinned.
+**Status (updated by batch 1's remote validation): B1/V1 ANSWERED — observed, read-only ·
+B2 DEFERRED · B3 NOT STARTED, waiting on a design decision · B4 NOT STARTED, independent decision.**
+The earlier "cannot be read from here" verdict was wrong in its premise: the published image tag is
+`1.0.6-rc1` (the `v` belongs to the git tag), the packages are readable over plain HTTPS, and the
+credential this box already uses for `git push` is accepted by ghcr's token endpoint. So step 1 was
+completed after all — and what it found is recorded in
+`docs/quality/cap-provenance-identity-observation-2026-09-21.md` §6 and summarised below, because it
+changes what step 3 could honestly assert. Nothing was pinned in the meantime:
+`docker/setup-buildx-action@v3` is still referenced by minor tag with no `buildx-version` input in all
+four jobs that use it, and the BuildKit image behind the `docker-container` driver is unpinned.
 
 - **Issue.** Published attestations are not asserted anywhere and are not cryptographically bound to
   the workflow identity that produced them.
@@ -134,6 +137,51 @@ tag with no `buildx-version` input in all four jobs that use it, and the BuildKi
   **Dependency chain, corrected:** V1 authenticated read-only observation → define the *observed*
   builder/provenance contract → only then step 3's assertion. Steps 1–3 are one chain; step 4 is a
   separate decision that does not follow from them and is not scheduled behind them.
+
+  **CURRENT OBSERVED CONTRACT — measured from the registry, quoted as stored (2026-09-21).** For all
+  five sealed images, the `unknown/unknown` attestation manifest in the served index carries two
+  in-toto layers (`https://spdx.dev/Document` and `https://slsa.dev/provenance/v1`), and the
+  provenance statement says:
+
+  | Field | Observed value, all five images |
+  | --- | --- |
+  | `predicateType` | `https://slsa.dev/provenance/v1` in a `https://in-toto.io/Statement/v1` document |
+  | `subject[0]` | the **platform manifest** digest (not the index digest), named `pkg:docker/ghcr.io/laolaola278-dev/<image>@1.0.6-rc1?platform=linux%2Famd64` |
+  | `buildDefinition.buildType` | `https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md` |
+  | `runDetails.builder.id` | **the empty string, on all five** |
+  | `runDetails.metadata.invocationId` | a BuildKit LLB id (e.g. `ofob92nrmxiz…`), not a GitHub run id |
+  | `buildkit_completeness` | `{"request": true, "resolvedDependencies": false}` — BuildKit declares its own dependency list partial |
+  | `buildkit_metadata.vcs.revision` / `.source` | present on `cap-backend` and `cap-frontend` only; **absent on `cap-egress-proxy`, `cap-sandbox-http`, `cap-sandbox-browser`** |
+  | `buildDefinition.externalParameters` | `configSource.path: "Dockerfile"` plus the `request` (build-args `REVISION=4d8f9c7…`, `VERSION=1.0.6-rc1`, frontend `docker/dockerfile:1`) |
+  | `resolvedDependencies` | 4 entries for backend/frontend (pinned base images with digests), 2 for the other three |
+  | BuildKit / buildx version | **not recorded anywhere in the predicate** |
+  | signature | none: no `sha256-….sig`/`.att` tag for any package, the layers are unsigned OCI artifacts, and `referrers/<index-digest>` answers 404. No `gh attestation verify` was run, so this is a reading, not a verification |
+
+  Independently: the index digests the registry serves today for `1.0.6-rc1` equal the publication
+  record for all five images.
+
+  **DESIRED FUTURE CONTRACT — not yet decided, and deliberately not written as code.** Step 3 becomes
+  writable only after these five questions are answered, because the observed values do not support the
+  assertion the step was drafted to make:
+
+  1. Must the builder be *identified* at all — i.e. is a non-empty builder identity a requirement, or
+     is an unattributed-but-verbatim BuildKit statement acceptable for this project's threat model?
+  2. Where does the identity come from: BuildKit's own provenance (which today records none), a
+     GitHub OIDC attestation via `actions/attest-build-provenance` (step 4), or both with a stated
+     precedence?
+  3. Who is the machine verifier — an operator with `gh attestation verify`, this repository's CI, or
+     an external policy engine — and what does it have to be able to check without trusting CAP's own
+     evidence?
+  4. Is the subject the **index digest** (what a pull resolves to) or the **platform manifest digest**
+     (what the pushed statement actually binds)? The two differ, and the gate's completeness check
+     today pins the index.
+  5. What is the failure policy: refuse publication, warn-and-record, or refuse only for newly cut
+     tags — and where is that difference visible to the person who has to re-run a round?
+
+  **B3 may not simply assert `builder.id == ""`.** That would freeze an accident of the current
+  frontend into a gate, and would pass a release whose provenance nobody could attribute for any
+  reason other than the one this row records. It stays a design decision, with B4's signing question
+  separate from it.
 - **Files likely affected.** `scripts/release/build_release_image.sh`; `.github/workflows/release.yml`,
   `ci.yml`; `backend/tests/test_release_build_script.py`, `test_release_image_completeness.py`; later
   `deployment/helm/cap/README.md` and the production checklist.
@@ -149,6 +197,11 @@ tag with no `buildx-version` input in all four jobs that use it, and the BuildKi
   credential, anonymous ghcr reads 404 — so steps 3 and 4 were not started and no builder-id pattern
   was invented. The probes, and what the repository's own evidence does and does not record, are in
   `docs/quality/cap-provenance-identity-observation-2026-09-21.md`.
+  **Follow-up, same day (batch 1 remote validation): that verdict is superseded.** The 404 was the
+  probe asking for `v1.0.6-rc1` when the image tag is `1.0.6-rc1`; read over plain HTTPS with the
+  credential already used for `git push`, step 1 was completed and its findings are the table above.
+  Steps 2, 3 and 4 remain unexecuted — step 3 now waits on the five design questions rather than on
+  access, which is the only thing that changed.
 
 ## C. F-24 — compose third-party images by mutable tag — P1
 
@@ -365,11 +418,27 @@ and the acceptance spec for whoever can run it.
 
 ## H. F-25 closure record — P3, documentation only
 
+- **Status (batch 1.1, 2026-09-22): DONE.** The record is
+  `docs/quality/cap-1.0.6-rc1-publication-closure-2026-09-22.md`, written once V2 became readable:
+  every figure comes from run `35553750674`'s own artifacts and read-only registry/API reads, and it
+  closes the documentation half of this item — 25/25 jobs, the five published refs with index and
+  platform digests re-confirmed against what `ghcr.io` serves, per-image Trivy verdicts, SBOM and
+  provenance presence, the rendered `values-release` digest set with its `sha256`, the completeness
+  gate's own printed line, and the sealed gate artifact's four evidence resolutions (with the note
+  that it carries no `authority` field at all). It opens no new register entry: the still-open ones are
+  listed in its §7 and were already filed. F-25 remains **CLOSED by that run** — the record describes
+  the evidence, it does not become the evidence.
+
 **Status (batch-1 closure): DEFERRED — no document was written.** The record's own precondition is
 read-only access to run `35553750674`'s artifacts (V2), and this environment has none: no `gh`, no
 token, no package credential. Writing the record from memory or from the repository's own dry-build
 captures would state numbers it cannot cite, so nothing was produced. F-25 stays CLOSED by that run;
 it is not restated here and not reopened.
+  *(Superseded 2026-09-22 by the status above — and its premise was wrong: the box did have a
+  credential, in the git credential manager, and both the API and ghcr answer plain HTTPS reads. What
+  was missing was a correct ref (`1.0.6-rc1`, not `v1.0.6-rc1`), not access. The conclusion the
+  paragraph drew — do not write a record from uncited numbers — stands and is why nothing was written
+  a day earlier.)*
 
 - **Issue.** F-25 ("the release image graph has never executed") is closed by live run `35553750674` at
   `4d8f9c7`, while the shipped `known-issues.md` asset and the closure report's §10 entry legitimately
@@ -391,7 +460,8 @@ it is not restated here and not reopened.
 
 | Batch | Items | Classifier cost | Recert needed |
 | --- | --- | --- | --- |
-| 1 (CI-only) — **executed; status per item** | **A (F-33 gate) DONE** · **B1 (verify attestation) UNVERIFIED**, probe attempted and inaccessible · **B2 (pin buildx/BuildKit) DEFERRED**, nothing pinned · **E1 (evidence guard) DONE as a transitional tracked-twin contract** · **E2 (tracked generator) DEFERRED**, not implemented · **G(i) (two-build measurement) PARTIAL**, no same-SHA independent pair produced · **H (F-25 record) DEFERRED**, precondition unavailable | only what landed is audited: `ci_workflow` + `test_harness` + `docs` → INHERITED, no runtime-affecting path | no — CI cycle only |
+| 1 (CI-only) — **executed; status per item** | **A (F-33 gate) DONE** · **B1 (verify attestation) ANSWERED by read-only observation**, after batch 1's remote validation (the earlier 404 was the wrong ref) · **B2 (pin buildx/BuildKit) DEFERRED**, nothing pinned · **E1 (evidence guard) DONE as a transitional tracked-twin contract** · **E2 (tracked generator) DEFERRED**, not implemented · **G(i) (two-build measurement) PARTIAL**, no same-SHA independent pair produced · **H (F-25 record) DEFERRED**, precondition unavailable | only what landed is audited: `ci_workflow` + `test_harness` + `docs` → INHERITED, no runtime-affecting path | no — CI cycle only |
+| 1.1 (CI-only) — **release-gate closure** | **F-42 fixed**: required jobs must be listed *and* all-success, so a skipped release job can no longer stand as certification evidence · **CI permission gap closed**: the `ci.yml` `backend` job declares `contents: read` + `actions: read`, and the two live Actions/API checks fail rather than skip where that scope is declared · **H (F-25 record) written** from run `35553750674`'s own artifacts plus read-only registry evidence · **B's observed/desired contract recorded**, B2/B3/B4 still unexecuted | `ci_workflow` + `test_harness` + `docs` → INHERITED, no runtime-affecting path | no — CI cycle only |
 | 2 (next RC) | C (compose pinning) + D (schema widening) + E step 2 (tracked generator) and step 3 (repoint) + B step 2 (pin buildx/BuildKit) + **B step 3 (assert) only once V1 has been read and the observed builder/provenance contract is written** | `deployment/` → runtime-affecting | yes — CI + Linux + K8s + soak + strict GA at one SHA, ≈ 3.5 h serial |
 | 2′ (separate decision, not part of batch 2) | B step 4 (GitHub/Sigstore attestation) | depends on the design chosen | its own round if taken |
 | 3 (later) | F (24 h multi-leg soak roll-up) | `ci_workflow`/`test_harness`, or recert if GA-gate accounting changes | decide after batch 2 |
