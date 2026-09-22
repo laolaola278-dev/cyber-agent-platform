@@ -73,6 +73,15 @@ jobs:
         # certification layer deselects 28.2 too. Its home is `make test` (the
         # developer gate, which passes no --deselect) plus the per-release local
         # audit, whose run the release report records.
+        # The two live Actions/API checks in test_release_publication_gate.py need a
+        # token in the environment, not only a declared scope: CI run 35683797478 had
+        # `actions: read` and still failed with gh exiting 4 ("To use GitHub CLI in a
+        # GitHub Actions workflow, set the GH_TOKEN environment variable"). Set here,
+        # on the one step that runs them, rather than job-wide, so no other step
+        # inherits a credential it does not use. Read scopes only -- this token can
+        # list runs and download artifacts, and cannot publish anything.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           uv run --project backend pytest backend/tests -p no:cacheprovider \
             --ignore=backend/tests/test_phase_28_5_linux_network.py \

@@ -237,12 +237,26 @@ def test_ci_backend_job_holds_the_scope_its_live_checks_depend_on() -> None:
     and nothing here may be a write scope.
     """
     doc = yaml.safe_load((WORKFLOW_DIR / "ci.yml").read_text("utf-8"))
-    permissions = doc["jobs"]["backend"].get("permissions")
+    job = doc["jobs"]["backend"]
+    permissions = job.get("permissions")
     assert permissions == LIVE_CHECK_SCOPES, (
         f"the backend job declares {permissions!r}; the live Actions/API checks need "
         f"exactly {sorted(LIVE_CHECK_SCOPES)} -- a job-level block replaces the "
         "workflow-level one, so `contents: read` cannot be inherited, and a write "
         "scope here would be a change of intent, not of formatting"
+    )
+    # The scope alone is not the capability: CI run 35683797478 had `actions: read`
+    # and `gh` still exited 4 asking for GH_TOKEN. Both halves are pinned, because a
+    # workflow that grants a permission nobody can use is the same green-looking gap.
+    token_steps = [
+        step.get("name")
+        for step in job.get("steps") or []
+        if (step.get("env") or {}).get("GH_TOKEN") == "${{ secrets.GITHUB_TOKEN }}"
+    ]
+    assert token_steps == ["Unit tests and coverage"], (
+        f"GH_TOKEN is set on {token_steps}; exactly the step that runs the live "
+        "Actions/API checks should hold it -- anywhere else is a credential no step "
+        "uses, and nowhere else means those checks fail on environment again"
     )
 
 
