@@ -334,7 +334,15 @@ published release contents are immutable.
   `actions: read`, pinned by exact equality so neither a lost checkout scope nor a gained write scope
   passes), and the two live Actions/API checks stop hiding: off CI a missing capability still skips,
   inside CI — where the workflow declares it — they retry once and fail with both readings named, so
-  a degraded API and a broken contract are no longer the same grey mark.
+  a degraded API and a broken contract are no longer the same grey mark. The first run to use that
+  behaviour (`35683797478`, at `7da216c`) named the real cause: `gh` exits 4 unless a token is in its
+  environment, so declaring a scope had never been sufficient. Handing `GH_TOKEN` to the unit-test
+  step alone (`0561a7e`, pinned by test so it cannot silently spread to other steps) is what closed
+  it — CI run `35689729682` at that head completed **success**, 10 of 10 jobs, junit
+  `1664 tests / 0 failures / 0 errors / 133 skipped`, both live checks executed and passing against
+  the real API, and all twenty F-42 cases green remotely; the red run before it stands as their
+  negative control. What that does not settle: no release tag was created, so the gate's refusal at
+  tag time remains demonstrated by executed code and live-state dry-run rather than a publication.
 - **Cited evidence must be readable from the clone (F-37, guarded; the finding stays
   open).** Five `provenance.evidence` strings in `deployment/third-party-images.json` name
   a path under gitignored `outputs/`, and nothing looked. `test_third_party_image_lock.py`

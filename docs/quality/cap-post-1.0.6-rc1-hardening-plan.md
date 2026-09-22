@@ -461,30 +461,34 @@ it is not restated here and not reopened.
 | Batch | Items | Classifier cost | Recert needed |
 | --- | --- | --- | --- |
 | 1 (CI-only) — **executed; status per item** | **A (F-33 gate) DONE** · **B1 (verify attestation) ANSWERED by read-only observation**, after batch 1's remote validation (the earlier 404 was the wrong ref) · **B2 (pin buildx/BuildKit) DEFERRED**, nothing pinned · **E1 (evidence guard) DONE as a transitional tracked-twin contract** · **E2 (tracked generator) DEFERRED**, not implemented · **G(i) (two-build measurement) PARTIAL**, no same-SHA independent pair produced · **H (F-25 record) DEFERRED**, precondition unavailable | only what landed is audited: `ci_workflow` + `test_harness` + `docs` → INHERITED, no runtime-affecting path | no — CI cycle only |
-| 1.1 (CI-only) — **release-gate closure** | **F-42 fixed**: required jobs must be listed *and* all-success, so a skipped release job can no longer stand as certification evidence · **CI permission gap closed**: the `ci.yml` `backend` job declares `contents: read` + `actions: read`, and the two live Actions/API checks fail rather than skip where that scope is declared · **H (F-25 record) written** from run `35553750674`'s own artifacts plus read-only registry evidence · **B's observed/desired contract recorded**, B2/B3/B4 still unexecuted | `ci_workflow` + `test_harness` + `docs` → INHERITED, no runtime-affecting path | no — CI cycle only |
+| 1.1 (CI-only) — **release-gate closure; CLOSED at `0561a7e`, CI green** | **F-42 fixed and remotely confirmed**: required jobs must be listed *and* all-success, so a skipped release job can no longer stand as certification evidence — its twenty cases passed in CI at both heads, and against live state at `0561a7e` the gate passed over four green-with-skipped-jobs Linux rounds to reach the real release-layer round at `b671f53` (+43, INHERITED) · **CI capability gap closed, in two steps**: the `ci.yml` `backend` job declares `contents: read` + `actions: read`, which was necessary but *not* sufficient — `gh` exits 4 without a token — so `0561a7e` handed `GH_TOKEN` to the unit-test step alone, and CI run `35689729682` at that head completed success (10/10 jobs, junit 1664/0/0/133) with both live Actions/API checks executed and passing · **H (F-25 record) written** from run `35553750674`'s own artifacts plus read-only registry evidence · **B's observed/desired contract recorded**, B2/B3/B4 still unexecuted | `ci_workflow` + `test_harness` + `docs` → INHERITED, no runtime-affecting path | no — CI cycle only |
 | 2 (next RC) | C (compose pinning) + D (schema widening) + E step 2 (tracked generator) and step 3 (repoint) + B step 2 (pin buildx/BuildKit) + **B step 3 (assert) only once V1 has been read and the observed builder/provenance contract is written** | `deployment/` → runtime-affecting | yes — CI + Linux + K8s + soak + strict GA at one SHA, ≈ 3.5 h serial |
 | 2′ (separate decision, not part of batch 2) | B step 4 (GitHub/Sigstore attestation) | depends on the design chosen | its own round if taken |
 | 3 (later) | F (24 h multi-leg soak roll-up) | `ci_workflow`/`test_harness`, or recert if GA-gate accounting changes | decide after batch 2 |
 | 4 (own round) | **finish G(i) first** (the same-SHA two-build comparison job), then G steps (ii)–(v) (deterministic metadata, hash pins, apt policy, pins) | Dockerfiles ⇒ full recert, image bytes change | yes, dedicated round |
 
-## Open verification items (read-only; V1 and V2 attempted in batch 1, still unanswered)
+## Open verification items (read-only; V1 and V2 answered by observation, V3 open)
 
-- **V1** — what `runDetails.builder.id` actually holds for the sealed images. **Attempted in batch 1,
-  not answered:** no `gh` binary, no `GH_TOKEN`/`GITHUB_TOKEN`/`CR_PAT` in the environment, an empty
-  `auths` map in `~/.docker/config.json` with no credential helper installed, and an anonymous
-  `GET /v2/laolaola278-dev/cap-backend/manifests/v1.0.6-rc1` answers 404. The sealed attestations are
-  therefore unreadable from here and B's premise stays "verify" (R1) in both directions. What *is*
-  observable locally is that CAP's own `cap.provenance.v1` artifact (`provenance.json` inside
-  `ga-cert-artifacts`) records `builder: "github-actions"`, subject digests and SBOM hashes, and has no
-  builder-id, predicate-type or invocation field at all -- a fact about this repository's evidence, not
-  about the pushed attestation.
-- **V2** — published per-image digests and attestation state from run `35553750674`, needed for H's
-  numbers and B step 3's wording. The build side was read from the captured round evidence (subject
-  digests, `config_digest`, `index_digest` where a buildx build produced one); the pushed attestation
-  content remains unread, so H cites the run rather than the attestation.
+- **V1 — answered by read-only observation, batch 1's remote validation and its follow-up.** What the
+  sealed images actually carry, per `cap-provenance-identity-observation-2026-09-21.md` §6, read with
+  the credential the git credential manager already holds (the earlier "unreadable" verdict was this
+  session querying `manifests/v1.0.6-rc1`; the *image* tag has no leading `v`): all five images have a
+  `spdx.dev/Document` and an `slsa.dev/provenance/v1` artifact whose subject is the **platform**
+  manifest digest; `predicate.runDetails.builder.id` is the **empty string on every one of them**;
+  BuildKit self-declares `buildkit_completeness = {"request": true, "resolvedDependencies": false}`;
+  only `cap-backend` and `cap-frontend` carry `vcs.revision` in `buildkit_metadata`; no BuildKit or
+  buildx version appears anywhere in any predicate; no `sha256-….sig`/`.att` tag exists for these
+  images and `ghcr.io/v2/<name>/referrers/<index-digest>` answers **404**. `gh attestation verify` was
+  deliberately not run: reading an artifact is not verifying a signature, and B3's failure policy needs
+  a machine verifier decided first (§6's own boundary note).
+- **V2 — answered.** The published per-image digests were read from the registry and matched: the
+  `Docker-Content-Digest` served for `1.0.6-rc1` equals the recorded index digest for all five
+  images, re-read after both batch 1.1 pushes, and the attestation state is as V1 describes; those
+  digests are in the §6 table of the observation document. H's record
+  (`cap-1.0.6-rc1-publication-closure-2026-09-22.md`) therefore cites run `35553750674`'s own
+  artifacts *and* registry-read digests, not the pushed attestation.
 - **V3** — whether the Playwright browser download for `playwright==1.49.1` is content-stable, which
   decides how much of G step (iii) is hash-locking versus vendoring the archive.
 
-*Batch 1 is being executed in staged commits against this plan; nothing is pushed until its results
-are summarised for review. Batches 2-4 need a round that re-certifies, and batch 1's V1/V2 remain
-unanswered for the reason recorded above.*
+*Batches 1 and 1.1 were executed in staged commits against this plan, pushed, and CI-validated at
+`0561a7e`; V3 remains unanswered, and B2/B3/B4 are still plans, not changes.*

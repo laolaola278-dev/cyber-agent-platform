@@ -340,8 +340,8 @@ listed so that an import name is not mistaken for a working capability.
    `classify_diff.py` charges as runtime-affecting, so the change is scheduled in
    front of its own re-certification rather than slipped into a docs-only round;
    the test above asserts the difference, and will fail when it is removed.
-10. **A skipped release job read as executed evidence (F-42 — implementation CLOSED by batch 1.1;
-    remote validation PENDING).** Found by the
+10. **A skipped release job read as executed evidence (F-42 — implementation and remote validation
+    CLOSED by batch 1.1; tag-time path PENDING).** Found by the
     batch-1 remote validation, in the same class as F-33 — a colour where a decision should be — one
     layer down. The comment above `REQUIRED` in `release.yml` claimed "a job skipped by its `if` is
     absent, hence 'missing'", and `find_evidence` checked only that each required job *name* appeared
@@ -363,16 +363,20 @@ listed so that an import name is not mistaken for a working capability.
     workflow file (never refuse; blocklist-only) redden 19 and 11 tests respectively, which is what
     says the tests are load-bearing rather than descriptive.
 
-    **What the batch-1.1 CI run settled, and what it did not.** Remotely, the fix is confirmed: the
-    twenty F-42 cases passed in CI, and the gate's own code, run read-only against the pushed head's
-    live state, passed over three green runs whose release jobs were skipped (including the one at
-    this head) to reach the real release-layer round at `b671f53` (+40) — where the pre-fix gate had
-    accepted the `+0` skipped run. Two things remain open: the **live Actions/API read path**, which
-    now executes and *fails* on `gh` receiving no `GH_TOKEN` in the job (one step-level `env:` line
-    and a re-run away, and no longer hideable as a skip), and the **tag-time execution** — no tag was
-    created, so the gate's refusal at publication is demonstrated by executed code and live-state
-    dry-run, not by a real release. Both are the same pending items F-33 left behind, now with their
-    cause measured rather than assumed.
+    **What the batch-1.1 CI runs settled, and what they did not.** Remotely, the fix is confirmed
+    twice over. The twenty F-42 cases passed in CI at both heads, and the gate's own code, run
+    read-only against the pushed head's live state at `0561a7e`, passed over four green runs whose
+    release jobs were skipped (including that head's own `+0` round) to reach the real release-layer
+    round at `b671f53` (+43, INHERITED) — where the pre-fix gate accepted the `+0` skipped run and
+    printed `PASS`. The **live Actions/API read path is now validated in CI**: run `35689729682` at
+    `0561a7e` completed **success**, 10/10 jobs, with junit
+    `1664 tests / 0 failures / 0 errors / 133 skipped` and both capability checks passing once the
+    unit-test step was handed `GH_TOKEN`; the
+    same two checks failing an hour earlier at `7da216c` for want of it is the control that says they
+    are not vacuous, and no test was skipped or narrowed to get there. What remains open is the
+    **tag-time execution** — no tag was created, so the gate's refusal at publication is demonstrated
+    by executed code and live-state dry-run, not by a real release. That is the same pending item
+    F-33 left behind, now with its cause measured rather than assumed.
 
 ## Live verification against a real PostgreSQL server
 
