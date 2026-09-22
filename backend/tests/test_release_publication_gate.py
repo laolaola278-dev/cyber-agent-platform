@@ -20,6 +20,11 @@ as ``verify-certification``, and this file is what keeps it honest:
     accepts;
   * evidence that is green-but-not-release-scoped, from an uncleasable distance,
     from a failed run, or absent must all refuse the release;
+  * presence is not execution (F-42): each required job must be listed *and* every
+    conclusion recorded under its name must be ``success``, so a run whose release job
+    was skipped, cancelled, or left unstarted cannot stand as evidence -- and such a
+    run is passed over to the next eligible ancestor, which is the pre-existing
+    selection policy rather than a new one;
   * a green release job set is necessary and not sufficient (F-33): the GA and
     K8s rounds upload an artifact holding their own verdict, and this gate reads
     it -- bound to the commit of the run it came from. A development-mode GA
@@ -41,8 +46,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
+import time
 import types
 import zipfile
 from pathlib import Path
@@ -197,16 +204,34 @@ def _runs_payload(entries: list[tuple[str, int, str]]) -> str:
     )
 
 
-def _jobs_payload(names: list[str]) -> str:
-    """One entry per job, with matrix legs named the way Actions names them."""
+def _jobs_payload(
+    names: list[str], *, conclusions: dict[str, str | list[str]] | None = None
+) -> str:
+    """One entry per job, with matrix legs named the way Actions names them.
+
+    ``conclusions`` overrides what a job recorded: a bare value applies to that base
+    name, and a list supplies the legs in order. Actions reports a job skipped by its
+    ``if`` as *present* with ``conclusion: "skipped"``, so a test that means "the
+    release gate never ran" has to write it that way rather than leave it out -- and
+    F-42 is exactly the difference between those two shapes.
+    """
+    overrides = conclusions or {}
     jobs = []
     for name in names:
         if name == "postgres-version-matrix":
-            jobs += [
-                {"name": f"{name} ({leg})", "conclusion": "success"} for leg in PG_LEGS
-            ]
+            legs = overrides.get(name)
+            if isinstance(legs, list):
+                jobs += [
+                    {"name": f"{name} ({leg})", "conclusion": value}
+                    for leg, value in zip(PG_LEGS, legs, strict=True)
+                ]
+            else:
+                jobs += [
+                    {"name": f"{name} ({leg})", "conclusion": legs or "success"}
+                    for leg in PG_LEGS
+                ]
         else:
-            jobs.append({"name": name, "conclusion": "success"})
+            jobs.append({"name": name, "conclusion": overrides.get(name, "success")})
     return json.dumps({"jobs": jobs})
 
 
@@ -583,6 +608,205 @@ def test_gate_refuses_a_green_run_that_did_not_execute_the_release_jobs(
     assert evidence["verdict"] == "FAIL"
     assert "cap-linux-certification.yml" not in evidence["evidence"]
     assert any("cap-linux-certification.yml" in reason for reason in evidence["failures"])
+
+
+#: What a required job can record that is not "it ran and passed". ``None`` is a job
+#: that never started; ``""`` and ``"queued"`` stand for anything Actions records that
+#: this file has not enumerated -- the gate's rule is equality against ``"success"``,
+#: so an unlisted value must not quietly become a pass either.
+NOT_A_SUCCESS = [
+    "skipped",
+    "failure",
+    "cancelled",
+    "timed_out",
+    "action_required",
+    "neutral",
+    "stale",
+    None,
+    "",
+    "queued",
+]
+
+
+@pytest.mark.parametrize("conclusion", NOT_A_SUCCESS)
+def test_a_required_job_that_did_not_succeed_is_never_evidence(
+    conclusion, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-42: presence is not execution, and green-on-the-outside is not green inside.
+
+    Run 35594554182 -- a push to `main` -- listed `cap-production-certification`
+    with ``conclusion: "skipped"`` and finished successfully. The gate took it as
+    the Linux certification evidence for that commit, because the check it had was
+    "is this job name in the list". Every value here must fail that check, and the
+    failure line has to say which job and what it recorded, so an operator does not
+    re-run a round that was never the problem.
+    """
+    runs, jobs = _green_runs(SHA_TAG)
+    runs["cap-linux-certification.yml"] = _runs_payload([(SHA_TAG, 7, "success")])
+    jobs[7] = _jobs_payload(
+        list(RELEASE_JOBS["cap-linux-certification.yml"]),
+        conclusions={"cap-production-certification": conclusion},
+    )
+    code, evidence = _exec_gate(
+        tmp_path, monkeypatch, FakeActionsApi(runs=runs, jobs=jobs, chain=CHAIN_TAG)
+    )
+    assert code == 1, f"{conclusion!r} was read as a job that succeeded"
+    assert evidence["verdict"] == "FAIL"
+    assert "cap-linux-certification.yml" not in evidence["evidence"], (
+        f"{conclusion!r} still produced an evidence record for the release"
+    )
+    reason = next(
+        line for line in evidence["failures"]
+        if line.startswith("cap-linux-certification.yml")
+    )
+    assert "passed over" in reason, reason
+    assert "cap-production-certification" in reason, reason
+
+
+def test_an_ineligible_newest_run_yields_to_the_older_eligible_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refusing a skipped job changes which run qualifies, not how runs are sought.
+
+    The walk-back policy is the pre-existing one: the newest *eligible* evidence wins,
+    at its real distance, with the classifier asked about the gap. Here the tagged
+    commit's Linux run skipped its release job and the ancestor's did not, so the
+    ancestor is used and the release still certifies -- which is the opposite of a
+    gate that has learned to reject everything.
+    """
+    runs, jobs = _green_runs(SHA_TAG)
+    runs["cap-linux-certification.yml"] = _runs_payload(
+        [(SHA_TAG, 7, "success"), ("d" * 40, 8, "success")]
+    )
+    jobs[7] = _jobs_payload(
+        list(RELEASE_JOBS["cap-linux-certification.yml"]),
+        conclusions={"cap-production-certification": "skipped"},
+    )
+    jobs[8] = _jobs_payload(list(RELEASE_JOBS["cap-linux-certification.yml"]))
+    code, evidence = _exec_gate(
+        tmp_path, monkeypatch, FakeActionsApi(runs=runs, jobs=jobs, chain=CHAIN_TAG)
+    )
+    assert code == 0, evidence["failures"]
+    linux = evidence["evidence"]["cap-linux-certification.yml"]
+    assert linux["run_id"] == 8, "the skipped run was still preferred"
+    assert linux["sha"] == "d" * 40 and linux["distance"] == 1, linux
+    assert linux["jobs"]["cap-production-certification"] == ["success"], linux
+    assert linux["diff_verdict"] == "INHERITED", linux
+
+
+def test_one_cancelled_matrix_leg_is_not_rescued_by_the_two_that_passed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legs share a base name; choosing the green one is the gate editing the record.
+
+    The same fixture with all three legs green must stay eligible, in the same test:
+    the refusal has to be about the conclusion, not about matrix jobs being
+    unrepresentable in a rule that reads them as one name.
+    """
+    names = list(RELEASE_JOBS["cap-linux-certification.yml"])
+    for legs, expect_code in (
+        (["success", "cancelled", "success"], 1),
+        (["success", "skipped", "success"], 1),
+        (["success", "success", "success"], 0),
+    ):
+        target = tmp_path / f"legs-{'-'.join(str(x) for x in legs)}"
+        target.mkdir()
+        runs, jobs = _green_runs(SHA_TAG)
+        runs["cap-linux-certification.yml"] = _runs_payload([(SHA_TAG, 7, "success")])
+        jobs[7] = _jobs_payload(names, conclusions={"postgres-version-matrix": legs})
+        code, evidence = _exec_gate(
+            target, monkeypatch, FakeActionsApi(runs=runs, jobs=jobs, chain=CHAIN_TAG)
+        )
+        assert code == expect_code, f"{legs} -> exit {code}: {evidence['failures']}"
+        present = "cap-linux-certification.yml" in evidence["evidence"]
+        assert present is (expect_code == 0), legs
+
+
+def test_two_jobs_of_one_name_are_not_resolved_by_picking_the_green_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repeated name is read as a set of conclusions, all of which must be green.
+
+    This is the ambiguity contract the authority leg already applies to artifacts,
+    carried over to jobs rather than replaced by a preference for good news.
+    """
+    runs, jobs = _green_runs(SHA_TAG)
+    runs[K8S_WORKFLOW] = _runs_payload([(SHA_TAG, 9, "success")])
+    jobs[9] = json.dumps(
+        {
+            "jobs": [
+                {"name": "k8s-certification", "conclusion": "success"},
+                {"name": "k8s-certification", "conclusion": "failure"},
+            ]
+        }
+    )
+    code, evidence = _exec_gate(
+        tmp_path, monkeypatch, FakeActionsApi(runs=runs, jobs=jobs, chain=CHAIN_TAG)
+    )
+    assert code == 1, "one green instance was allowed to answer for a failed one"
+    assert K8S_WORKFLOW not in evidence["evidence"]
+    reason = next(line for line in evidence["failures"] if line.startswith(K8S_WORKFLOW))
+    assert "k8s-certification" in reason and "failure" in reason, reason
+
+
+#: Every (workflow, required job) pair the gate declares. The rule must bind all of
+#: them, not just the one that happened to be observed failing.
+REQUIRED_PAIRS = [
+    (workflow, job) for workflow, jobs in RELEASE_JOBS.items() for job in jobs
+]
+
+
+@pytest.mark.parametrize(
+    "workflow,job", REQUIRED_PAIRS, ids=[f"{w}:{j}" for w, j in REQUIRED_PAIRS]
+)
+def test_the_success_rule_binds_every_required_workflow(
+    workflow: str, job: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same mechanism for GA, K8s, the soak and Linux -- one skipped job each."""
+    runs, jobs = _green_runs(SHA_TAG)
+    runs[workflow] = _runs_payload([(SHA_TAG, 42, "success")])
+    jobs[42] = _jobs_payload(list(RELEASE_JOBS[workflow]), conclusions={job: "skipped"})
+    code, evidence = _exec_gate(
+        tmp_path, monkeypatch, FakeActionsApi(runs=runs, jobs=jobs, chain=CHAIN_TAG)
+    )
+    assert code == 1, f"{workflow}:{job} skipped was still enough to publish"
+    assert evidence["verdict"] == "FAIL"
+    assert workflow not in evidence["evidence"], evidence["evidence"][workflow]
+
+
+def test_the_rule_is_equality_against_success_not_a_blocklist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``unqualified_jobs`` in the gate's own namespace, over conclusions at random.
+
+    Asserted against the executed gate rather than a reimplementation in this file,
+    so a future edit to the rule is what this test finds -- and so an unenumerated
+    conclusion cannot pass by being absent from a list of the bad ones.
+    """
+    namespace: dict = {}
+    runs, jobs = _green_runs(SHA_TAG)
+    code, _ = _exec_gate(
+        tmp_path,
+        monkeypatch,
+        FakeActionsApi(runs=runs, jobs=jobs, chain=CHAIN_TAG),
+        ns_out=namespace,
+    )
+    assert code == 0, "the baseline fixture stopped being eligible evidence"
+    unqualified = namespace["unqualified_jobs"]
+    wanted = ("ga-certification", "supply-chain")
+
+    assert unqualified(wanted, {"ga-certification": ["success"], "supply-chain": ["s"]}) == {
+        "supply-chain": ["s"]
+    }
+    for value in ("skipped", "queued", "stale", None, "", False, 1, "Success"):
+        verdicts = {job: [value] for job in wanted}
+        assert set(unqualified(wanted, verdicts)) == set(wanted), value
+    assert set(unqualified(wanted, {})) == set(wanted), "a job nobody recorded read as fine"
+    assert set(unqualified(wanted, {"ga-certification": [], "supply-chain": ["success"]})) == {
+        "ga-certification"
+    }, "an empty conclusion list was taken as a pass"
+    assert unqualified(wanted, {"ga-certification": ["success", "success"],
+                               "supply-chain": ["success"]}) == {}
 
 
 def test_a_strict_round_that_certified_is_accepted_and_what_was_read_is_recorded(
@@ -1333,13 +1557,13 @@ def test_gate_source_compiles() -> None:
     compile(_gate_source(), "<release certification gate>", "exec")
 
 
-def _gh(path: str, binary: bool = False):
-    """`gh api` as a lookup that can be unavailable, never as a hard failure.
+def _gh_detail(path: str, binary: bool = False) -> tuple[object, str]:
+    """`gh api`, with the reason it did not answer.
 
-    A release's CI verdict cannot depend on this repository's credentials or on
-    the network: no binary, no credential, a rate limit, a job token without
-    Actions reads, or a network that will not answer all come back as None, and
-    the caller skips. The failure mode is "not checked here", never "red".
+    The diagnosis matters as much as the answer: "None" cannot tell an operator
+    whether `gh` is absent, the token lacks the scope, GitHub is degraded, or the
+    response was not JSON. Off CI all four are equally harmless -- the check skips.
+    Inside CI the workflow has *declared* the capability, which is the difference.
     """
     try:
         proc = subprocess.run(  # noqa: S603 -- a known command name, no shell
@@ -1349,29 +1573,85 @@ def _gh(path: str, binary: bool = False):
             errors=None if binary else "replace",
             timeout=120,
         )
-    except (OSError, UnicodeError, subprocess.TimeoutExpired):
-        # gh not installed, or a call that will not finish: a stalled call must
-        # not hold the CI unit job either.
-        return None
+    except (OSError, UnicodeError, subprocess.TimeoutExpired) as error:
+        return None, f"the call itself failed: {type(error).__name__}: {error}"
     if proc.returncode != 0:
-        return None
-    return proc.stdout
+        detail = proc.stderr or b"" if binary else proc.stderr or ""
+        if isinstance(detail, bytes):
+            detail = detail.decode("utf-8", "replace")
+        first = (detail.strip().splitlines() or ["(no stderr)"])[0]
+        return None, f"`gh api` exited {proc.returncode}: {first}"
+    return proc.stdout, "answered"
 
 
-def _gh_json(path: str) -> dict | None:
-    answer = _gh(path)
-    if answer is None:
-        return None
+def _gh(path: str, binary: bool = False):
+    """A lookup that can be unavailable, never a hard failure -- see `_gh_detail`."""
+    return _gh_detail(path, binary)[0]
+
+
+#: Set by the runner itself; the only honest way to know which contract is in force.
+_IN_GITHUB_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
+
+#: A declared capability that does not answer is worth one retry before it is worth a
+#: complaint: a degraded API and a broken contract must not be conflated.
+_LIVE_RETRY_SECONDS = 20
+
+
+def _live(answer: object, path: str, what: str) -> object:
+    """Return the answer, or explain why this check could not run where it claims to.
+
+    Off CI: skip, as before -- no `gh`, no credential, nothing to conclude.
+    In CI: the job declares `permissions: actions: read`, so silence is a finding.
+    Retry once, then fail -- naming both readings rather than picking one, because
+    the difference between "GitHub was degraded" and "the scope changed" is decided
+    by whether a re-run fixes it, not by this file.
+    """
+    if answer is not None:
+        return answer
+    _, diagnosis = _gh_detail(path)
+    if not _IN_GITHUB_ACTIONS:
+        pytest.skip(f"{what} needs the live Actions API, which cannot be read here: {diagnosis}")
+    time.sleep(_LIVE_RETRY_SECONDS)
+    retried, second_diagnosis = _gh_detail(path)
+    if retried is not None:
+        return retried
+    pytest.fail(
+        f"{what} could not read the live Actions API from inside CI, twice "
+        f"({second_diagnosis}; first attempt: {diagnosis}). The `backend` job declares "
+        "`permissions: actions: read`, so this is either the scope changing under us "
+        "(a real contract break: fix the workflow, because the release gate resolves its "
+        "evidence through these same endpoints) or GitHub's API being degraded (re-run "
+        "this job before reading anything into it). Neither reading is a publication "
+        "verdict, and neither may be reported as a skip that hides the question."
+    )
+
+
+def _live_json(path: str, what: str) -> dict:
+    answer = _live(_gh(path), path, what)
     try:
         return json.loads(answer)
-    except json.JSONDecodeError:  # an HTML error page where JSON should be
-        return None
+    except (TypeError, json.JSONDecodeError):  # an HTML error page where JSON should be
+        return _live(None, path, what)  # not an answer: skip or fail by the same rule
 
 
-def _gh_bytes(path: str) -> bytes | None:
-    """The artifact endpoint that answers with a zip, not with JSON."""
-    answer = _gh(path, binary=True)
-    return answer if isinstance(answer, bytes) else None
+def _live_bytes(path: str, what: str) -> bytes:
+    answer = _live(_gh(path, binary=True), path, what)
+    return answer if isinstance(answer, bytes) else _live(None, path, what)
+
+
+def _live_condition(ok: bool, message: str, what: str) -> None:
+    """A data condition a live check cannot proceed past: skip off CI, fail in CI.
+
+    Same rule as a missing answer -- inside the `backend` job the capability is
+    declared, so "no run uploaded the artifact the gate reads" is a finding about the
+    release path, not a reason to report nothing.
+    """
+    if ok:
+        return
+    if not _IN_GITHUB_ACTIONS:
+        pytest.skip(f"{message} -- and this check needs the live Actions API, unreadable here")
+    pytest.fail(f"{message} -- inside CI, where `permissions: actions: read` is declared, "
+                f"this is a finding about {what}, not a skip")
 
 
 def test_the_authoritative_artifact_is_where_the_gate_reads_it() -> None:
@@ -1380,23 +1660,34 @@ def test_the_authoritative_artifact_is_where_the_gate_reads_it() -> None:
     A run that no longer uploads `ga-cert-artifacts`, an artifact whose contents
     moved to another directory inside the zip, or a verdict file that renamed
     `full_ga_certified` would each make the gate refuse every release -- or, if
-    someone "fixed" it by weakening the read, let one through unread. Skips
-    wherever `gh` cannot answer, for the same reason as the check above.
+    someone "fixed" it by weakening the read, let one through unread.
+
+    Two regimes, because the two environments differ in what they promise. Where no
+    `gh` or credential exists -- any developer machine, this repository's own audit
+    host -- the check skips: it has no basis for a verdict. Inside the `backend` CI
+    job, which declares `permissions: actions: read`, silence is a finding and the
+    check fails with the diagnosis, because that is precisely the case where the
+    release gate's live read path is supposed to have been validated.
     """
-    listing = _gh_json(
+    listing = _live_json(
         f"repos/{REPO_SLUG}/actions/workflows/cap-ga-certification.yml"
-        "/runs?per_page=10&status=completed"
+        "/runs?per_page=10&status=completed",
+        "listing the GA certification runs",
     )
-    runs = (listing or {}).get("workflow_runs") or []
-    if not runs:
-        pytest.skip("gh could not list GA certification runs from here")
+    runs = listing.get("workflow_runs") or []
+    _live_condition(bool(runs), "the GA certification workflow has no completed runs listed",
+                    "the gate's run resolution")
     checked = 0
     for run in runs:
-        artifacts = _gh_json(
-            f"repos/{REPO_SLUG}/actions/runs/{run['id']}/artifacts?per_page=100"
+        artifacts = _live_json(
+            f"repos/{REPO_SLUG}/actions/runs/{run['id']}/artifacts?per_page=100",
+            "listing a run's artifacts",
         )
-        if not artifacts or "artifacts" not in artifacts:
-            pytest.skip("gh could not list a run's artifacts from here")
+        _live_condition(
+            "artifacts" in artifacts,
+            f"run {run['id']} answered the artifacts endpoint without an `artifacts` list",
+            "the gate's artifact resolution",
+        )
         named = [
             artifact
             for artifact in artifacts["artifacts"]
@@ -1413,9 +1704,10 @@ def test_the_authoritative_artifact_is_where_the_gate_reads_it() -> None:
         artifact = named[0]
         if artifact.get("expired"):
             continue
-        blob = _gh_bytes(f"repos/{REPO_SLUG}/actions/artifacts/{artifact['id']}/zip")
-        if blob is None:
-            pytest.skip("gh could not download the artifact zip from here")
+        blob = _live_bytes(
+            f"repos/{REPO_SLUG}/actions/artifacts/{artifact['id']}/zip",
+            "downloading the authoritative artifact",
+        )
         members = [
             name
             for name in zipfile.ZipFile(io.BytesIO(blob)).namelist()
@@ -1438,37 +1730,50 @@ def test_the_authoritative_artifact_is_where_the_gate_reads_it() -> None:
             "gate's binding check would refuse a certification it should accept"
         )
         break
-    if not checked:
-        pytest.skip("no recent GA run in this repository's history uploaded the artifact")
+    _live_condition(
+        checked > 0,
+        "no recent GA certification run in this repository's history uploaded the artifact "
+        "the release gate reads",
+        "every future release",
+    )
 
 
 def test_the_actions_api_paths_the_gate_uses_exist() -> None:
     """The canned fixtures prove the logic; this proves the real shapes.
 
-    Skips when ``gh`` cannot answer: no binary, no credential, a rate limit, or a
-    job token whose scopes do not include Actions reads. A release's CI verdict
-    cannot depend on this repository's credentials or on the network, so the
-    failure mode is always "not checked here", never "red". It ran for real on the
-    audit host and produced the evidence cited in §23 F-21 of the certification
-    report, and the gate's live execution is recorded beside it.
+    Off CI, no answer means no basis: no binary, no credential, a rate limit, a job
+    token without Actions reads, or a network that will not answer, and the check
+    skips. In CI the scope is declared, so the same silence fails with both readings
+    named -- a changed scope is a contract break the release path shares, a degraded
+    API is a re-run, and neither may be reported as a skip that hides the question.
+    It ran for real on the audit host and produced the evidence cited in §23 F-21 of
+    the certification report; batch 1's remote validation recorded it skipping in CI
+    for want of `actions: read`, which is the gap this job's permissions now close.
     """
-    runs = _gh_json(
+    runs = _live_json(
         f"repos/{REPO_SLUG}/actions/workflows/cap-k8s-certification.yml"
-        "/runs?per_page=5&status=completed"
+        "/runs?per_page=5&status=completed",
+        "listing the K8s certification runs",
     )
-    if not runs or not runs.get("workflow_runs"):
-        pytest.skip(
-            "gh could not answer the live Actions API here (no binary, no "
-            "credential, a rate limit, or insufficient scopes)"
-        )
+    _live_condition(
+        bool(runs.get("workflow_runs")),
+        "the K8s certification workflow has no completed runs listed",
+        "the gate's run resolution",
+    )
     first = runs["workflow_runs"][0]
     assert {"id", "head_sha", "conclusion", "html_url"} <= set(first), (
         "the Actions API stopped returning the fields the gate resolves "
         "evidence by -- re-read its shape before shipping a release"
     )
-    jobs = _gh_json(f"repos/{REPO_SLUG}/actions/runs/{first['id']}/jobs?per_page=100")
-    if not jobs or not jobs.get("jobs"):
-        pytest.skip("gh could not answer the jobs endpoint from here")
+    jobs = _live_json(
+        f"repos/{REPO_SLUG}/actions/runs/{first['id']}/jobs?per_page=100",
+        "listing a run's jobs",
+    )
+    _live_condition(
+        bool(jobs.get("jobs")),
+        f"run {first['id']} listed no jobs",
+        "the gate's release-job-set check",
+    )
     assert {"name", "conclusion"} <= set(jobs["jobs"][0]), (
         "the jobs endpoint shape the gate reads for the release job set changed"
     )

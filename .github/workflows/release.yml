@@ -97,12 +97,15 @@ jobs:
           TAG_SHA = os.environ["CERT_TAG_SHA"]
           REPO = os.environ["CERT_REPOSITORY"]
           OUT = pathlib.Path("outputs/cap-cert-release")
-          #: Workflow -> the jobs that must be present and successful in it. A
-          #: green run of the Linux workflow with only its PR layer executed is
-          #: not release evidence, so the job set is checked, not the run colour.
-          #: `postgres-version-matrix` legs share the base name and all legs
-          #: must be green; a job skipped by its `if` is absent, hence "missing".
-          #: Which jobs ran is still not what they decided -- see AUTHORITY.
+          #: Workflow -> the jobs that must be present in it, each with nothing but a
+          #: "success" conclusion. A green run of the Linux workflow with only its PR
+          #: layer executed is not release evidence, so the job set is checked, not the
+          #: run colour. `postgres-version-matrix` legs share the base name, so every
+          #: recorded conclusion has to be a success. Measured, not assumed: a job
+          #: skipped by its `if` is *present* in the jobs listing with
+          #: `conclusion: "skipped"` -- it does not disappear, which is what an earlier
+          #: note here claimed and what let run 35594554182 (F-42) look like evidence.
+          #: Which jobs succeeded is still not what they decided -- see AUTHORITY.
           REQUIRED = {
               "cap-linux-certification.yml": (
                   "cap-production-certification",
@@ -222,6 +225,30 @@ jobs:
               return verdicts
 
 
+          def unqualified_jobs(
+              wanted: tuple[str, ...], verdicts: dict[str, list[str]]
+          ) -> dict[str, list]:
+              """Required jobs this run cannot stand behind, with what they recorded.
+
+              The test is equality against ``"success"``, never membership in a
+              blocklist: ``skipped``, ``failure``, ``cancelled``, ``timed_out``,
+              ``action_required``, ``neutral``, ``stale``, a still-``None``
+              conclusion or a value Actions invents next are all equally not a pass,
+              and an empty list -- a job that was never recorded -- fails the same
+              way. Matrix legs share a base name, so *all* their conclusions have to
+              be a success: a run whose legs are two green and one cancelled is not
+              evidence, and picking the green one would be the gate reading its own
+              preference into the record. Nothing here changes which run is chosen;
+              it only refuses to call an unexecuted job an executed one.
+              """
+              return {
+                  job: verdicts.get(job) or []
+                  for job in wanted
+                  if not verdicts.get(job)
+                  or any(conclusion != "success" for conclusion in verdicts[job])
+              }
+
+
           def completed_runs(workflow: str) -> tuple[list[dict], bool]:
               """Recent completed runs, plus a window-immune probe of the tag.
               The listing is one page: a busy workflow (the Linux certification
@@ -248,6 +275,7 @@ jobs:
               """Newest commit on the chain with a run of every required job."""
               runs, window_full = completed_runs(workflow)
               wanted = REQUIRED[workflow]
+              passed_over: list[dict] = []
               for distance, sha in enumerate(chain):
                   for run in runs:
                       if run.get("head_sha") != sha or run.get("conclusion") != "success":
@@ -261,6 +289,24 @@ jobs:
                               file=sys.stderr,
                           )
                           continue
+                      # F-42: presence is not execution. A job skipped by its `if`
+                      # is listed with conclusion "skipped", so a run can be green,
+                      # carry every required name, and still never have run a release
+                      # gate. Passing such a run over keeps the existing walk-back
+                      # policy intact -- it just no longer mistakes the colour.
+                      unqualified = unqualified_jobs(wanted, verdicts)
+                      if unqualified:
+                          recorded = {job: verdicts[job] for job in unqualified}
+                          passed_over.append(
+                              {"run_id": run["id"], "sha": sha, "jobs": recorded}
+                          )
+                          print(
+                              f"  {workflow} run {run['id']} at {sha[:8]} is green but "
+                              f"did not execute its release job set successfully: "
+                              f"{recorded}",
+                              file=sys.stderr,
+                          )
+                          continue
                       return {
                           "sha": sha,
                           "distance": distance,
@@ -269,7 +315,12 @@ jobs:
                           "runs_examined": len(runs),
                           "jobs": {job: verdicts[job] for job in wanted},
                       }
-              return {"missing": True, "runs_examined": len(runs), "window_full": window_full}
+              return {
+                  "missing": True,
+                  "runs_examined": len(runs),
+                  "window_full": window_full,
+                  "ineligible": passed_over[:5],
+              }
 
 
           def authoritative_artifact(workflow: str, found: dict) -> dict:
@@ -477,12 +528,24 @@ jobs:
                           if found["window_full"]
                           else ""
                       )
+                      unqualified_note = ""
+                      if found.get("ineligible"):
+                          first = found["ineligible"][0]
+                          jobs = ", ".join(
+                              f"{job}={conclusions}"
+                              for job, conclusions in first["jobs"].items()
+                          )
+                          unqualified_note = (
+                              f" -- {len(found['ineligible'])} green run(s) passed over "
+                              f"for not executing the release job set (newest: run "
+                              f"{first['run_id']} at {first['sha'][:8]}: {jobs})"
+                          )
                       failures.append(
                           f"{workflow}: no completed successful run with jobs "
                           f"{list(REQUIRED[workflow])} for this commit or any of its "
                           f"{len(chain)} nearest ancestors, in the "
                           f"{found['runs_examined']} most recent completed runs "
-                          f"examined{caveat}"
+                          f"examined{caveat}{unqualified_note}"
                       )
                       print(f"{workflow}: NO CERTIFICATION EVIDENCE", file=sys.stderr)
                       continue
