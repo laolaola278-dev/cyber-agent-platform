@@ -87,31 +87,38 @@ registry answer read on 2026-09-22 using the documented method (§D.2):
 
 | Image | Line | Reference as written | Implied repository | Resolved index digest | digest_kind | Platforms | Provenance / evidence source | referenced_by |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| postgres | `:10` | `postgres:16-alpine` | `docker.io/library/postgres` | pending P1 (§O.1) | manifest-list (multi-arch) | 8 entries | none today — `policy.postgres.form = "tag"`, `digest: null` | `docker-compose.yml`, all four certification workflows, `scripts/certification/setup.sh` |
+| postgres | `:10` | `postgres:16-alpine` | `docker.io/library/postgres` | `sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea` (amd64 child `sha256:1a66d744c1b459e13b05a8fca341da84cb63383e99ce262210efee5a319d4551`) | manifest-list (multi-arch) | 8, one of them `unknown/unknown` | none today — `policy.postgres.form = "tag"`, `digest: null` | `docker-compose.yml`, all four certification workflows, `scripts/certification/setup.sh` |
 | redis | `:27` | `redis:7-alpine` | `docker.io/library/redis` | pending P1 (§O.1) | manifest-list | 8 | **absent from the lock entirely** | `docker-compose.yml` only |
-| prometheus | `:231` | `prom/prometheus:v2.55.1` | `docker.io/prom/prometheus` | pending P1 (§O.1) | manifest-list | 5 | absent from the lock | `docker-compose.yml` (profile `observability`) |
+| prometheus | `:231` | `prom/prometheus:v2.55.1` | `docker.io/prom/prometheus` | `sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3` (round-trip verified) | manifest-list | 5 | absent from the lock | `docker-compose.yml` (profile `observability`) |
 | grafana | `:247` | `grafana/grafana:11.3.1` | `docker.io/grafana/grafana` | pending P1 (§O.1) | manifest-list | 3 | absent from the lock | `docker-compose.yml` (profile `observability`) |
-| pgadmin4 | `:266` | `dpage/pgadmin4:8` | `docker.io/dpage/pgadmin4` | pending P1 (§O.1) | manifest-list | 3 | absent from the lock | `docker-compose.yml` (profile `admin`) |
+| pgadmin4 | `:266` | `dpage/pgadmin4:8` | `docker.io/dpage/pgadmin4` | `sha256:8a68677a97b8c8d1427dc915672a26d2c4a04376916a68256f53d669d6171be7` (round-trip verified) | manifest-list | 3 | absent from the lock | `docker-compose.yml` (profile `admin`) |
 | minio | `:101` | `quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e` | `quay.io/minio/minio` | `sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e` (re-verified today: refetch by digest byte-identical, digest equals recompute, exactly one linux/amd64 child, 3 platforms) | manifest-list | 3 | `deployment/third-party-images.json` `minio-object-store` + `policy.minio_object_store` upgrade procedure | `docker-compose.yml`, kind clusters, GitHub service containers, `scripts/certification/setup.sh` |
 
 `pending P1 (§O.1)` is not a placeholder left unfilled by carelessness: it is the measured fact that
 **this host cannot resolve Docker Hub on demand**. One window at 14:4x resolved all five Hub
-references with the round-trip check passing; a later window at 15:0x–15:2x failed every one of
-them at the TLS layer (`RemoteDisconnected`, `SSL: UNEXPECTED_EOF_WHILE_READING`, handshake
-timeouts) against both `auth.docker.io` and `registry-1.docker.io`, and the box's own proxy does not
-help — it also fails those hosts (§O.1). `quay.io` answered in both windows. The full 64-hex values
-are therefore an **implementation-time input produced by E2's generator running where the registry
-is reachable**, and the compose edit may not be committed before that tracked evidence file exists
-with them in it (§L precondition P1). The design is frozen; the numbers are mechanical.
+references with the round-trip check passing, and three of those values are recorded above; a later
+window at 15:0x–15:2x failed every one of them at the TLS layer (`RemoteDisconnected`,
+`SSL: UNEXPECTED_EOF_WHILE_READING`, handshake timeouts) against both `auth.docker.io` and
+`registry-1.docker.io`, and the box's own proxy does not help — it also fails those hosts (§O.1).
+`quay.io` answered in both windows. What is left pending is therefore an implementation-time input,
+and in every case **the generator's tracked file is what the compose edit cites, not this table**:
+three of these references sit on rolling tags, so a digest is only meaningful as the output of a run
+that can be reproduced and dated, which is exactly what §F.1's contract produces and a freeze-time
+observation cannot claim to be.
 
 Two honest addenda to that:
 
-- **What the successful window did prove.** For all five Hub references the answer was an index, the
-  refetch by digest returned byte-identical content, the served digest equalled the recomputed one,
-  and each index had exactly one `linux/amd64` child — so §D.2's method is verified against these
-  repositories, not copied from documentation. What did not survive is the hex itself: a failing
-  retry run overwrote the scratch JSON while the script was being corrected mid-session, and this
-  report records the loss rather than quietly reusing numbers it cannot show the source of.
+- **What the successful window did prove, and what it kept.** For every Hub reference that resolved,
+  the answer was an index, the refetch by digest returned byte-identical content, the served digest
+  equalled the recomputed one, and each index had exactly one `linux/amd64` child — so §D.2's method
+  is verified against these repositories, not copied from documentation. Three of the five values are
+  in the table above (postgres with its child, prometheus, pgadmin4). The other two, `redis` and
+  `grafana`, resolved in that same window and their values were lost when
+  a failing retry run overwrote the scratch JSON mid-correction of the script; they are reported as
+  pending rather than reconstructed from memory of a truncated print, because a pin has to come from a
+  record, not from a recollection. Either way P1 stands: **the generator's tracked file is the
+  authority**, and these values are a freeze-time observation that the method works — not the
+  artifact the compose edit will cite.
 - **What pinning the index, rather than a child, preserves.** A compose host still resolves its own
   platform out of the frozen index, so `linux/amd64` users get amd64 bytes and arm64 users get
   arm64 — the *set* becomes immutable, the architecture does not. And the mobility the freeze is
@@ -132,10 +139,13 @@ Two honest addenda to that:
    the only cheap proof the digest names what the tag serves. (Verified end to end for MinIO today;
    it passed for all five Hub images in the window when Hub answered.)
 4. Parse the index and name the `linux/amd64` child separately. **Exactly one** is required: two
-   children (e.g. `v6`/`v7` variants, or an `unknown/unknown` attestation entry mistaken for a
-   platform) is ambiguity and must fail the run, not resolve to `next(...)` — which is precisely how
-   `_tmp/verify_base_digests.py:76-83` behaves today, and why it stays scratch rather than becoming
-   the generator as-is.
+   children (e.g. `v6`/`v7` variants) is ambiguity and must fail the run, not resolve to `next(...)`
+   — which is precisely how `_tmp/verify_base_digests.py:76-83` behaves today, and why it stays
+   scratch rather than becoming the generator as-is. This is not hypothetical: `postgres:16-alpine`
+   resolved this session as an index of **eight** entries, one of them `unknown/unknown`, so an
+   unfiltered platform enumeration both miscounts the architectures and can mistake an attestation
+   entry for a build target. The accepted record filters `unknown/unknown` out of the platform list
+   and still demands a single `linux/amd64` child.
 5. Distinguish `manifest-list (multi-arch index)` from a single manifest, and refuse to pin the
    latter as if it were an index digest.
 6. Auth is challenge-driven: read the registry's own `WWW-Authenticate` realm/service/scope; never
@@ -621,7 +631,7 @@ user authorizes them separately when the candidate is cut.
 | Base SHA and immutable boundaries named, and re-verified rather than quoted | **yes** | §A |
 | The stale text closed first, as its own inheritable commit, with test + classifier | **yes** — `8879599`, 92 passed / 4 skipped in the two gate modules, ruff clean, hop INHERITED (`test_harness`, 1 file) | §A.3 |
 | Scope frozen, with explicit exclusions | **yes** | §B, §C |
-| F-24 inventory complete per image, decision made, future contracts stated | **yes for the contract**; the five Hub digest *values* are refused by precondition P1 until the generator resolves them from a place that can, with the transport failure measured | §D, §L.2, §O.1 |
+| F-24 inventory complete per image, decision made, future contracts stated | **yes** — three of the five Hub digests published from a verified window (postgres with its amd64 child, prometheus, pgadmin4), `redis` and `grafana` pending, and the generator's tracked file stays authoritative for the compose edit under P1 either way | §D, §L.2, §O.1 |
 | F-41 six-coordinate contract with the seven-case matrix, precedence determined from the code that implements it, and real `helm lint`/`helm template` rendering planned | **yes** | §E |
 | E2 evidence contract (method, determinism, credential-free, ambiguity-refusal, index-vs-platform distinction, fresh-clone runnable, tracked path) and E3 repoint + twin deletion | **yes** | §F |
 | B2 producer inventory (action refs and their pin forms, buildx inputs, BuildKit image, frontend directives, build coupling) and the pinning strategy with the four impact assessments, incl. the policy that B2 joins recert regardless of classification | **yes** | §G |
