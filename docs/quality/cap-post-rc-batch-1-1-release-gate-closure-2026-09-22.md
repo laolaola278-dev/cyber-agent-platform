@@ -457,13 +457,16 @@ response saved to `_tmp/b11/sealed_audit_after_push2.json`):
    `0561a7e`, pushed, and CI run `35689729682` at that head returned **success** with both checks
    executed and passed (§K.1). Nothing was muted, skipped or narrowed to get there — the 133 skips
    are the same set as in the red run.
-2. **One sentence is now stale, and was left alone deliberately.** The docstring of
-   `test_the_actions_api_paths_the_gate_uses_exist` still ends "…which is the gap this job's
-   permissions now close". The measurement says otherwise: `actions: read` alone did not close it,
-   the step-level `GH_TOKEN` did (§K.1, and §F's correction in batch 1's remote-validation report).
-   It is not fixed in this round because editing code after the green run would move `HEAD` off the
-   tip CI validated; it belongs to the next CI cycle, where the classifier can see it as the
-   `test_harness`-only change it is.
+2. **Closed by `8879599`, one stage later.** The docstring of
+   `test_the_actions_api_paths_the_gate_uses_exist` used to end "…which is the gap this job's
+   permissions now close" — a half-truth the measurements contradict (`actions: read` alone left the
+   check failing on `gh`'s exit 4; §K.1 shows what actually closed it). It was deliberately left
+   during this round because editing code after the green run would move `HEAD` off the validated
+   tip, and Batch 2's design-freeze stage then authorised closing it: `8879599` replaces the sentence
+   with the two-part fact — scope authorizes the request, `GH_TOKEN` authenticates the client, both
+   required. 92 passed / 4 skipped across the two gate modules, ruff clean, and the hop classifies
+   INHERITED with the single file in `test_harness`. What stays open is the live read path's
+   execution *at tag time* (§M.4), not this wording.
 3. **B3 still waits on the five design questions** now written down (identity required? source?
    machine verifier? subject = index or platform digest? failure policy?), and B4 remains a separate
    security decision. B2 pinning is unchanged. None of them was started here.
@@ -516,8 +519,11 @@ What this verdict does **not** claim, stated as plainly as what it does:
   `+0`, confirm its recorded `commit` is this very SHA, and then reject it on four things it says
   about itself. So the block is not staleness, distance or a colour — it is certification's content
   requirement, and no development round can satisfy it.
-- **The stale sentence in §M.2** stays in the tree, on purpose, with its correction written down here
-  rather than a code edit slipping past the tip CI validated.
+- **The wording in §M.2 was resolved afterwards, not here.** During this round the stale sentence
+  stayed in the tree deliberately, and §M.2 now records that `8879599` (Batch 2's design-freeze
+  stage, a `test_harness`-only inheritable hop) replaced it. The round's own history — left in place,
+  then closed one stage later on a measured basis — is the point, so it is written as a follow-up
+  rather than edited out.
 - Nothing was loosened to obtain the green: no test deleted, narrowed, skipped or re-marked, no
   expectation edited, no gate weakened. The two checks that had to become truthful became truthful by
   being handed the credential they read with, and the one that failed because it had been told a
