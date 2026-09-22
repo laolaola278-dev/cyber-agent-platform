@@ -25,10 +25,15 @@ tolerations:
 
 backend:
   replicaCount: 3
+  # One contract for every image coordinate in this chart (F-41): `tag` alone,
+  # `digest` alone, or both -- and when both are given the digest is what renders,
+  # because it is the only form that cannot move under a running cluster. An empty
+  # or malformed digest is refused by values.schema.json rather than ignored, which is
+  # why no empty digest placeholder is written below: the released
+  # values-release-<version>.yaml writes the digests this release recorded.
   image:
     repository: ghcr.io/example/cap-backend
     tag: "1.0.6-rc1"
-    digest: ""
     pullPolicy: IfNotPresent
   service:
     port: 8000
@@ -78,7 +83,6 @@ worker:
   image:
     repository: ghcr.io/example/cap-backend
     tag: "1.0.6-rc1"
-    digest: ""
     pullPolicy: IfNotPresent
   existingSecret: cap-runtime
   command: ["python", "-m", "app.acquisition.worker_main"]
@@ -114,11 +118,9 @@ worker:
     image:
       repository: ghcr.io/example/cap-sandbox-http
       tag: "1.0.6-rc1"
-      digest: ""
     browserImage:
       repository: ghcr.io/example/cap-sandbox-browser
       tag: "1.0.6-rc1"
-      digest: ""
     shimPort: "8080"
     podReadyTimeoutSeconds: "90"
     # v1.0.1: the worker now FAILS FAST in production without enforced egress.
@@ -151,7 +153,6 @@ frontend:
   image:
     repository: ghcr.io/example/cap-frontend
     tag: "1.0.6-rc1"
-    digest: ""
     pullPolicy: IfNotPresent
   service:
     port: 80
@@ -204,6 +205,5 @@ egressProxy:
   image:
     repository: ghcr.io/example/cap-egress-proxy
     tag: "1.0.6-rc1"
-    digest: ""
   resources:
     requests: {cpu: 50m, memory: 64Mi}

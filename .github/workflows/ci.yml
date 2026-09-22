@@ -221,6 +221,62 @@ jobs:
           helm lint deployment/helm/cap
           helm template cap deployment/helm/cap --namespace cap > rendered-cap.yaml
           helm package deployment/helm/cap --destination dist
+      # F-41: the contract all six image coordinates share, rendered with the helm
+      # that ships the chart. `helm lint` above only ever sees the chart defaults,
+      # so the shapes an operator may write -- and the ones that must be refused --
+      # are exercised here against the real values.schema.json. Each accepted case
+      # also sets a unique repository, so the assertion is about the *rendered image
+      # string* the cluster would pull rather than about a values file that parsed.
+      - name: Assert every image coordinate shape renders
+        run: |
+          set -euo pipefail
+          PATHS="backend.image worker.image frontend.image worker.sandbox.image worker.sandbox.browserImage egressProxy.image"
+          DIGEST="sha256:$(printf 'ab%.0s' $(seq 1 64))"
+          run_case() {
+            local -a args=()
+            for p in $PATHS; do
+              args+=(--set "$p.repository=p-$p")
+              for kv in "$@"; do
+                case "$kv" in
+                  tag)    args+=(--set "$p.tag=v9.9.9") ;;
+                  notag)  args+=(--set "$p.tag=null") ;;
+                  digest) args+=(--set-string "$p.digest=$DIGEST") ;;
+                  nodigest) args+=(--set-string "$p.digest=null") ;;
+                esac
+              done
+            done
+            helm template cap deployment/helm/cap --namespace cap "${args[@]}"
+          }
+          expect_image() {  # $1 = rendered file, $2 = coordinate, $3 = expected reference
+            grep -qF "$3" "$1" || { echo "$2: expected to render $3"; exit 1; }
+          }
+
+          run_case tag repo > tag-only.yaml
+          run_case digest notag repo > digest-only.yaml
+          run_case tag digest repo > both.yaml
+          for p in $PATHS; do
+            expect_image tag-only.yaml "$p" "p-$p:v9.9.9"
+            expect_image digest-only.yaml "$p" "p-$p@$DIGEST"
+            # Both given: the digest is what the cluster pulls, not the tag.
+            expect_image both.yaml "$p" "p-$p@$DIGEST"
+            if grep -qF "p-$p:v9.9.9" both.yaml; then
+              echo "$p: rendered a tag beside a digest -- the digest must win"; exit 1
+            fi
+          done
+
+          refuse() {  # $1 = label, remaining = the --set arguments that must be refused
+            local label="$1"; shift
+            if helm template cap deployment/helm/cap --namespace cap "$@" >/dev/null 2>&1; then
+              echo "the chart accepted $label"; exit 1
+            fi
+          }
+          for p in $PATHS; do
+            refuse "$p with no tag and no digest" --set "$p.tag=null" --set-string "$p.digest=null"
+            refuse "$p with an empty tag" --set-string "$p.tag=" --set-string "$p.digest=null"
+            refuse "$p with an empty digest" --set "$p.tag=null" --set-string "$p.digest="
+            refuse "$p with a malformed digest" --set-string "$p.digest=sha256:abc"
+          done
+          echo "the chart rendered the three accepted shapes and refused the unusable ones"
       # v1.0.1 PATCH-GATE 6: the chart is the shipped production template,
       # so its *rendered* security defaults are asserted here. A future edit
       # that reintroduces an empty egress address or a weak sandbox provider

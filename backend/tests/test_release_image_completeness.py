@@ -1162,18 +1162,130 @@ def test_the_released_values_satisfy_the_chart_schema(
         )
         _assert_matches_schema(node, _lookup(rendered, dotted), dotted)
 
-    # The asymmetry the checker also makes visible: four of the six coordinates
-    # accept a digest-only pin through `anyOf`; `backend.image` and `worker.image`
-    # require `tag`, so an operator pinning the API or the acquisition worker by
-    # digest alone is refused by the contract the sandboxes satisfy. Recorded as
-    # F-41 rather than fixed, because fixing it edits a file under deployment/,
-    # which the classifier charges as runtime-affecting.
-    digest_only = {
-        "repository": "ghcr.io/cap-owner/cap-backend",
-        "digest": "sha256:" + "ab" * 32,
-    }
-    _assert_matches_schema(_schema_at(schema, "worker.sandbox.image"), digest_only,
-                           "worker.sandbox.image")
-    with pytest.raises(AssertionError, match="required"):
-        _assert_matches_schema(_schema_at(schema, "backend.image"), digest_only,
-                               "backend.image")
+#: The six coordinates share one contract now (F-41), so the matrix is evaluated
+#: against the shapes an operator can write rather than restated beside them. Each
+#: case is checked twice -- against the node that used to demand a tag and against
+#: the one that never did -- because that difference *was* the finding, and a
+#: checker that quietly stopped evaluating a keyword would pass all of these.
+ACCEPTED_COORDINATES = [
+    pytest.param({"repository": "ghcr.io/cap/backend", "tag": "1.2.3"}, id="tag-only"),
+    pytest.param({"repository": "ghcr.io/cap/backend",
+                  "digest": "sha256:" + "ab" * 32}, id="digest-only"),
+    pytest.param({"repository": "ghcr.io/cap/backend", "tag": "1.2.3",
+                  "digest": "sha256:" + "ab" * 32}, id="tag-and-digest"),
+]
+
+REJECTED_COORDINATES = [
+    pytest.param({"repository": "ghcr.io/cap/backend"}, id="neither-coordinate"),
+    pytest.param({"repository": "ghcr.io/cap/backend", "tag": ""}, id="empty-tag"),
+    pytest.param({"repository": "ghcr.io/cap/backend", "digest": ""}, id="empty-digest"),
+    pytest.param({"repository": "ghcr.io/cap/backend",
+                  "digest": "sha256:abc"}, id="too-short-digest"),
+    pytest.param({"repository": "ghcr.io/cap/backend", "tag": "1.2.3",
+                  "digest": "sha512:" + "ab" * 64}, id="wrong-algorithm-digest"),
+    pytest.param({"tag": "1.2.3"}, id="no-repository"),
+]
+
+#: The two nodes whose contracts differed when F-41 was filed. The uniformity test
+#: below covers all six; these two are the pair a regression would show up on.
+CONTRAST_PAIR = ("backend.image", "worker.sandbox.image")
+
+
+def _declared_coordinates() -> list[str]:
+    declared = sorted({key.split(":", 1)[1] for key in chart_images()
+                       if key.startswith("values.yaml:")})
+    assert declared, "the chart declares no image coordinates"
+    return declared
+
+
+def _coordinate_node(dotted: str) -> dict:
+    return _schema_at(json.loads(SCHEMA.read_text("utf-8")), dotted)
+
+
+def test_the_six_image_coordinates_share_one_contract() -> None:
+    """F-41: `backend.image` once required a tag the sandboxes did not need.
+
+    The asymmetry was not cosmetic. An operator pinning the API by digest alone was
+    refused by the contract the sandbox images satisfy, so one release artifact
+    could be pinned in one place and merely tagged in another. Uniformity is
+    asserted structurally -- same `required`, same `anyOf`, same two patterns -- so
+    editing one node into a different shape is caught as a set difference.
+    """
+    paths = _declared_coordinates()
+    assert len(paths) == 6, paths
+    shapes = {json.dumps({
+        "required": node["required"],
+        "anyOf": node["anyOf"],
+        "repository": node["properties"]["repository"],
+        "tag": node["properties"]["tag"],
+        "digest": node["properties"]["digest"],
+    }, sort_keys=True) for node in map(_coordinate_node, paths)}
+    assert len(shapes) == 1, f"the six coordinate contracts drifted apart: {shapes}"
+    shape = json.loads(next(iter(shapes)))
+    assert shape["required"] == ["repository"], (
+        f"only the repository is unconditional; required is {shape['required']}"
+    )
+    assert "oneOf" not in json.dumps(shape), (
+        "oneOf would make tag+digest illegal, and the released values file writes both"
+    )
+    assert {branch["required"][0] for branch in shape["anyOf"]} == {"tag", "digest"}, shape
+    assert shape["digest"]["pattern"] == "^sha256:[0-9a-f]{64}$", (
+        "a digest pattern that accepts fewer than 64 hex characters, or a bare "
+        "empty string, is how a placeholder becomes a pin")
+
+
+def path_get(document: dict, dotted: str) -> dict:
+    node: object = document
+    for part in dotted.split("."):
+        node = (node.get(part) or {}) if isinstance(node, dict) else {}
+    return node if isinstance(node, dict) else {}
+
+
+@pytest.mark.parametrize("coordinate", ACCEPTED_COORDINATES)
+def test_both_formerly_divergent_coordinates_accept_the_same_forms(coordinate: dict) -> None:
+    for dotted in CONTRAST_PAIR:
+        _assert_matches_schema(_coordinate_node(dotted), coordinate, dotted)
+
+
+@pytest.mark.parametrize("coordinate", REJECTED_COORDINATES)
+def test_both_formerly_divergent_coordinates_refuse_the_same_forms(coordinate: dict) -> None:
+    for dotted in CONTRAST_PAIR:
+        with pytest.raises(AssertionError):
+            _assert_matches_schema(_coordinate_node(dotted), coordinate, dotted)
+
+
+def test_the_chart_defaults_themselves_satisfy_the_contract() -> None:
+    """`helm lint` validates `values.yaml` against the schema; so does this.
+
+    The chart's own defaults are what every certification round installs, and the
+    empty-digest placeholders were part of the contract they proved -- removing a
+    default has to leave the file valid, not merely shorter.
+    """
+    values = yaml.safe_load((CHART / "values.yaml").read_text("utf-8"))
+    # Structural, not textual: an empty digest is a *value* the chart must not
+    # carry, and a comment in the file is free to say the words.
+    empties = sorted(path for path in _declared_coordinates()
+                     if (path_get(values, path) or {}).get("digest") == "")
+    assert not empties, f"{empties} still default to an empty digest"
+    for dotted in _declared_coordinates():
+        node = _coordinate_node(dotted)
+        value = _lookup(values, dotted)
+        assert value, f"{dotted} declares a contract and no default to check"
+        _assert_matches_schema(node, value, dotted)
+
+
+def test_the_digest_is_the_coordinate_the_chart_renders() -> None:
+    """`cap.imageRef` precedence, read out of the helper rather than restated.
+
+    The schema cases prove an operator may *write* both coordinates; only the
+    template says which one the cluster pulls. CI's `packaging` job renders both
+    with the real helm and asserts the string -- this asserts the helper still
+    tests the digest first, so that rendering is a contract and not an accident
+    of key order a later refactor could flip.
+    """
+    helper = (CHART / "templates" / "_helpers.tpl").read_text("utf-8")
+    block = helper.split('define "cap.imageRef"', 1)[1].split("{{- end -}}", 1)[0]
+    assert "$image.digest" in block and "$image.tag | default" in block, block
+    assert block.index("$image.digest") < block.index("$image.tag | default"), (
+        "the tag branch moved in front, so a released digest would be ignored")
+    assert '"%s@%s"' in block, "the digest is no longer rendered as repository@digest"

@@ -29,8 +29,7 @@
         "image": {
           "type": "object",
           "required": [
-            "repository",
-            "tag"
+            "repository"
           ],
           "properties": {
             "repository": {
@@ -43,9 +42,31 @@
             },
             "digest": {
               "type": "string",
-              "pattern": "^$|^sha256:[0-9a-f]{16,}$"
+              "pattern": "^sha256:[0-9a-f]{64}$"
             }
-          }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "tag"
+              ],
+              "properties": {
+                "tag": {
+                  "minLength": 1
+                }
+              }
+            },
+            {
+              "required": [
+                "digest"
+              ],
+              "properties": {
+                "digest": {
+                  "minLength": 1
+                }
+              }
+            }
+          ]
         },
         "hpa": {
           "type": "object",
@@ -98,8 +119,7 @@
         "image": {
           "type": "object",
           "required": [
-            "repository",
-            "tag"
+            "repository"
           ],
           "properties": {
             "repository": {
@@ -112,9 +132,31 @@
             },
             "digest": {
               "type": "string",
-              "pattern": "^$|^sha256:[0-9a-f]{16,}$"
+              "pattern": "^sha256:[0-9a-f]{64}$"
             }
-          }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "tag"
+              ],
+              "properties": {
+                "tag": {
+                  "minLength": 1
+                }
+              }
+            },
+            {
+              "required": [
+                "digest"
+              ],
+              "properties": {
+                "digest": {
+                  "minLength": 1
+                }
+              }
+            }
+          ]
         },
         "command": {
           "type": "array",
@@ -174,7 +216,7 @@
                 },
                 "digest": {
                   "type": "string",
-                  "pattern": "^$|^sha256:[0-9a-f]{16,}$"
+                  "pattern": "^sha256:[0-9a-f]{64}$"
                 }
               },
               "anyOf": [
@@ -216,7 +258,7 @@
                 },
                 "digest": {
                   "type": "string",
-                  "pattern": "^$|^sha256:[0-9a-f]{16,}$"
+                  "pattern": "^sha256:[0-9a-f]{64}$"
                 }
               },
               "anyOf": [
@@ -299,7 +341,7 @@
             },
             "digest": {
               "type": "string",
-              "pattern": "^$|^sha256:[0-9a-f]{16,}$"
+              "pattern": "^sha256:[0-9a-f]{64}$"
             }
           },
           "anyOf": [
@@ -404,7 +446,7 @@
             },
             "digest": {
               "type": "string",
-              "pattern": "^$|^sha256:[0-9a-f]{16,}$"
+              "pattern": "^sha256:[0-9a-f]{64}$"
             }
           },
           "anyOf": [
