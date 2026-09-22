@@ -1,17 +1,23 @@
 {
   "schema": "cap.third-party-images/v1",
-  "updated": "2026-09-20",
-  "purpose": "Machine-readable record of every third-party container image and binary the product, the local audit, and the certification workflows depend on -- including the base images every Dockerfile FROMs, which is what lets a rebuild of a release commit produce the same bytes. backend/tests/test_third_party_image_lock.py fails the build if a reference site and this file disagree, if any Dockerfile FROMs an external image that is not locked here, or if this file names an image nothing uses.",
+  "updated": "2026-09-22",
+  "purpose": "Machine-readable record of every third-party container image and binary the product, the local audit, and the certification workflows depend on -- including the base images every Dockerfile FROMs, which is what lets a rebuild of a release commit produce the same bytes. backend/tests/test_third_party_image_lock.py fails the build if a reference site and this file disagree in either direction, if any Dockerfile FROMs an external image that is not locked here, if this file names an image nothing uses, if a compose service pulls a mutable tag, or if a locked digest is not the index digest the cited registry evidence measures. Digests are generated, not transcribed: scripts/release/third_party_registry_evidence.py resolves every coordinate this file names against its registry and writes the tracked artifact every entry points at.",
   "policy": {
     "minio_object_store": {
       "form": "repository@digest",
       "why": "The upstream vendor archived the open-source MinIO Server, Client and KES and stopped serving community release files (see the note in docs/known-issues.md). A tag is a mutable pointer into a registry whose retention policy we do not control, and this image stores certified evidence, so the release line pins content by digest and re-derives the digest from the vendor's signed release tag before changing it.",
       "upgrade_procedure": "1) resolve the new tag at https://quay.io/v2/minio/minio/manifests/<tag> with an Accept header for the docker/oci manifest LIST (a bare request returns a legacy schema1 conversion whose digest differs); 2) confirm the image config labels carry release=<tag> and vendor=MinIO Inc; 3) confirm the matching PGP-signed tag in github.com/minio/minio was created minutes before the image build timestamp; 4) update this file, then run the object-store certification (pytest -m object_store + the Linux/GA workflows) before any release."
     },
+    "compose_images": {
+      "form": "repository@digest",
+      "why": "A tag is a pointer the vendor moves. Every external image a compose deployment pulls is therefore pinned to the manifest-list digest the tracked registry evidence resolves, so a redeploy of a release commit cannot silently run different bytes than the ones that were certified. The index digest -- not the linux/amd64 child -- is what keeps a non-amd64 host pulling its own platform build.",
+      "upgrade_procedure": "1) run scripts/release/third_party_registry_evidence.py and commit the regenerated docs/quality/artifacts/registry-resolution/third-party-registries.json; 2) review the digest diff it produced -- a moved tag and a deliberate version bump look the same here and are not the same decision; 3) re-run the certification that covers the images that moved; 4) only then update docker-compose.yml and this file in one commit, because the reference-site test fails between the two halves."
+    },
     "postgres": {
-      "form": "tag",
-      "why": "postgres:16-alpine remains a Docker Hub official-library image, so the tag is maintained upstream; the version matrix certification (\u00a76 of the release checklist) runs the migration chain against pinned Debian-suffix variants instead. Recorded here so a future archive event is visible in one place.",
-      "upgrade_procedure": "Resolve and record the digest here, then re-run the PostgreSQL version matrix."
+      "form": "repository@digest",
+      "why": "This entry used to record `tag` on the stated grounds that postgres:16-alpine is a Docker Hub official-library image whose tag is maintained upstream. The reason it was really tag-pinned was that no digest could be resolved from the audit host while Docker Hub was unreachable from it -- a transport fact about one machine, not an argument for mutable deployment. The generator now resolves the index digest and round-trips it by digest, so this file carries the digest like every other compose image.",
+      "upgrade_procedure": "1) scripts/release/third_party_registry_evidence.py, commit the regenerated artifact; 2) review the digest diff, since moving a digest here also stops upstream patch flow for the pinned surfaces; 3) re-run the PostgreSQL version matrix (section 6 of the release checklist) -- it certifies Debian-suffix variants, not this alpine digest, so a pin bump is where that gap is paid back; 4) update this file together with every surface in `referenced_by`.",
+      "known_cost": "Pinning `16-alpine` means a compose deployment no longer receives Docker Hub's patch rebuilds of that tag until someone performs the upgrade procedure above."
     }
   },
   "images": [
@@ -22,7 +28,7 @@
       "repository": "minio/minio",
       "tag": "RELEASE.2025-04-22T22-12-26Z",
       "digest": "sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
-      "digest_kind": "manifest-list (multi-arch); the linux/amd64 platform manifest is sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb",
+      "digest_kind": "manifest-list (multi-arch index)",
       "image_ref": "quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
       "previous_ref": "docker.io/minio/minio:RELEASE.2025-04-22T22-12-26Z",
       "previous_ref_status": "Unusable. Pulled successfully from GitHub runners as late as 2026-08-22 (outputs evidence: _ci_logs/cert_run8_full.log, 'deployment \"minio\" successfully rolled out'), then every certification job from 2026-09-13 on failed at container initialisation with 'Error response from daemon: pull access denied for minio/minio, repository does not exist or may require docker login'.",
@@ -40,7 +46,9 @@
         },
         "image_config_created": "2025-04-22T22:35:01.339428192Z",
         "vendor_signed_tag": "github.com/minio/minio tag RELEASE.2025-04-22T22-12-26Z, annotated object f19c534b9f457773dcd043d977433e1a71525c3b, PGP-signed by 'Minio Trusted <trusted@minio.io>' at 2025-04-22T22:34:02Z, peeling to commit 0d7408fc9969caf07de6a8c3a84f9fbb10a6739e",
-        "open_gap": "The vcs-ref above is not resolvable in the public minio/minio or minio/docker-minio repositories (GitHub returns 422/404), and docker.io was unreachable from the audit host, so byte-for-byte equality with the image previously certified from Docker Hub could not be proven offline. It is proven behaviourally instead: the object_store certification and the Linux/GA jobs run this image and exercise real S3 signatures, multipart evidence upload, versioning and the DR restore path against it."
+        "open_gap": "The vcs-ref above is not resolvable in the public minio/minio or minio/docker-minio repositories (GitHub returns 422/404), and docker.io was unreachable from the audit host, so byte-for-byte equality with the image previously certified from Docker Hub could not be proven offline. It is proven behaviourally instead: the object_store certification and the Linux/GA jobs run this image and exercise real S3 signatures, multipart evidence upload, versioning and the DR restore path against it.",
+        "evidence": "docs/quality/artifacts/registry-resolution/third-party-registries.json",
+        "resolved_by": "generated by scripts/release/third_party_registry_evidence.py: the tag is requested with an Accept header naming only the OCI index and Docker manifest-list media types, the served Docker-Content-Digest must equal sha256 over the returned bytes, the same content is requested back by that digest and must come back byte-identical, and the index must carry exactly one linux/amd64 child"
       },
       "referenced_by": [
         "docker-compose.yml",
@@ -52,7 +60,122 @@
       ],
       "derived_by": [
         "backend/tests/test_phase_28_7_ga_certification.py"
-      ]
+      ],
+      "tag_note": "the vendor release tag this digest was resolved from; pull by digest",
+      "platform_digest_linux_amd64": "sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb"
+    },
+    {
+      "name": "redis",
+      "role": "Cache and queue broker for the acquisition worker (docker-compose deployment)",
+      "registry": "docker.io",
+      "repository": "library/redis",
+      "tag": "7-alpine",
+      "tag_note": "redis:7-alpine is what this digest was resolved from; it is metadata, not a pull target",
+      "digest": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+      "digest_kind": "manifest-list (multi-arch index)",
+      "image_ref": "redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+      "manifest_media_type": "application/vnd.oci.image.index.v1+json",
+      "platforms": [
+        "linux/386",
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64",
+        "linux/ppc64le",
+        "linux/riscv64",
+        "linux/s390x"
+      ],
+      "platform_digest_linux_amd64": "sha256:ca0acbb137c1dc3339c8b147a58fd6f42775d4599327b50e7b116c23de501af2",
+      "referenced_by": [
+        "docker-compose.yml"
+      ],
+      "provenance": {
+        "verified_on": "2026-09-22",
+        "method": "generated by scripts/release/third_party_registry_evidence.py: the tag is requested with an Accept header naming only the OCI index and Docker manifest-list media types, the served Docker-Content-Digest must equal sha256 over the returned bytes, the same content is requested back by that digest and must come back byte-identical, and the index must carry exactly one linux/amd64 child",
+        "evidence": "docs/quality/artifacts/registry-resolution/third-party-registries.json",
+        "why_not_a_tag": "a tag is a pointer the vendor moves; the certified build and the rebuilt image must be the same bytes, and only a digest says so"
+      }
+    },
+    {
+      "name": "prometheus",
+      "role": "Metrics endpoint scraped by the deployment monitoring stack (docker-compose)",
+      "registry": "docker.io",
+      "repository": "prom/prometheus",
+      "tag": "v2.55.1",
+      "tag_note": "prometheus:v2.55.1 is what this digest was resolved from; it is metadata, not a pull target",
+      "digest": "sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3",
+      "digest_kind": "manifest-list (multi-arch index)",
+      "image_ref": "prom/prometheus@sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3",
+      "manifest_media_type": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "platforms": [
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64",
+        "linux/ppc64le",
+        "linux/s390x"
+      ],
+      "platform_digest_linux_amd64": "sha256:b1935d181b6dd8e9c827705e89438815337e1b10ae35605126f05f44e5c6940f",
+      "referenced_by": [
+        "docker-compose.yml"
+      ],
+      "provenance": {
+        "verified_on": "2026-09-22",
+        "method": "generated by scripts/release/third_party_registry_evidence.py: the tag is requested with an Accept header naming only the OCI index and Docker manifest-list media types, the served Docker-Content-Digest must equal sha256 over the returned bytes, the same content is requested back by that digest and must come back byte-identical, and the index must carry exactly one linux/amd64 child",
+        "evidence": "docs/quality/artifacts/registry-resolution/third-party-registries.json",
+        "why_not_a_tag": "a tag is a pointer the vendor moves; the certified build and the rebuilt image must be the same bytes, and only a digest says so"
+      }
+    },
+    {
+      "name": "grafana",
+      "role": "Dashboarding paired with Prometheus in the docker-compose deployment",
+      "registry": "docker.io",
+      "repository": "grafana/grafana",
+      "tag": "11.3.1",
+      "tag_note": "grafana:11.3.1 is what this digest was resolved from; it is metadata, not a pull target",
+      "digest": "sha256:fa801ab6e1ae035135309580891e09f7eb94d1abdbd2106bdc288030b028158c",
+      "digest_kind": "manifest-list (multi-arch index)",
+      "image_ref": "grafana/grafana@sha256:fa801ab6e1ae035135309580891e09f7eb94d1abdbd2106bdc288030b028158c",
+      "manifest_media_type": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "platforms": [
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64"
+      ],
+      "platform_digest_linux_amd64": "sha256:cc51212998c91d624fdbb6d1a6903234ddcf97108d56a7a2d1c85bffdb749b6a",
+      "referenced_by": [
+        "docker-compose.yml"
+      ],
+      "provenance": {
+        "verified_on": "2026-09-22",
+        "method": "generated by scripts/release/third_party_registry_evidence.py: the tag is requested with an Accept header naming only the OCI index and Docker manifest-list media types, the served Docker-Content-Digest must equal sha256 over the returned bytes, the same content is requested back by that digest and must come back byte-identical, and the index must carry exactly one linux/amd64 child",
+        "evidence": "docs/quality/artifacts/registry-resolution/third-party-registries.json",
+        "why_not_a_tag": "a tag is a pointer the vendor moves; the certified build and the rebuilt image must be the same bytes, and only a digest says so"
+      }
+    },
+    {
+      "name": "pgadmin4",
+      "role": "Database administration console for the docker-compose deployment",
+      "registry": "docker.io",
+      "repository": "dpage/pgadmin4",
+      "tag": "8",
+      "tag_note": "pgadmin4:8 is what this digest was resolved from; it is metadata, not a pull target",
+      "digest": "sha256:8a68677a97b8c8d1427dc915672a26d2c4a04376916a68256f53d669d6171be7",
+      "digest_kind": "manifest-list (multi-arch index)",
+      "image_ref": "dpage/pgadmin4@sha256:8a68677a97b8c8d1427dc915672a26d2c4a04376916a68256f53d669d6171be7",
+      "manifest_media_type": "application/vnd.oci.image.index.v1+json",
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "platform_digest_linux_amd64": "sha256:2fbd14f87cfc030917cc3602acea551e2b2d7167501ac54f09af17b19c094645",
+      "referenced_by": [
+        "docker-compose.yml"
+      ],
+      "provenance": {
+        "verified_on": "2026-09-22",
+        "method": "generated by scripts/release/third_party_registry_evidence.py: the tag is requested with an Accept header naming only the OCI index and Docker manifest-list media types, the served Docker-Content-Digest must equal sha256 over the returned bytes, the same content is requested back by that digest and must come back byte-identical, and the index must carry exactly one linux/amd64 child",
+        "evidence": "docs/quality/artifacts/registry-resolution/third-party-registries.json",
+        "why_not_a_tag": "a tag is a pointer the vendor moves; the certified build and the rebuilt image must be the same bytes, and only a digest says so"
+      }
     },
     {
       "name": "postgres",
@@ -60,16 +183,37 @@
       "registry": "docker.io",
       "repository": "library/postgres",
       "tag": "16-alpine",
-      "digest": null,
-      "image_ref": "postgres:16-alpine",
+      "digest": "sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
+      "image_ref": "postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
       "referenced_by": [
         "docker-compose.yml",
+        ".github/workflows/ci.yml",
         ".github/workflows/cap-linux-certification.yml",
         ".github/workflows/cap-k8s-certification.yml",
         ".github/workflows/cap-ga-certification.yml",
         ".github/workflows/cap-ga-reliability.yml",
-        "scripts/certification/setup.sh"
-      ]
+        "scripts/certification/setup.sh",
+        "backend/tests/test_phase_28_7_ga_certification.py"
+      ],
+      "tag_note": "16-alpine is what sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea was resolved from; it is metadata, not a pull target",
+      "digest_kind": "manifest-list (multi-arch index)",
+      "manifest_media_type": "application/vnd.oci.image.index.v1+json",
+      "platforms": [
+        "linux/386",
+        "linux/amd64",
+        "linux/arm",
+        "linux/arm64",
+        "linux/ppc64le",
+        "linux/riscv64",
+        "linux/s390x"
+      ],
+      "platform_digest_linux_amd64": "sha256:1a66d744c1b459e13b05a8fca341da84cb63383e99ce262210efee5a319d4551",
+      "provenance": {
+        "verified_on": "2026-09-22",
+        "method": "generated by scripts/release/third_party_registry_evidence.py: the tag is requested with an Accept header naming only the OCI index and Docker manifest-list media types, the served Docker-Content-Digest must equal sha256 over the returned bytes, the same content is requested back by that digest and must come back byte-identical, and the index must carry exactly one linux/amd64 child",
+        "evidence": "docs/quality/artifacts/registry-resolution/third-party-registries.json",
+        "why_not_a_tag": "a tag is a pointer the vendor moves; the certified build and the rebuilt image must be the same bytes, and only a digest says so"
+      }
     },
     {
       "name": "python-3.13-slim-base",
@@ -95,10 +239,12 @@
       ],
       "provenance": {
         "resolved_on": "2026-09-20",
-        "method": "registry API over HTTPS: request the tag with an Accept header for the OCI index and Docker manifest-list media types, take Docker-Content-Digest (or sha256 over the returned manifest bytes where a registry omits the header), then request that digest back and require byte-identical manifest bytes",
-        "evidence": "outputs/artifact-closure/registry-base-digests.json",
+        "method": "generated by scripts/release/third_party_registry_evidence.py: the tag is requested with an Accept header naming only the OCI index and Docker manifest-list media types, the served Docker-Content-Digest must equal sha256 over the returned bytes, the same content is requested back by that digest and must come back byte-identical, and the index must carry exactly one linux/amd64 child",
+        "evidence": "docs/quality/artifacts/registry-resolution/third-party-registries.json",
         "why_not_a_tag": "a tag is a pointer the vendor moves; the certified build and the rebuilt image must be the same bytes, and only a digest says so"
-      }
+      },
+      "digest_kind": "manifest-list (multi-arch index)",
+      "tag_note": "python:3.13-slim is what this digest was resolved from; a Dockerfile FROM keeps the tag beside the digest so a reader can see the version line"
     },
     {
       "name": "python-3.13.12-slim-bookworm-base",
@@ -120,14 +266,17 @@
       "platform_digest_linux_amd64": "sha256:3121f8b0804aa3698ab750d9a39ea4a42657a385c9b133722b915e55c51551a6",
       "referenced_by": [
         "backend/docker/sandbox-http/Dockerfile",
-        "backend/docker/egress-proxy/Dockerfile"
+        "backend/docker/egress-proxy/Dockerfile",
+        "scripts/certification/build_images.sh"
       ],
       "provenance": {
         "resolved_on": "2026-09-20",
-        "method": "registry API over HTTPS: request the tag with an Accept header for the OCI index and Docker manifest-list media types, take Docker-Content-Digest (or sha256 over the returned manifest bytes where a registry omits the header), then request that digest back and require byte-identical manifest bytes",
-        "evidence": "outputs/artifact-closure/registry-base-digests.json",
+        "method": "generated by scripts/release/third_party_registry_evidence.py: the tag is requested with an Accept header naming only the OCI index and Docker manifest-list media types, the served Docker-Content-Digest must equal sha256 over the returned bytes, the same content is requested back by that digest and must come back byte-identical, and the index must carry exactly one linux/amd64 child",
+        "evidence": "docs/quality/artifacts/registry-resolution/third-party-registries.json",
         "why_not_a_tag": "a tag is a pointer the vendor moves; the certified build and the rebuilt image must be the same bytes, and only a digest says so"
-      }
+      },
+      "digest_kind": "manifest-list (multi-arch index)",
+      "tag_note": "python:3.13.12-slim-bookworm is what this digest was resolved from; a Dockerfile FROM keeps the tag beside the digest so a reader can see the version line"
     },
     {
       "name": "node-22-alpine-base",
@@ -150,10 +299,12 @@
       ],
       "provenance": {
         "resolved_on": "2026-09-20",
-        "method": "registry API over HTTPS: request the tag with an Accept header for the OCI index and Docker manifest-list media types, take Docker-Content-Digest (or sha256 over the returned manifest bytes where a registry omits the header), then request that digest back and require byte-identical manifest bytes",
-        "evidence": "outputs/artifact-closure/registry-base-digests.json",
+        "method": "generated by scripts/release/third_party_registry_evidence.py: the tag is requested with an Accept header naming only the OCI index and Docker manifest-list media types, the served Docker-Content-Digest must equal sha256 over the returned bytes, the same content is requested back by that digest and must come back byte-identical, and the index must carry exactly one linux/amd64 child",
+        "evidence": "docs/quality/artifacts/registry-resolution/third-party-registries.json",
         "why_not_a_tag": "a tag is a pointer the vendor moves; the certified build and the rebuilt image must be the same bytes, and only a digest says so"
-      }
+      },
+      "digest_kind": "manifest-list (multi-arch index)",
+      "tag_note": "node:22-alpine is what this digest was resolved from; a Dockerfile FROM keeps the tag beside the digest so a reader can see the version line"
     },
     {
       "name": "nginx-1.30.4-alpine-base",
@@ -179,10 +330,12 @@
       ],
       "provenance": {
         "resolved_on": "2026-09-20",
-        "method": "registry API over HTTPS: request the tag with an Accept header for the OCI index and Docker manifest-list media types, take Docker-Content-Digest (or sha256 over the returned manifest bytes where a registry omits the header), then request that digest back and require byte-identical manifest bytes",
-        "evidence": "outputs/artifact-closure/registry-base-digests.json",
+        "method": "generated by scripts/release/third_party_registry_evidence.py: the tag is requested with an Accept header naming only the OCI index and Docker manifest-list media types, the served Docker-Content-Digest must equal sha256 over the returned bytes, the same content is requested back by that digest and must come back byte-identical, and the index must carry exactly one linux/amd64 child",
+        "evidence": "docs/quality/artifacts/registry-resolution/third-party-registries.json",
         "why_not_a_tag": "a tag is a pointer the vendor moves; the certified build and the rebuilt image must be the same bytes, and only a digest says so"
-      }
+      },
+      "digest_kind": "manifest-list (multi-arch index)",
+      "tag_note": "nginx:1.30.4-alpine is what this digest was resolved from; a Dockerfile FROM keeps the tag beside the digest so a reader can see the version line"
     },
     {
       "name": "astral-sh-uv-0.8.3-base",
@@ -203,10 +356,12 @@
       ],
       "provenance": {
         "resolved_on": "2026-09-20",
-        "method": "registry API over HTTPS: request the tag with an Accept header for the OCI index and Docker manifest-list media types, take Docker-Content-Digest (or sha256 over the returned manifest bytes where a registry omits the header), then request that digest back and require byte-identical manifest bytes",
-        "evidence": "outputs/artifact-closure/registry-base-digests.json",
+        "method": "generated by scripts/release/third_party_registry_evidence.py: the tag is requested with an Accept header naming only the OCI index and Docker manifest-list media types, the served Docker-Content-Digest must equal sha256 over the returned bytes, the same content is requested back by that digest and must come back byte-identical, and the index must carry exactly one linux/amd64 child",
+        "evidence": "docs/quality/artifacts/registry-resolution/third-party-registries.json",
         "why_not_a_tag": "a tag is a pointer the vendor moves; the certified build and the rebuilt image must be the same bytes, and only a digest says so"
-      }
+      },
+      "digest_kind": "manifest-list (multi-arch index)",
+      "tag_note": "astral-sh/uv:0.8.3 is what this digest was resolved from; a Dockerfile FROM keeps the tag beside the digest so a reader can see the version line"
     }
   ],
   "binaries": [

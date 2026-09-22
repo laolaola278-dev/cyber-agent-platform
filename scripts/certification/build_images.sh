@@ -28,9 +28,9 @@ for name, df in [
     tag = {"http": "cap-sandbox-http:latest",
            "browser": "cap-sandbox-browser:latest",
            "egress_proxy": "cap-egress-proxy:latest"}[name]
-    base = {"http": "python:3.13.12-slim-bookworm",
+    base = {"http": "python:3.13.12-slim-bookworm@sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6",
             "browser": "cap-sandbox-http:latest",
-            "egress_proxy": "python:3.13.12-slim-bookworm"}[name]
+            "egress_proxy": "python:3.13.12-slim-bookworm@sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6"}[name]
     images[name] = {
         "image_id": inspect(tag, "Id"),
         "repo_digest": inspect(tag, "RepoDigests"),

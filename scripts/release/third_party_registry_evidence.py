@@ -178,7 +178,10 @@ def compose_refs(root: str) -> dict[str, list[str]]:
         raise Refusal(f"{COMPOSE_PATH} is missing, so the compose target set cannot be derived")
     found: dict[str, list[str]] = {}
     for lineno, line in enumerate(_lines(root, COMPOSE_PATH), 1):
-        match = re.match(r"^\s+image:\s*(\S+)\s*$", line)
+        # The value ends the line or ends at a comment: a pinned compose file names the tag it
+        # replaced in a trailing comment, and a scanner that required the reference to be alone
+        # would stop seeing every service the moment somebody wrote that note down.
+        match = re.match(r"^\s+image:\s*(\S+)\s*(?:#.*)?$", line)
         if not match:
             continue
         ref = match.group(1)

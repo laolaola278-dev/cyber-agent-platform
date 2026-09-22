@@ -78,7 +78,7 @@ jobs:
       CAP283_S3_SECRET: capadmin123
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env: { POSTGRES_USER: cap, POSTGRES_PASSWORD: cap, POSTGRES_DB: cap283 }
         ports: ["55432:5432"]
         options: >-
@@ -160,7 +160,7 @@ jobs:
       CAP283_S3_SECRET: capadmin123
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env: { POSTGRES_USER: cap, POSTGRES_PASSWORD: cap, POSTGRES_DB: cap283 }
         ports: ["55432:5432"]
         options: >-
@@ -250,7 +250,7 @@ jobs:
       CAP284_BENCH_LAB: "40"
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env: { POSTGRES_USER: cap, POSTGRES_PASSWORD: cap, POSTGRES_DB: cap283 }
         ports: ["55432:5432"]
         options: >-

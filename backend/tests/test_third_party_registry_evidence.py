@@ -492,11 +492,42 @@ def test_the_repository_surfaces_are_all_covered_by_derived_targets() -> None:
 
 
 def test_the_compose_services_appear_as_targets_with_their_own_sites() -> None:
+    """The compose file's own line numbers have to reach the target, comment or not.
+
+    Batch 2 pins every external reference there, and the note naming the tag it
+    replaced sits on the same line -- which is the shape a scanner quietly skips.
+    """
     targets = {one.name: one for one in gen.collect_targets(str(PROJECT_ROOT))}
     postgres = targets["postgres"]
 
     assert "docker-compose.yml:10" in postgres.sources
-    assert postgres.pinned_digest is None, "postgres is pinned by Batch 2, not before it"
+    pinned = {entry["name"]: entry.get("digest")
+              for entry in gen._load_lock(str(PROJECT_ROOT))["images"]}
+    assert postgres.pinned_digest == pinned["postgres"], (
+        "postgres has been digest-pinned since F-24, so its target has to carry that pin"
+    )
+
+
+def test_an_image_line_with_a_trailing_comment_is_still_a_target(tmp_path: Path) -> None:
+    """The control for the line above: a note is not a reason to stop reading the file."""
+    repo = tmp_path / "repo"
+    (repo / "deployment").mkdir(parents=True)
+    (repo / "deployment" / "third-party-images.json").write_text(
+        json.dumps({"images": []}), encoding="utf-8"
+    )
+    (repo / "docker-compose.yml").write_text(
+        "services:\n"
+        "  cached:\n"
+        "    image: redis@sha256:" + "1" * 64 + "   # tag 7-alpine; see the lock\n"
+        "  plain:\n"
+        "    image: grafana/grafana:11.3.1\n",
+        encoding="utf-8",
+    )
+
+    refs = gen.compose_refs(str(repo))
+    assert "redis@sha256:" + "1" * 64 in refs, refs
+    assert "grafana/grafana:11.3.1" in refs, refs
+    assert refs["redis@sha256:" + "1" * 64] == ["docker-compose.yml:3"]
 
 
 def test_scratch_directories_are_not_read_as_surfaces() -> None:

@@ -38,7 +38,7 @@ if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
     --network cap-network \
     -e POSTGRES_USER=cap -e POSTGRES_PASSWORD=cap -e POSTGRES_DB=cap283 \
     -p 55432:5432 \
-    postgres:16-alpine >/dev/null
+    postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea >/dev/null
 
   docker rm -f "${PREFIX}-minio" >/dev/null 2>&1 || true
   docker run -d --name "${PREFIX}-minio" \
