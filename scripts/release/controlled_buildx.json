@@ -1,0 +1,40 @@
+{
+  "schema": "cap-controlled-buildx/1",
+  "updated": "2026-09-23",
+  "purpose": "Pins the one buildx executable that Batch 3 A2.1's observation builds are allowed to run, so that producer identity no longer depends on which plugin a GitHub runner happens to have installed.",
+  "why_not_the_release_lock": "deployment/third-party-images.json is the lock the shipped deployment reads (F-20), and the diff classifier treats anything under deployment/ as runtime-affecting. This file pins a CI-time executable for a non-publishing observation job only: nothing a release builds or runs depends on it, and A2.1 must not change what the release build does.",
+  "why_the_action_is_not_enough": "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f (v3.12.0) exposes the builder it created (outputs name/driver/platforms/nodes/endpoint/status/flags) but never exposes the buildx executable it installed: @docker/actions-toolkit's BuildxInstall.download() then installPlugin() copies the binary to $DOCKER_CONFIG/cli-plugins/docker-buildx and reports that path only in the job log. Batch 3A measured the consequence at five heads -- the same job text printed v0.37.0, v0.37.1 and v0.37.0 as the executing version, and `docker buildx version` printed no install path at all. So the requested version is not the executed version, and the executed version is not knowable from the CLI.",
+  "install_contract": "The observation job downloads `source.download_url` to `install.path`, refuses to proceed unless the file's sha256 equals `integrity.expected`, chmods it 0755, and invokes that absolute path for every buildx command it issues. It never writes to or over a docker CLI plugin directory, and it records what `docker buildx` would have dispatched to as a separate observation rather than as the producer.",
+  "version": "v0.37.1",
+  "expected_git_commit": "0b265a9f62db554fa9aba6dd19e1bd5704bc7d8a",
+  "expected_git_commit_derivation": "github.com/docker/buildx annotated tag v0.37.1 -> tag object 363b7b083ea1a88098198d681f9d5054f1ca4629 -> tagged commit 0b265a9f62db554fa9aba6dd19e1bd5704bc7d8a (GET /repos/docker/buildx/git/refs/tags/v0.37.1 and /repos/docker/buildx/git/tags/363b7b08..., read 2026-09-23). A released buildx prints this commit in its version line, so it is a second, independent check on the bytes: the same version string built from a different commit would fail here rather than pass on a tag match.",
+  "source": {
+    "repository": "docker/buildx",
+    "release_tag": "v0.37.1",
+    "release_tag_object": "363b7b083ea1a88098198d681f9d5054f1ca4629",
+    "asset": "buildx-v0.37.1.linux-amd64",
+    "asset_id": 557511570,
+    "asset_size_bytes": 65798306,
+    "download_url": "https://github.com/docker/buildx/releases/download/v0.37.1/buildx-v0.37.1.linux-amd64",
+    "platform": "linux/amd64",
+    "release_published_at": "2026-09-11T15:35:46Z"
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "expected": "sha256:9447199cdb435f25880548343c128a4b6650e8891ee598905d8d29d39a8e359b",
+    "expected_derivation": "the `digest` GitHub records for release asset 557511570 (GET /repos/docker/buildx/releases/tags/v0.37.1, read 2026-09-23). It is pinned here rather than fetched at build time: a check that asks the same server the file came from would pass on any bytes that server later serves.",
+    "verified_by": "sha256sum of the file at install.path, read back by the recorder as observed.controlled_buildx.integrity.computed"
+  },
+  "install": {
+    "path": "/tmp/cap-a21-controlled-buildx/buildx",
+    "directory": "/tmp/cap-a21-controlled-buildx",
+    "path_is_a_literal_on_purpose": "configured.workflow must be a claim about the repository. A path assembled from ${{ runner.temp }} or $GITHUB_ENV exists only after the runner expands it, so the recorder would be comparing an expression instead of a pin. The job declares this absolute path in its own env: block, and the controlled binary's version line -- which a standalone buildx prints as its own argv[0] -- is read back against it.",
+    "never_written_to": [
+      "/usr/libexec/docker/cli-plugins/docker-buildx",
+      "/usr/local/lib/docker/cli-plugins/docker-buildx",
+      "/usr/lib/docker/cli-plugins/docker-buildx",
+      "~/.docker/cli-plugins/docker-buildx"
+    ]
+  },
+  "relationship_to_the_release_lock": "deployment/third-party-images.json names the same buildx version for the release path. This file must agree with it, and the recorder scores that agreement as a named field (configured.lock vs configured.controlled) rather than assuming it: if one file is bumped and the other is not, that is a finding about the repository, not a detail."
+}
