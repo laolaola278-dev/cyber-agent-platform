@@ -207,10 +207,16 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
             (0, PATH_PLUGIN, "") if path_plugin else (1, "", "docker-buildx not found in path")),
     }
     if controlled_exists and controlled_version != "missing":
-        answers[(controlled_path, "version")] = (
-            0, version_line(controlled_reports_path or controlled_path,
-                            controlled_version or BUILDX["version"],
-                            controlled_commit or CONTROLLED_COMMIT), "")
+        # What CI measured at run 35866400091: a standalone buildx prints
+        # `github.com/docker/buildx v0.37.1 <commit>` and no install path. The fixture defaults
+        # to that shape on purpose -- an earlier version of it printed the path the recorder had
+        # just invoked, which is how the design came to require an answer no runner gives.
+        reported = (version_line(controlled_reports_path, controlled_version or BUILDX["version"],
+                                 controlled_commit or CONTROLLED_COMMIT)
+                    if controlled_reports_path else
+                    version_line("", controlled_version or BUILDX["version"],
+                                 controlled_commit or CONTROLLED_COMMIT).lstrip())
+        answers[(controlled_path, "version")] = (0, reported, "")
         answers[("sha256sum", controlled_path)] = (
             0, f"{controlled_sha or CONTROLLED_SHA_HEX}  {controlled_path}", "")
     else:
@@ -1262,11 +1268,10 @@ def test_a_controlled_executable_answering_another_commit_is_a_mismatch(tmp_path
 
 
 def test_a_controlled_executable_printing_another_path_is_a_mismatch(tmp_path: Path) -> None:
-    """Wrong executable path or source: the file at the pinned path is not the one that ran.
+    """Where a buildx *does* name its path, a contradiction with the declaration must bite.
 
-    A standalone buildx prints its own argv[0], so the path in the record is what the process
-    said about itself -- which is what makes a symlink, a copy or a wrapper at another location
-    a finding instead of an invisible detail.
+    The field is not required -- see the companion test for why -- but `blocking` means it
+    cannot report a different path and be filed away as information.
     """
     elsewhere = "/tmp/cap-a21-controlled-buildx/wrapper"
     _, payload = recorded(tmp_path, observe_run(controlled_reports_path=elsewhere))
@@ -1275,7 +1280,44 @@ def test_a_controlled_executable_printing_another_path_is_a_mismatch(tmp_path: P
         "declared": CONTROLLED, "read_back": elsewhere, "relation": "different"}, fields[
         "controlled_buildx_path"]
     assert payload["observed"]["controlled_buildx"]["path_reported_by_binary"] == elsewhere
-    assert payload["comparison"]["workflow_vs_observed"]["status"] == "MISMATCH"
+    assert payload["comparison"]["workflow_vs_observed"]["status"] == "MISMATCH", (
+        "a path that contradicts the declaration is a disagreement even though the version, "
+        "commit, hash and invocation all agree")
+
+
+def test_a_controlled_executable_printing_the_declared_path_agrees(tmp_path: Path) -> None:
+    """The other arm of the same field: a printed path that matches is scored, not flagged.
+
+    Without this, an implementation that treated *any* printed path as a contradiction would
+    pass the controls -- the rule is "agree when it agrees", not "ignore what it prints".
+    """
+    _, payload = recorded(tmp_path, observe_run(controlled_reports_path=CONTROLLED))
+    field = payload["comparison"]["workflow_vs_observed"]["fields"]["controlled_buildx_path"]
+    assert field == {"declared": CONTROLLED, "read_back": CONTROLLED, "relation": "equal"}, field
+    assert payload["comparison"]["workflow_vs_observed"]["status"] == "CONFORMING"
+    assert "contract_gaps" not in payload, payload.get("contract_gaps")
+
+
+def test_a_controlled_executable_that_names_no_path_is_still_identified(tmp_path: Path) -> None:
+    """The shape every GitHub runner gives, and the reason path identity is not a printed string.
+
+    Measured at run `35866400091`: the pinned binary answered
+    `github.com/docker/buildx v0.37.1 0b265a9f…` with no path. The first A2.1 implementation
+    required the path the binary reports, so all five conforming records came back UNKNOWN and
+    the job went red -- a requirement no runner can satisfy is an instrument bug, and the fix is
+    not to compare the declared path against itself.
+    """
+    _, payload = recorded(tmp_path, observe_run())
+    controlled = payload["observed"]["controlled_buildx"]
+    assert controlled["path_reported_by_binary"] is None, controlled
+    assert controlled["path"] == CONTROLLED, "the invoked path is carried as what was invoked"
+    assert "NOT_REPORTED" in controlled["path_status"], controlled["path_status"]
+    field = payload["comparison"]["workflow_vs_observed"]["fields"]["controlled_buildx_path"]
+    assert field["relation"] is None and field["scored"] is False, field
+    assert "digest of the file at the declared path" in field["why"], field
+    assert payload["comparison"]["workflow_vs_observed"]["status"] == "CONFORMING", (
+        "version, commit, integrity and invocation answer the question the printed path cannot")
+    assert "contract_gaps" not in payload, payload.get("contract_gaps")
 
 
 def test_a_controlled_executable_that_hashes_differently_is_a_mismatch(tmp_path: Path) -> None:

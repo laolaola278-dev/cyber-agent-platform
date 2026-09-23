@@ -687,14 +687,16 @@ def observe_controlled_buildx(run: CommandRunner, pin: dict, declared_path: str 
 
     Two independent reads, because either one alone can be satisfied by the wrong binary:
 
-    * `version` -- a standalone buildx prints **its own argv[0]** in the version line, so the
-      path here is read back from the process rather than restated from the workflow. That is
-      the difference from `docker buildx version`, which CI measured printing no path at all.
+    * `version` -- the pinned path is invoked directly and answers with its version and the
+      commit it was built from. A standalone buildx prints **no install path** (measured at CI
+      run `35866400091`), so this read identifies the bytes, not the file: `path` below is the
+      path that was invoked, and `path_status` says whether the binary corroborated it.
     * `sha256sum` -- the file the job is about to run, hashed on the machine that runs it. The
       expected value comes from the repository's pin, not from the server the file came from,
       so a replaced release asset or a truncated download cannot pass by being self-consistent.
 
-    A missing or unreadable file is ERROR, never "unknown version, so nothing disagrees".
+    Together those two, plus the recorded build argv, are what say which executable built the
+    image. A missing or unreadable file is ERROR, never "unknown version, so nothing disagrees".
     """
     path = declared_path or (pin or {}).get("declared_path")
     answer = {"declared_path": path, "pin_source": (pin or {}).get("source")}
@@ -1068,20 +1070,61 @@ def configured_workflow_values(path: str | None, job_name: str | None,
     return {"ok": True, "status": "READ", **declared}
 
 
+def _controlled_path_field(workflow: dict, controlled: dict) -> dict:
+    """The declared executable path against the path the binary itself named, if it names one.
+
+    Measured at CI run `35866400091`: `/tmp/cap-a21-controlled-buildx/buildx version` answered
+    `github.com/docker/buildx v0.37.1 0b265a9f…` with **no path at all** -- the design assumption
+    that a standalone buildx prints its own argv[0] came from a version-line shape this
+    instrument had only ever *parsed*, never observed on a runner. So this field cannot be a
+    requirement: requiring it would leave every real observation UNKNOWN, and the temptation
+    then is to make the comparison read the invoked path against itself, which agrees by
+    construction and proves nothing.
+
+    Path identity is therefore carried by two fields that always answer: the hash of the file at
+    the declared path (`controlled_buildx_integrity`) and the path the build was actually
+    invoked with (`build_invoked_controlled_executable`). Where a buildx *does* print a path,
+    this field compares it and a contradiction blocks the comparison -- `blocking` in
+    `workflow_vs_observed` -- so the optional evidence can never be quietly dropped.
+    """
+    declared = workflow.get("controlled_buildx_path")
+    reported = controlled.get("path_reported_by_binary")
+    if not reported:
+        return {"declared": declared, "read_back": None, "relation": None, "scored": False,
+                "status": controlled.get("path_status") or "NOT_READ",
+                "why": ("the pinned executable printed no install path, so no path claim is "
+                        "scored here; identity rests on the digest of the file at the declared "
+                        "path and on the recorded build argv")}
+    return {"declared": declared, "read_back": reported,
+            "relation": "equal" if reported == declared else "different"}
+
+
 def _pair(left, right) -> dict:
     return {"declared": left, "read_back": right,
             "relation": (None if left is None or right is None
                          else ("equal" if left == right else "different"))}
 
 
-def _status_of(fields: dict, required: tuple[str, ...]) -> str:
+def _status_of(fields: dict, required: tuple[str, ...],
+               blocking: tuple[str, ...] = ()) -> str:
     """CONFORMING only when every required field is present and equal.
 
     UNKNOWN wins over MISMATCH nowhere: a missing side is reported as UNKNOWN so that an
     unreadable observation can never be read as agreement, and a field that is present and
     unequal is reported even when another field is unreadable -- hiding a known
     disagreement behind an unknown one would be the same mistake in the other direction.
+
+    `blocking` names the fields that may not disagree without being *required* to answer. A
+    value that is only sometimes observable -- the install path a buildx prints for itself,
+    which CI measured that no runner's buildx actually prints -- cannot be a requirement without
+    making the whole comparison permanently UNKNOWN; but when it *is* observed and it
+    contradicts the declaration, that is a disagreement and must not be filed away as
+    information.
     """
+    contradiction = [name for name in blocking
+                     if fields.get(name, {}).get("relation") == "different"]
+    if contradiction:
+        return MISMATCH
     known = [name for name in required if fields.get(name, {}).get("relation") is not None]
     if not known:
         return UNKNOWN
@@ -1146,19 +1189,19 @@ def compare(configured: dict, observed: dict, pin: dict | None = None) -> dict:
             "buildx_version": _pair(workflow.get("buildx_version"), seen_buildx),
             "builder_name": _pair(workflow.get("builder_name"), builder.get("builder")),
             "driver": _pair(workflow.get("driver"), builder.get("driver")),
-            # The four A2.1 claims about the producer itself. `buildx_version` above can be
+            # The A2.1 claims about the producer itself. `buildx_version` alone can be
             # satisfied by any binary reporting the right string, so the executable is also
-            # identified by the commit it prints, by the absolute path it prints as its own
-            # argv[0], and by a hash of the bytes that ran -- and separately by which file the
-            # build was actually invoked with. Each answers a different failure: a replaced
-            # release asset passes the version and fails the hash; a job that silently went
-            # back to `docker buildx` passes all three and fails the invocation.
+            # identified by the commit it prints, by a hash of the bytes that ran, and --
+            # separately -- by which file the build was actually invoked with. Each answers a
+            # different failure: a replaced release asset passes the version and fails the
+            # hash; a job that quietly went back to `docker buildx` passes both of those and
+            # fails the invocation. The path the binary prints for itself, when it prints one
+            # at all, is in `controlled_buildx_path` and can contradict without being silent.
             "controlled_buildx_version": _pair(workflow.get("buildx_version"),
                                                controlled.get("version")),
             "controlled_buildx_commit": _pair(controlled_pin.get("expected_git_commit"),
                                               controlled.get("commit")),
-            "controlled_buildx_path": _pair(workflow.get("controlled_buildx_path"),
-                                            controlled.get("path_reported_by_binary")),
+            "controlled_buildx_path": _controlled_path_field(workflow, controlled),
             "controlled_buildx_integrity": {"declared": controlled_pin.get("expected_sha256"),
                                             "read_back": (controlled.get("integrity") or {}).get(
                                                 "computed"),
@@ -1179,12 +1222,16 @@ def compare(configured: dict, observed: dict, pin: dict | None = None) -> dict:
                                           "scored": False},
         },
         "required": ("buildx_version", "builder_name", "driver", "controlled_buildx_version",
-                     "controlled_buildx_commit", "controlled_buildx_path",
-                     "controlled_buildx_integrity", "build_invoked_controlled_executable"),
+                     "controlled_buildx_commit", "controlled_buildx_integrity",
+                     "build_invoked_controlled_executable"),
+        # The printed path is not required -- see _controlled_path_field -- but it may not
+        # contradict the declaration silently either.
+        "blocking": ("controlled_buildx_path",),
         "scored_buildx_from": scored_from,
     }
     workflow_vs_observed["status"] = _status_of(workflow_vs_observed["fields"],
-                                                workflow_vs_observed["required"])
+                                                workflow_vs_observed["required"],
+                                                workflow_vs_observed["blocking"])
     relation = digest_relation({"digest": lock.get("buildkit_digest")}, running_image,
                               (pin or {}).get("children", []))
     child = (pin or {}).get("platform_child") or {}
@@ -1416,7 +1463,7 @@ CONTRACT_REQUIRED = (
     # deterministic producer, which is why `observed.build_invocation.argv` is in the contract
     # and not merely a convenience.
     "observed.controlled_buildx.version", "observed.controlled_buildx.commit",
-    "observed.controlled_buildx.path_reported_by_binary",
+    "observed.controlled_buildx.path_status",
     "observed.controlled_buildx.integrity.expected",
     "observed.controlled_buildx.integrity.computed",
     "observed.build_invocation.argv", "configured.controlled.version",
