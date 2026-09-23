@@ -211,7 +211,9 @@ the pushed head:
 | `4d2d7d7` base bindings from the build's argv | 3 | certification_generator, ci_workflow, test_harness | INHERITED, runtime_affecting=false |
 | `e18fb32` stated frontend, empty-set refusal | 2 | certification_generator, test_harness | INHERITED, runtime_affecting=false |
 | `ecd7ac4` derived version, guard escape closed | 2 | ci_workflow, test_harness | INHERITED, runtime_affecting=false |
-| **cumulative `a6a4a9f..ecd7ac4`** | **6** | -- | **INHERITED, runtime_affecting=false** |
+| `b98eb3b` path identity by bytes and invocation | 2 | certification_generator, test_harness | INHERITED, runtime_affecting=false |
+| **cumulative `a6a4a9f..b98eb3b`** | **6** | certification_generator ×2, ci_workflow, test_harness ×3 | **INHERITED, runtime_affecting=false** |
+| docs heads (report, register, changelog) | 3 | docs | INHERITED, runtime_affecting=false |
 
 The STOP condition never fired: no file in the range is a Dockerfile, under `deployment/`, or in
 the product runtime, and `release.yml` and `build_release_image.sh` are not touched at all. The
