@@ -1401,6 +1401,28 @@ def test_a_registry_base_is_recorded_by_digest_and_a_tag_alone_is_a_mismatch() -
     assert base["status"] == "MISMATCH" and base["digest"] is None, base
 
 
+def test_the_frontend_is_stated_rather_than_left_blank(tmp_path: Path) -> None:
+    """`frontend: null` would be read as "not recorded", and it is not what it means.
+
+    Two real shapes: `backend/Dockerfile` pins a syntax digest, the sandbox Dockerfiles name no
+    directive at all -- so the frontend that parsed those is the built-in one inside the
+    *pinned* BuildKit container, which is a knowable answer and gets said out loud.
+    """
+    tar = tmp_path / "one.oci.tar"
+    write_oci_tar(tar)
+    _, pinned = recorded(tmp_path, observe_run(), "--oci-tar", str(tar),
+                         dockerfile=str(PROJECT_ROOT / "backend/Dockerfile"))
+    assert pinned["f39_measurement"]["frontend_status"] == "PINNED_BY_DIRECTIVE"
+    assert pinned["f39_measurement"]["frontend"].startswith(
+        "# syntax=docker/dockerfile:1@sha256:"), pinned["f39_measurement"]["frontend"]
+    _, builtin = recorded(tmp_path, observe_run(), "--oci-tar", str(tar),
+                          dockerfile=HTTP_DOCKERFILE)
+    assert builtin["f39_measurement"]["frontend"] is None
+    assert builtin["f39_measurement"][
+        "frontend_status"] == "BUILTIN_OF_THE_RUNNING_BUILDKIT", builtin["f39_measurement"]
+    assert "built-in dockerfile frontend" in builtin["f39_measurement"]["frontend_note"]
+
+
 def test_an_unresolved_base_argument_is_reported_not_invented() -> None:
     """`ARG SANDBOX_HTTP_BASE` has no default on purpose, so nothing may fill it in silently."""
     binding = recorder.base_image_bindings(BROWSER_DOCKERFILE, [], [])
@@ -1551,6 +1573,19 @@ def test_an_unexpected_image_in_the_set_is_reported(tmp_path: Path) -> None:
     doc = scored(tmp_path, five_records(tmp_path), FIVE[:-1])
     assert any("not an expected image" in problem for problem in doc["problems"]), doc["problems"]
     assert doc["authorizes_a2_2"] is False
+
+
+def test_scoring_no_records_at_all_fails_rather_than_reading_a_machine(tmp_path: Path) -> None:
+    """`--combine` with nothing to score must not fall through into an observation.
+
+    On a runner the fall-through would have run the recorder's docker reads and written a set
+    verdict built from no image at all -- the one outcome where a green `set.exit` could mean
+    nothing happened.
+    """
+    out = tmp_path / "producer-set.json"
+    code = recorder.main(["--out", str(out), "--combine"])
+    assert code == 2, "an empty set is a usage failure, not a verdict"
+    assert not out.exists(), out
 
 
 def test_the_same_round_base_binding_is_read_out_of_the_build_itself(tmp_path: Path) -> None:

@@ -1661,7 +1661,10 @@ def main(argv: list[str] | None = None, run: CommandRunner | None = None,
     runner = run or run_command
     env = environ if environ is not None else os.environ
 
-    if args.combine:
+    if args.combine is not None:
+        if not args.combine:
+            print("--combine was given no record files to score", file=sys.stderr)
+            return 2
         return combine_records(args, run=runner)
 
     with open(args.lock, encoding="utf-8") as handle:
@@ -1697,7 +1700,17 @@ def main(argv: list[str] | None = None, run: CommandRunner | None = None,
         for line in Path(args.dockerfile).read_text(encoding="utf-8").splitlines():
             if line.strip().startswith("# syntax=") or line.strip().startswith("#syntax="):
                 f39["frontend"] = line.strip()
+                f39["frontend_status"] = "PINNED_BY_DIRECTIVE"
                 break
+        if "frontend_status" not in f39:
+            # A null `frontend` would otherwise be read as "not recorded". It means something
+            # specific: this Dockerfile names no syntax directive, so the frontend that parsed
+            # it is the one built into the daemon the builder is running -- which for a pinned
+            # docker-container builder is the pinned BuildKit, and is therefore knowable.
+            f39["frontend_status"] = "BUILTIN_OF_THE_RUNNING_BUILDKIT"
+            f39["frontend_note"] = (
+                "no `# syntax=` directive, so the daemon's built-in dockerfile frontend "
+                "parsed this image; the daemon is the container read in observed.builder")
     payload = {
         "mode": args.mode,
         "image": args.image,
