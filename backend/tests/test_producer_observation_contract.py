@@ -64,6 +64,8 @@ ALL_PLUGINS = tuple(plugin_path(index) for index in range(len(recorder.PLUGIN_DI
 ACTION_PLUGIN = ALL_PLUGINS[0]                    # where setup-buildx-action installs
 SYSTEM_PLUGIN = ALL_PLUGINS[2]                    # where the runner image ships one
 MISSING_PLUGIN = ALL_PLUGINS[3]
+PATH_PLUGIN = "/usr/local/bin/docker-buildx"  # the docker CLI resolves plugins here too
+CI_COMMIT = "ac30b249211430b85fb8f37b6e7154b5c47ba0b6"  # what the runner's line reported
 CHILD = "sha256:" + "ab" * 32                      # a platform child of the pinned index
 ATTESTATION = "sha256:" + "cd" * 32                # the index's attestation entry
 CONFIG_ID = "sha256:" + "ee" * 32                  # what `.Image` reports
@@ -111,7 +113,8 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
                 repo_digests: list[str] | None = None, image_id: str = CONFIG_ID,
                 builder_exists: bool = True, plugins: dict[str, str] | None = None,
                 container_exists: bool = True, server: str = "28.0.4",
-                index: str | None = None, dead_daemon: bool = False):
+                index: str | None = None, dead_daemon: bool = False,
+                inspect_output: str | None = None, path_plugin: str | None = None):
     """A runner that answers every command the observation path issues.
 
     Answers are keyed by the exact argv, which makes the fixture a regression guard on the
@@ -130,7 +133,8 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
             "default    docker                        ")), ""),
         ("docker", "buildx", "inspect", f"--builder={BUILDER}"): (
             0 if builder_exists else 1,
-            inspect_text(driver, inspect_image) if builder_exists else "",
+            (inspect_output if inspect_output is not None
+             else inspect_text(driver, inspect_image)) if builder_exists else "",
             "" if builder_exists else f'ERROR: no builder "{BUILDER}" found'),
         ("docker", "inspect", "--format", "{{.Config.Image}}\t{{.Image}}", CONTAINER): (
             0 if container_exists else 1,
@@ -142,7 +146,11 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
             0, index if index is not None else index_json(), ""),
         ("docker", "version", "--format", "{{.Server.Version}}"): (0, server, ""),
         ("which", "docker"): (0, "/usr/bin/docker", ""),
+        ("which", "docker-buildx"): (
+            (0, PATH_PLUGIN, "") if path_plugin else (1, "", "docker-buildx not found in path")),
     }
+    if path_plugin:
+        answers[(PATH_PLUGIN, "version")] = (0, version_line(PATH_PLUGIN, path_plugin), "")
     if dead_daemon:
         # A binary can still answer `version` with no daemon; every `docker …` read cannot,
         # and that is the case where a comparison has nothing left to compare.
@@ -398,9 +406,157 @@ def test_a_runner_that_answers_nothing_reads_unknown_rather_than_conforming(
     assert payload["incomplete"] == ["buildx_version", "builder", "docker_engine"], \
         payload["incomplete"]
     assert code == 1, "a dead instrument is a failed observation, whatever it concludes"
-    for gap in ("observed.executing_buildx.path", "observed.engine.version",
+    for gap in ("observed.executing_buildx.resolved_path", "observed.engine.version",
                 "observed.builder.builder"):
         assert gap in payload["contract_gaps"], payload["contract_gaps"]
+
+
+def no_path_run(version: str, path_version_pairs: dict[str, tuple[str, str]],
+                commit: str = "ac30b249211430b85fb8f37b6e7154b5c47ba0b6"):
+    """A runner whose `docker buildx version` prints no install path at all."""
+    run = observe_run(version=version)
+
+    def answering(argv: list[str]) -> tuple[int, str, str]:
+        key = tuple(argv)
+        if key == ("docker", "buildx", "version"):
+            return 0, f"github.com/docker/buildx {version} {commit}", ""
+        if len(argv) == 2 and argv[1] == "version" and argv[0] in path_version_pairs:
+            printed, printed_commit = path_version_pairs[argv[0]]
+            return 0, version_line(argv[0], printed, printed_commit), ""
+        return run(argv)
+
+    answering.seen = run.seen  # type: ignore[attr-defined]
+    return answering
+
+
+def test_a_cli_that_prints_no_path_is_still_answered_by_the_binary_on_disk(
+        tmp_path: Path) -> None:
+    """Stage 2's question has a second evidence route, and it is labelled as one.
+
+    The candidate that reports the same version *and* commit is the same bytes, so when
+    exactly one matches the executing line, the binary is identified -- while `path` stays
+    null, because the CLI never said it. F-44's six records are this shape.
+    """
+    ci_commit = "ac30b249211430b85fb8f37b6e7154b5c47ba0b6"  # what F-44's records read back
+    run = no_path_run("v0.37.0", {SYSTEM_PLUGIN: ("v0.37.0", ci_commit),
+                                  ACTION_PLUGIN: ("v0.37.1", "62ab6b42a64bcf84f225559ff1015b98")})
+    _, payload = recorded(tmp_path, run)
+    executing = payload["observed"]["executing_buildx"]
+    assert executing["path"] is None and "NOT_REPORTED" in executing["path_status"]
+    assert executing["resolved_path"] == SYSTEM_PLUGIN
+    assert "only installed candidate" in executing["identified_by"]
+    assert payload["observed"]["docker_cli_plugin"]["resolves_to"] == SYSTEM_PLUGIN
+    assert payload["comparison"]["buildx_binaries"]["executing"] == SYSTEM_PLUGIN
+    assert payload["comparison"]["buildx_binaries"]["identified_by"] == executing["identified_by"]
+    assert payload["comparison"]["buildx_binaries"]["installed_on_disk"] == {
+        ACTION_PLUGIN: "v0.37.1", SYSTEM_PLUGIN: "v0.37.0"}
+    assert "contract_gaps" not in payload, payload.get("contract_gaps")
+
+
+def test_two_candidates_answering_identically_are_ambiguous_not_chosen(tmp_path: Path) -> None:
+    """When two paths carry the same bytes, picking one would be a guess dressed as a read."""
+    commit = "ac30b249211430b85fb8f37b6e7154b5c47ba0b6"
+    run = no_path_run("v0.37.0", {SYSTEM_PLUGIN: ("v0.37.0", commit),
+                                  ACTION_PLUGIN: ("v0.37.0", commit)})
+    code, payload = recorded(tmp_path, run, "--self-check")
+    executing = payload["observed"]["executing_buildx"]
+    assert executing["resolved_path"] is None
+    assert "ambiguous" in executing["identified_by"], executing["identified_by"]
+    assert sorted(executing["ambiguous_candidates"]) == sorted([SYSTEM_PLUGIN, ACTION_PLUGIN])
+    assert "observed.executing_buildx.resolved_path" in payload["contract_gaps"]
+    assert code == 1, "an unresolved Stage 2 question is a broken observation, not a blank"
+
+
+def test_a_version_no_candidate_answers_for_leaves_the_binary_unidentified(
+        tmp_path: Path) -> None:
+    """The third case: silent CLI, and nothing on disk reporting those bytes."""
+    run = no_path_run("v0.37.0", {ACTION_PLUGIN: ("v0.37.1", "62ab6b42a64bcf84f225559ff1015b98")})
+    _, payload = recorded(tmp_path, run)
+    executing = payload["observed"]["executing_buildx"]
+    assert executing["resolved_path"] is None
+    assert "not identified" in executing["identified_by"]
+    assert "ambiguous_candidates" not in executing
+    assert payload["observed"]["docker_cli_plugin"]["resolves_to"] is None
+
+
+# -- the shapes CI's first observation run printed (run 35826852945 at 13930dc) -----------
+
+INSPECT_FROM_THE_RUNNER = '''Name:          cap3a-producer-observation
+Driver:        docker-container
+Last Activity: 2026-09-23 06:27:57 +0000 UTC
+
+Nodes:
+ Name:      cap3a-producer-observation0
+ Endpoint:  unix:///var/run/docker.sock
+ Status:    running
+ Buildkit version:  v0.33.0
+ Platforms: linux/amd64, linux/amd64/v2, linux/amd64/v3, linux/386
+ Driver Options: image="moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a''' \
+'''8ca6f3cad185fb1a95a94de3"
+ BuildKit daemon flags: --allow-insecure-entitlement=network.host
+'''
+
+
+def test_a_runner_that_prints_no_per_node_image_still_reports_its_container(
+        tmp_path: Path) -> None:
+    """Measured, not imagined: buildx v0.37 prints `Buildkit version:` and no `Image:` line.
+
+    The first CI observation run therefore refused its whole builder record -- "the
+    docker-container builder named no node image, so the BuildKit container it runs cannot be
+    identified" -- while the container it was asking about was running and inspectable, and
+    the build had already succeeded through it. The declared reference is now kept as a
+    declaration and the running bytes come from the container read, which is the only layer
+    that can be compared against the pinned index.
+    """
+    code, payload = recorded(tmp_path, observe_run(inspect_output=INSPECT_FROM_THE_RUNNER),
+                             "--self-check")
+    builder = payload["observed"]["builder"]
+    assert builder["status"] == "READ" and builder["ok"] is True, builder
+    assert builder["buildkit_version"] == "v0.33.0", "read under the label the tool prints"
+    assert builder["node_image"] is None
+    assert builder["node_driver_options_image"] == BUILDKIT["image_ref"], builder
+    assert builder["container"] == CONTAINER and builder["node_status"] == "running"
+    assert builder["node_endpoint"] == "unix:///var/run/docker.sock"
+    assert builder["running_image"]["digest"] == CHILD
+    assert "no per-node Image" in builder["node_image_note"]
+    relation = payload["comparison"]["lock_vs_observed"]["digest_relation"]
+    assert relation["status"] == "CONFORMING" and CHILD in relation["index_children"]
+    assert code == 0, payload.get("contract_gaps")
+    assert not [gap for gap in payload.get("contract_gaps", [])
+                if gap.startswith("observed.builder")], payload.get("contract_gaps")
+    assert "incomplete" not in payload, payload.get("incomplete")
+
+
+def test_the_plugin_the_action_left_on_path_is_recorded_beside_the_one_that_ran(
+        tmp_path: Path) -> None:
+    """F-44's mechanism as two files and one answer.
+
+    None of the four cli-plugins directories held the action's binary at the first CI run, so
+    scanning only those would have said "the action installed nothing" while a v0.37.1 buildx
+    sat on the machine where the CLI also looks. Both versions stay in the record; the
+    comparison is computed against the binary that executed.
+    """
+    run = observe_run(version="v0.37.0", path=SYSTEM_PLUGIN, path_plugin="v0.37.1")
+    _, payload = recorded(tmp_path, run)
+    plugins = payload["observed"]["docker_cli_plugin"]
+    assert PATH_PLUGIN in plugins["candidates"], sorted(plugins["candidates"])
+    assert plugins["candidates"][PATH_PLUGIN]["version"] == "v0.37.1"
+    assert plugins["candidates"][SYSTEM_PLUGIN]["version"] == "v0.37.0"
+    assert plugins["path_lookup"]["status"] == "READ"
+    assert plugins["resolves_to"] == SYSTEM_PLUGIN
+    binaries = payload["comparison"]["buildx_binaries"]
+    assert binaries["executing"] == SYSTEM_PLUGIN and binaries["executing_version"] == "v0.37.0"
+    assert payload["comparison"]["workflow_vs_observed"]["fields"]["buildx_version"][
+        "read_back"] == "v0.37.0"
+
+
+def test_a_path_lookup_that_finds_nothing_is_a_recorded_absence(tmp_path: Path) -> None:
+    """`which docker-buildx` failing is a fact about the machine, not a missing field."""
+    _, payload = recorded(tmp_path, observe_run())
+    plugins = payload["observed"]["docker_cli_plugin"]
+    assert plugins["path_lookup"]["status"] == "ERROR"
+    assert "not found in path" in plugins["path_lookup"]["error"]
+    assert PATH_PLUGIN not in plugins["candidates"]
 
 
 def test_control_6_an_action_installed_binary_and_a_executing_one_are_both_kept(

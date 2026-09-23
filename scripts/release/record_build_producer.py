@@ -237,6 +237,21 @@ def _inspect_sections(text: str) -> tuple[dict[str, str], list[dict[str, str]]]:
     return head, nodes
 
 
+def _driver_option_image(text: str | None) -> str | None:
+    """The `image=` entry of a buildx `Driver Options:` line, quoted or not.
+
+    `buildx inspect` prints the node's declared image inside the driver options, e.g.
+    `image="moby/buildkit:v0.33.0@sha256:6c2f…"`. This is a *declaration* of what the builder
+    was told to run, not a read of what the container runs, so it gets its own field and is
+    never compared as the running identity.
+    """
+    for token in (text or "").replace(",", " ").split():
+        key, sep, value = token.partition("=")
+        if sep and key.strip() == "image":
+            return value.strip().strip('"').strip("'") or None
+    return None
+
+
 def observe_builder(run: CommandRunner, name: str | None = None) -> dict:
     """The builder that actually ran: driver, nodes, and the BuildKit identity behind them.
 
@@ -257,20 +272,30 @@ def observe_builder(run: CommandRunner, name: str | None = None) -> dict:
                 "reason": "the named builder could not be inspected"}
     head, node_rows = _inspect_sections(out)
     driver, builder = head.get("driver", ""), head.get("name", "")
+    node = node_rows[0] if node_rows else {}
     observed: dict = {"ok": True, "status": "READ", "command": command, "exit": code,
                       "requested_builder": name, "builder": builder or None,
                       "driver": driver or None, "builder_last_activity": head.get("last activity"),
                       "nodes": node_rows,
-                      "buildkit_version": (node_rows[0].get("buildkit") if node_rows else None),
-                      "node_image": (node_rows[0].get("image") if node_rows else None)}
-    if not observed["node_image"] and driver != "docker":
-        return {**observed, "ok": False, "status": "ERROR",
-                "error": "the docker-container builder named no node image, so the BuildKit "
-                         "container it runs cannot be identified from this inspect"}
+                      # buildx v0.37 labels this `Buildkit version:`; older prints `Buildkit:`.
+                      "buildkit_version": node.get("buildkit") or node.get("buildkit version"),
+                      "node_image": node.get("image") or None,
+                      "node_driver_options_image": _driver_option_image(node.get("driver options")),
+                      "node_status": node.get("status") or None,
+                      "node_endpoint": node.get("endpoint") or None,
+                      "node_platforms": node.get("platforms") or None}
+    if not observed["node_image"]:
+        # Measured at the first CI observation run (13930dc): buildx printed no `Image:` for
+        # the node at all, only `Driver Options: image="…"`. Reading that as "the container
+        # cannot be identified" discarded an inspectable container; the container read below
+        # is what says what runs, and the declared reference is kept as a separate layer.
+        observed["node_image_note"] = (
+            "buildx inspect printed no per-node Image:, so the declared reference is read "
+            "from the node's Driver Options and the running bytes from the container read")
     # The container is named after the *builder*, not the node: `buildx create --name X`
     # starts `buildx_buildkit_X`, while its first node is called `X0`. Using the node name
     # here would look up a container that never existed and report a lost observation.
-    container = f"buildx_buildkit_{(builder or (node_rows[0].get('name') or '')).strip()}"
+    container = f"buildx_buildkit_{(builder or (node.get('name') or '')).strip()}"
     image = read(run, "container_image", ["docker", "inspect", "--format",
                                           "{{.Config.Image}}	{{.Image}}", container])
     if not image["ok"]:
@@ -362,13 +387,18 @@ def resolve_pinned_ref(run: CommandRunner, ref: str | None) -> dict:
             "children": children, "attestation_descriptors": attestations}
 
 
-def executing_buildx(run: CommandRunner) -> dict:
+def executing_buildx(run: CommandRunner, plugins: dict | None = None) -> dict:
     """The buildx that answered `docker buildx` -- which is not necessarily the installed one.
 
-    The version line's first field is the binary the CLI plugin machinery dispatched to, so
-    this records the executing buildx rather than a guess about what `setup-buildx-action`
-    left on disk. `which docker` goes in too: the docker CLI is what resolves the plugin,
-    and a runner with two dockers has two answers to "which buildx".
+    The version line's first field is the binary the CLI plugin machinery dispatched to *when
+    the CLI prints one*. It does not always: this box's Docker Desktop prints
+    `github.com/docker/buildx v0.35.0-desktop.2 <commit>`, and the shape is the same one CI's
+    own producer records carry. A blank path would then be the record's answer to the only
+    question Stage 2 asks, so the resolution falls back to the binaries actually on disk: a
+    candidate reporting the same version **and** commit as the executing line is the same
+    bytes, and when exactly one such candidate exists the binary is identified -- labelled as
+    a match, never as a printed fact. Several matching candidates are ambiguous and none is
+    unidentified; both stay gaps rather than becoming a guess.
     """
     record = read(run, "executing_buildx", ["docker", "buildx", "version"])
     if record["ok"]:
@@ -377,6 +407,28 @@ def executing_buildx(run: CommandRunner) -> dict:
     record["docker_cli_path"] = which.get("value") if which["ok"] else None
     if not which["ok"]:
         record["docker_cli_path_status"] = which.get("status")
+    candidates = (plugins or {}).get("candidates") or {}
+    matches = [path for path, entry in candidates.items()
+               if entry.get("version") and entry.get("version") == record.get("version")
+               and entry.get("commit") == record.get("commit")]
+    if record.get("path"):
+        record["resolved_path"] = record["path"]
+        record["identified_by"] = "install path printed by the CLI"
+    elif record.get("ok") and len(matches) == 1:
+        record["resolved_path"] = matches[0]
+        record["identified_by"] = ("the only installed candidate whose version and commit "
+                                   "equal the executing line's")
+    else:
+        record["resolved_path"] = None
+        record["identified_by"] = (
+            "not identified: the CLI printed no install path and "
+            + ("no installed candidate answers with this version and commit" if not matches
+               else f"{len(matches)} installed candidates answer identically, so the dispatch "
+                    "target is ambiguous")
+            + (" -- the candidates are recorded beside this, and none of them is a guess"
+               if matches else ""))
+        if matches:
+            record["ambiguous_candidates"] = matches
     return record
 
 
@@ -392,6 +444,19 @@ def cli_plugins(run: CommandRunner, environ) -> dict:
     home = environ.get("HOME") or os.path.expanduser("~")
     candidates = [str(Path(template.format(home=home)) / "docker-buildx")
                   for template in PLUGIN_DIRS]
+    # The four plugin directories are not the whole story: CI's first observation run found
+    # `docker-buildx` in none of them, because `setup-buildx-action` puts one where the docker
+    # CLI also looks (PATH, and /usr/local/bin ahead of it). Asking the shell resolves both
+    # possibilities with the tool that actually has to answer, and the result is scanned like
+    # any other candidate -- version and commit read back out of the binary itself.
+    which = read(run, "docker_buildx_in_path", ["which", "docker-buildx"])
+    path_status = "READ"
+    if which["ok"] and which["value"] not in candidates:
+        candidates.append(which["value"])
+    elif not which["ok"]:
+        path_status = which["status"]
+    else:
+        path_status = "READ"
     found: dict[str, dict] = {}
     for path in candidates:
         record = read(run, f"plugin:{path}", [path, "version"])
@@ -403,6 +468,8 @@ def cli_plugins(run: CommandRunner, environ) -> dict:
         found[path] = entry
     return {"candidates": found,
             "any_installed": [p for p, e in found.items() if e["exists"]],
+            "path_lookup": {"status": path_status,
+                            "error": which.get("error") if which["ok"] is False else None},
             "resolves_to": None}
 
 
@@ -429,9 +496,12 @@ def observe(run: CommandRunner, docker_cli_build: bool = False, builder_name: st
         buildx.update(parse_version_line(buildx["value"]))
     engine = read(run, "docker_server", ["docker", "version", "--format", "{{.Server.Version}}"])
     builder = observe_builder(run, builder_name)
-    executing = executing_buildx(run)
     plugins = cli_plugins(run, env)
-    plugins["resolves_to"] = executing.get("path")
+    # The candidates are read first because they are the second evidence route: a CLI that
+    # prints no install path can still have its executing binary identified by matching the
+    # version and commit against what is actually on disk.
+    executing = executing_buildx(run, plugins)
+    plugins["resolves_to"] = executing.get("resolved_path")
     if docker_cli_build and not builder.get("ok"):
         builder = {**docker_cli_build_note(engine.get("value"), buildx.get("version")),
                    "inspected_builder": builder}
@@ -654,7 +724,8 @@ def compare(configured: dict, observed: dict, pin: dict | None = None) -> dict:
         "workflow_vs_observed": workflow_vs_observed,
         "lock_vs_observed": lock_vs_observed,
         "buildx_binaries": {
-            "executing": executing.get("path"),
+            "executing": executing.get("resolved_path"),
+            "identified_by": executing.get("identified_by"),
             "executing_version": seen_buildx,
             "installed_on_disk": {path: (entry.get("version"))
                                   for path, entry in plugins.items() if entry.get("exists")},
@@ -773,7 +844,7 @@ def oci_layout_facts(tar_path: str | None) -> dict:
 
 
 CONTRACT_REQUIRED = (
-    "observed.executing_buildx.path", "observed.executing_buildx.version",
+    "observed.executing_buildx.resolved_path", "observed.executing_buildx.version",
     "observed.docker_cli_plugin.candidates", "observed.docker_cli_plugin.resolves_to",
     "observed.builder.builder", "observed.builder.driver", "observed.builder.nodes",
     "observed.engine.version", "configured.lock.buildx_version",
