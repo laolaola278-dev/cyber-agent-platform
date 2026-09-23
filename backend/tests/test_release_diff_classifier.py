@@ -92,6 +92,72 @@ def test_unknown_file_fails_closed() -> None:
 REPO_ROOT = _HERE
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 
+#: Tokens that end a command and start a shell pipeline instead.
+_SHELL_BREAKS = ("|", ">", "<", ";", "&")
+
+
+def _logical_commands(text: str) -> list[str]:
+    """Shell commands, with backslash continuations folded into one string each."""
+    commands: list[str] = []
+    pending = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        pending = f"{pending} {stripped}".strip()
+        if pending.endswith("\\"):
+            pending = pending[:-1].strip()
+            continue
+        commands.append(pending)
+        pending = ""
+    return commands + ([pending] if pending else [])
+
+
+def _is_build_command(tokens: list[str]) -> bool:
+    """`docker build …` or `docker buildx build …` -- and nothing else that starts with them.
+
+    The scan used to ask `line.startswith("docker build")`, which is a prefix over the
+    subcommand: `docker buildx create --name "$CAP_OBSERVE_BUILDER" --use` is a builder
+    lifecycle command with no build context at all, and CI's Batch 3A observation job made
+    that read a build whose context is a quoted variable. Naming the two subcommands that
+    actually take a context is both narrower about the false positive and wider about the
+    real thing, because `docker buildx build` -- which the prefix matched by accident -- is
+    now parsed as the build it is.
+    """
+    return (tokens[:2] == ["docker", "build"]
+            or tokens[:3] == ["docker", "buildx", "build"])
+
+
+def _build_context_of(command: str) -> str | None:
+    """The positional argument a build ends with, ignoring flags and the shell around it."""
+    tokens = command.split()
+    if not _is_build_command(tokens):
+        return None
+    rest = tokens[3:] if tokens[1] == "buildx" else tokens[2:]
+    cut = [token for index, token in enumerate(rest)
+           if any(mark in token for mark in _SHELL_BREAKS)]
+    if cut:  # everything from the first redirection on belongs to the shell, not to build
+        rest = rest[:rest.index(cut[0])]
+    positional: list[str] = []
+    skip_next = False
+    for token in rest:
+        if skip_next:
+            skip_next = False
+            continue
+        if token.startswith("-"):
+            skip_next = "=" not in token  # `--file DIR/Dockerfile` takes a separate value
+            continue
+        positional.append(token)
+    return positional[-1].rstrip("/") if positional else None
+
+
+def _workflow_build_commands(workflow_dir: Path) -> list[str]:
+    """Every build command CI actually runs, across all workflow files."""
+    return [command
+            for path in sorted(workflow_dir.glob("*.yml"))
+            for command in _logical_commands(path.read_text("utf-8"))
+            if _build_context_of(command) is not None]
+
 
 def _scripts_reaches_a_container(
     root: Path,
@@ -110,7 +176,7 @@ def _scripts_reaches_a_container(
     problems: list[str] = []
     root_scripts = (root / "scripts").resolve()
     for command in builds:
-        context = command.split()[-1].rstrip("\\").rstrip("/") or "."
+        context = _build_context_of(command) or "."
         for entry in contexts.get(context, ()):
             # identity, not name: backend/scripts is its own tree and belongs
             # inside that image context
@@ -145,16 +211,16 @@ def test_repo_tooling_reaches_no_shipped_artifact() -> None:
     ``scripts/quality/`` must go back to the classifier's fail-closed default:
     a tooling change that runs inside the product is a product change.
     """
-    builds = [
-        line.strip()
-        for path in sorted(WORKFLOW_DIR.glob("*.yml"))
-        for line in path.read_text("utf-8").splitlines()
-        if line.strip().startswith("docker build")
-    ]
+    builds = _workflow_build_commands(WORKFLOW_DIR)
     assert builds, "no docker build commands found -- scanner is reading nothing"
+    assert any("docker buildx build" in command for command in builds), (
+        "the scan stopped reading `docker buildx build`: the build CI's observation job "
+        "actually runs would escape the only check on whether scripts/ reaches a container")
+    assert any(command.startswith("docker build ") for command in builds), (
+        "the plain `docker build` lines the certification workflows run are gone")
     contexts: dict[str, list[str]] = {}
     for command in builds:
-        context = command.split()[-1].rstrip("/")
+        context = _build_context_of(command) or "."
         directory = REPO_ROOT / context
         assert directory.is_dir(), f"build context {context} does not exist"
         contexts[context] = [entry.name for entry in directory.iterdir()]
@@ -198,6 +264,27 @@ def test_the_container_reach_scan_is_not_vacuous() -> None:
         }
     )
     assert by_context and "build context" in by_context[0]
+
+    # The scan's own boundary, since reading it changed from a prefix test to a word test.
+    assert _build_context_of(
+        "docker build -t x:ci -f backend/Dockerfile backend/") == "backend"
+    folded = _logical_commands(
+        'docker buildx build \\\n  --builder "$CAP_OBSERVE_BUILDER" \\\n'
+        "  --file backend/Dockerfile \\\n"
+        '  --output "type=oci,dest=scratch.oci.tar" \\\n'
+        "  backend > scratch-build.log 2>&1 || status=$?")
+    assert len(folded) == 1, folded
+    assert _build_context_of(folded[0]) == "backend", (
+        "a build continued over four lines and ending in a redirection must still read as one")
+    for not_a_build in ('docker buildx create --name "$CAP_OBSERVE_BUILDER" --use',
+                        "docker buildx inspect --bootstrap cap-builder",
+                        "docker buildx ls", "docker buildx version",
+                        "docker buildx imagetools inspect ref --raw"):
+        assert _build_context_of(not_a_build) is None, not_a_build
+    planted = _scripts_reaches_a_container(
+        REPO_ROOT, ['docker buildx build --builder b --output "type=oci,dest=x" . > log'],
+        {".": ["app", "scripts"]}, {}, "", {})
+    assert planted and "build context" in planted[0], planted
     # a context's OWN scripts tree is a different directory and stays clean
     assert not _scripts_reaches_a_container(
         **{**base_kwargs, "contexts": {"backend": ["app", "scripts"]}}

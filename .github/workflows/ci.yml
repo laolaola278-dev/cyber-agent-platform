@@ -456,3 +456,152 @@ jobs:
           name: ci-release-image-${{ matrix.image }}
           path: outputs/ci-release-images/
           if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # BATCH 3A OBSERVATION (F-44). A pinned builder is a sentence in a YAML file
+  # until something reads the builder, the executing binary and the running
+  # BuildKit container back off the machine that built. This job does that
+  # reading on a clean runner, through an explicitly named builder that
+  # publishes nothing: no login, no `--push`, no image tag. It changes no
+  # release build -- the release path stays `release.yml` ->
+  # `build_release_image.sh`, and neither is touched here.
+  #
+  # What makes this an observation rather than a restatement: the pins live in
+  # `deployment/third-party-images.json` (read by the recorder as
+  # `configured.lock`), in this job's own `env:` and `with:` blocks (read as
+  # `configured.workflow`, from the file, not from an argument), and on the
+  # runner (read back as `observed.*` plus a registry read of the pinned
+  # BuildKit index). The three are compared three ways and the answers are
+  # kept apart.
+  #
+  # A *mismatch* is the expected measurement while F-44 is open, so it is
+  # recorded and never a failure. The job goes red only when the instrument
+  # itself is broken (`--self-check`: a field the observation promised but
+  # could not read) or when the scratch build does not succeed -- because "can
+  # the intended pinned producer build CAP in Actions?" has to be answered,
+  # not assumed. The assertion runs last so the evidence is uploaded either way.
+  # ---------------------------------------------------------------------
+  producer-observation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # The three declarations the recorder reads back out of this file. They
+      # are literals on purpose: a value built from a step output or an
+      # expression exists only after the runner expands it, and `configured.
+      # workflow` is supposed to be a claim about the repository.
+      CAP_OBSERVE_BUILDER: cap3a-producer-observation
+      CAP_OBSERVE_DRIVER: docker-container
+      CAP_OBSERVE_BUILDKIT: moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+    steps:
+      - uses: actions/checkout@v6
+      # The same action ref, the same buildx version and the same BuildKit
+      # reference the release jobs ask for -- so what this job measures about
+      # which binary executes is a measurement of the same installation path,
+      # not of a nearby one.
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
+        with:
+          buildx-version: v0.37.1
+          driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      - name: Create the named, non-publishing observation builder
+        run: |
+          set -euo pipefail
+          docker buildx create --name "$CAP_OBSERVE_BUILDER" \
+            --driver "$CAP_OBSERVE_DRIVER" \
+            --driver-opt "image=$CAP_OBSERVE_BUILDKIT" \
+            --use
+          docker buildx inspect --bootstrap "$CAP_OBSERVE_BUILDER"
+      - name: Scratch-build cap-backend through that builder (untagged, unpushed)
+        # `--provenance=false --sbom=false` is what the CI dry-build already
+        # runs with: attestations belong to what a registry serves, and nothing
+        # here is served anywhere. The exporter writes an OCI archive, which is
+        # where the F-39 fields (config digest, layer digests, diff_ids, index
+        # composition) come from without a registry round trip.
+        run: |
+          set -uo pipefail
+          mkdir -p outputs/producer-observation
+          status=0
+          docker buildx build \
+            --builder "$CAP_OBSERVE_BUILDER" \
+            --file backend/Dockerfile \
+            --build-arg VERSION=0.0.0-producer-observation \
+            --build-arg REVISION="$GITHUB_SHA" \
+            --provenance=false --sbom=false \
+            --metadata-file outputs/producer-observation/scratch.metadata.json \
+            --output "type=oci,dest=outputs/producer-observation/scratch.oci.tar" \
+            backend > outputs/producer-observation/scratch-build.log 2>&1 || status=$?
+          echo "$status" > outputs/producer-observation/scratch-build.exit
+          echo "scratch build exit status: $status"
+          tail -n 30 outputs/producer-observation/scratch-build.log
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install locked dependencies
+        run: uv sync --project backend --frozen --extra dev
+      - name: Record the producer (observe mode, never a build change)
+        run: |
+          set -uo pipefail
+          code=0
+          uv run --project backend python scripts/release/record_build_producer.py \
+            --mode observe --self-check \
+            --builder "$CAP_OBSERVE_BUILDER" \
+            --workflow .github/workflows/ci.yml --job producer-observation \
+            --lock deployment/third-party-images.json \
+            --oci-tar outputs/producer-observation/scratch.oci.tar \
+            --dockerfile backend/Dockerfile \
+            --out outputs/producer-observation/producer-evidence.json \
+            > outputs/producer-observation/producer-evidence.stdout.json || code=$?
+          echo "$code" > outputs/producer-observation/record.exit
+          python3 - <<'PY'
+          import json
+          payload = json.load(open("outputs/producer-observation/producer-evidence.json"))
+          alignment = payload["producer_alignment"]
+          print("producer alignment:", alignment["verdict"], alignment["components"])
+          for name, block in alignment["components"].items():
+              print(f"  {name}: {block}")
+          print("contract gaps:", payload.get("contract_gaps", []))
+          print("builder:", json.dumps(payload["observed"]["builder"].get(
+              "running_image", payload["observed"]["builder"].get("error"))))
+          print("executing buildx:", payload["observed"]["executing_buildx"].get("path"),
+                payload["observed"]["executing_buildx"].get("version"))
+          print("f39 measurement:", payload["f39_measurement"].get("measurement_status"))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cap-3a-producer-observation
+          # The OCI archive itself stays out (it is hundreds of MB and its
+          # digests are already transcribed into the JSON); the record, the two
+          # exit codes, the build log and the buildx metadata file travel.
+          path: |
+            outputs/producer-observation/producer-evidence.json
+            outputs/producer-observation/producer-evidence.stdout.json
+            outputs/producer-observation/scratch-build.exit
+            outputs/producer-observation/scratch-build.log
+            outputs/producer-observation/scratch.metadata.json
+            outputs/producer-observation/record.exit
+          if-no-files-found: error
+      - name: Fail only on a broken observation or a build that did not succeed
+        if: always()
+        run: |
+          set -uo pipefail
+          problems=()
+          [[ -f outputs/producer-observation/scratch-build.exit ]] \
+            || problems+=("the scratch build step never recorded an exit status")
+          [[ "$(cat outputs/producer-observation/scratch-build.exit 2>/dev/null)" == "0" ]] \
+            || problems+=("the scratch build did not succeed (exit $(cat outputs/producer-observation/scratch-build.exit 2>/dev/null)) -- see scratch-build.log")
+          [[ -f outputs/producer-observation/producer-evidence.json ]] \
+            || problems+=("no producer evidence was written")
+          [[ "$(cat outputs/producer-observation/record.exit 2>/dev/null)" == "0" ]] \
+            || problems+=("the observation contract was not satisfied (exit $(cat outputs/producer-observation/record.exit 2>/dev/null)) -- see contract_gaps in producer-evidence.json")
+          if (( ${#problems[@]} )); then
+            # Note what a mismatch is NOT: the three-way comparison above can
+            # read MISMATCH and this job still passes, because measuring a
+            # disagreement is the point of the job (Batch 3A blocks nothing).
+            for problem in "${problems[@]}"; do echo "FAIL: $problem"; done
+            exit 1
+          fi
+          echo "observation recorded; any MISMATCH above is measured evidence, not a verdict"
