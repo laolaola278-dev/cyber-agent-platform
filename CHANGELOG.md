@@ -374,6 +374,39 @@ inherits from that candidate rather than re-certifying it.
   fields read from that archive. **Nothing about the release build changed**: `release.yml`
   and `build_release_image.sh` still name no builder, no gate reads these fields, and a
   measured mismatch blocks nothing yet -- that is step 2's decision, deferred by approval.
+- **Producer observation, step 2 stage A2.1: the producer is now an executable this repository
+  chooses (Batch 3).** Batch 3A could report that a GitHub runner had executed `v0.37.0` under a
+  `v0.37.1` declaration; it could not make the answer stop depending on the runner. A2.1 does
+  that, in CI's non-publishing observation job only. `scripts/release/controlled_buildx.json`
+  pins one buildx by version (`v0.37.1`), by the git commit its release tag points at
+  (`0b265a9f62db554fa9aba6dd19e1bd5704bc7d8a`, dereferenced from the annotated tag) and by the
+  sha256 of the released linux-amd64 asset; the job downloads it to a path declared in its own
+  `env:` block, verifies the bytes against the repository's digest before executing them, creates
+  the named builder with that path, and builds with it. `docker buildx`'s plugin dispatch is still
+  read and still recorded -- as `cli_plugin_buildx_version`, explicitly not the producer -- because
+  F-44's disagreement is evidence, and deleting it would make a green A2.1 worth less. The
+  executable's own version line prints no install path (measured, and it corrected an assumption
+  this batch carried), so path identity is carried by the hash of the file and by `argv[0]` of
+  each build, read back from a file the build step writes; where a buildx does print a path, the
+  field is required and a contradiction reads MISMATCH.
+  The observation now covers all five shipped images rather than one representative, and
+  `cap-sandbox-browser` is included without a registry: its base is the HTTP sandbox image
+  *of the same round*, handed to the pinned builder as a named OCI layout addressed by that
+  archive's own manifest digest, so the fifth image no longer has to be built by the docker
+  driver to be built at all. `configured` gained a third authority (`configured.controlled`,
+  compared with the release lock as `controlled_pin_vs_lock` rather than merged into it), and
+  `lock_vs_observed` now requires both digest layers -- each scored against its own pinned-side
+  value, so neither layer can answer for the other. `--combine` scores the five records as one
+  round and refuses a set with a missing image, a failed build, an unresolved base or a record
+  from another run.
+  Step 2's other half is not done here: the release image path still runs `docker buildx` with no
+  `--builder`, a producer mismatch still blocks nothing, no new candidate is frozen, and no
+  release tag exists. **F-44 stays open** for exactly that reason. Two things this round filed
+  against itself: `deployment/` and the Dockerfiles are off limits to A2.1 by the classifier, so
+  the executable pin lives in `scripts/release/` and must agree with the lock rather than extend
+  it; and **F-47 is opened** because `build_release_image.sh` asserts that "the release gate below
+  refuses a pushed image whose producer was never read" while no gate in `release.yml` reads the
+  producer field at all -- recorded evidence is not enforced evidence, which is A2.2's job.
 
 ### Fixed
 

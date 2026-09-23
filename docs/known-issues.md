@@ -468,9 +468,11 @@ listed so that an import name is not mistaken for a working capability.
     question that can never be answered) and reads the registry down to the pinned index's
     child for the platform the running image itself reports, to that child's `config.digest`.
     Two named relations follow -- `digest_relation` and `config_digest_relation` -- with the
-    manifest layer left as the only required digest field, so the easier layer cannot satisfy
-    the stronger claim; an equality test across those strings without the layering would call
-    the conforming case a mismatch, and a tag match would call an unknown one a pass. What CI
+    manifest layer left as the only required digest field *at Batch 3A*, so the easier layer
+    cannot satisfy the stronger claim; an equality test across those strings without the layering
+    would call the conforming case a mismatch, and a tag match would call an unknown one a pass.
+    (From Batch 3 A2.1 both layers are required, each scored against its own pinned-side value,
+    which is stricter rather than substitutable.) What CI
     measured at `7d3d6a5` (run `35834970797`): both digest layers `CONFORMING` -- the
     builder's running image is the pinned BuildKit -- while `buildx_version` is still `v0.37.0`
     against a `v0.37.1` declaration, so the open half of F-44 is now the CLI, not the daemon.
@@ -482,6 +484,27 @@ listed so that an import name is not mistaken for a working capability.
     evidence in an artifact, not a refusal, so **F-44 stays OPEN** until the project decides
     whether a mismatch blocks publication and the release path is switched onto an observed
     producer.
+    Batch 3 A2.1 (2026-09-23) took the CLI half, in the observation job only. The repository now
+    pins one buildx executable -- `scripts/release/controlled_buildx.json`, by version `v0.37.1`,
+    the commit that version's annotated tag dereferences to, and the sha256 of the released
+    linux-amd64 asset -- the job downloads it to a path declared in its own `env:` block,
+    verifies the bytes before executing them, creates the named builder with that absolute path,
+    builds with it, and asks the builder and the registry through it too. `docker buildx`'s plugin
+    answer is still read and still recorded, explicitly not as the producer. All **five** shipped
+    images are now observed, `cap-sandbox-browser` included, its base bound to the HTTP sandbox
+    image of the same round by that round's own manifest digest through a local OCI layout -- no
+    registry, no host docker store, and no docker-driver fallback. Measured at `b98eb3b`
+    (run `35868200920`): five records, `lock_vs_workflow`, `controlled_pin_vs_lock`,
+    `workflow_vs_observed` and `lock_vs_observed` all `CONFORMING`, `producer_alignment`
+    `CONFORMING`, both digest layers scored, every build exit 0 -- on a runner whose
+    `docker buildx version` answered **`v0.37.0`** against the same `v0.37.1` pin. Which buildx
+    built an image has stopped being a question about the runner.
+    What keeps F-44 open is the half A2.1 was not approved to do: the release image path still
+    builds through `docker buildx` with no `--builder`, a producer mismatch still blocks nothing,
+    and no *published* image has been produced by the pinned executable. See
+    `docs/quality/cap-post-rc-batch-3-producer-authority-2026-09-23.md` §A–§H for the
+    measurement and §I–§S for the A2.2 work that is deliberately not done; see **F-47** for why
+    "the producer is recorded" must not be read as "the producer is enforced".
     The decision this waits on -- whether the project requires the published-image build path to
     *be* the pinned producer, or should instead treat the runner's engine as the intended
     producer and stop asserting the container -- is worked out with two contracts and their prices
@@ -565,6 +588,55 @@ listed so that an import name is not mistaken for a working capability.
     from F-44's producer question -- different file, different gate, different migration -- so
     the two must not be merged into one "certification is soft" complaint.
     Batch 3 §I reviews this as policy and changes no gate.
+
+14. **Release evidence carries a producer block no gate reads (F-47) — OPEN.**
+    Found while wiring Batch 3 A2.1, by looking for the consumer of the record the release
+    writes rather than by trusting the sentence above it. `scripts/release/build_release_image.sh`
+    states, at the point it writes the field:
+
+    > Absent producer is a finding, not a blank: the release gate below refuses a pushed
+    > image whose producer was never read.
+
+    There is no such refusal. `grep -c producer .github/workflows/release.yml` answers **0**, and
+    the job that decides whether an image set may be published -- `release-image-completeness` --
+    requires exactly these fields per image:
+
+    ```
+    REQUIRED_FIELDS = ("tag", "index_digest", "platform_digest_linux_amd64",
+                       "dockerfile_sha256", "context_sha256", "base_refs", "source_revision")
+    ```
+
+    plus `pushed`, the two attestations and a Trivy record of the published ref. `producer` is in
+    none of them, and `verify-certification` reads certification runs, not image records. So a
+    release in which every image's producer was never recorded -- the recorder fails, the
+    `WARNING` line scrolls past, `"producer": {"recorded": false}` lands in the JSON -- publishes
+    unchanged. The failure mode is exactly the one F-33 was filed over for verdicts: an
+    *evidence-shaped* field that nothing is obliged to read.
+
+    What makes this worth its own entry rather than a fix-up is that the consequence is already
+    on the record. F-44's mismatch (`v0.37.0` executing under a `v0.37.1` declaration, 6/6
+    records at candidate `257ba18`) was *visible* precisely because the block was written, and
+    was *harmless* for the same reason: nothing consumed it. Recording a disagreement and
+    refusing on a disagreement are two different features, and only the first was built.
+
+    Batch 3 A2.1 does **not** close this, and says so: it makes the observation deterministic
+    (a pinned, hashed, explicitly-invoked buildx; five images; a set verdict computed by
+    `record_build_producer.py --combine`) and it changes no publication path. `--combine` scores
+    records inside a **non-publishing CI job**, which is an observation instrument, not a gate --
+    the distinction A2.1's own acceptance rule depends on.
+
+    What would close it, and the price: A2.2's blocking contract has to be *in* the completeness
+    gate, not beside it -- per image, refuse on `MISMATCH`, `UNKNOWN`, `ERROR` or absent for the
+    required producer fields (controlled executable identity, version, commit/integrity, builder
+    name, driver, running BuildKit digest, pinned-index relation, running-config relation), and
+    prove the five records came from the same run and the same revision as the images they
+    describe, so a conforming record cannot be carried in from a friendlier build. `ERROR`
+    ("could not establish identity") and `MISMATCH` ("established, and it disagrees") stay
+    separate for diagnosis while both block, because they call for different repairs. The cost is
+    certification, not code: switching the release path is producer-affecting by policy even
+    where the classifier reads `INHERITED`, so it needs a new candidate and the full
+    recertification set. Until then this entry is the reason "the producer is recorded" must not
+    be read as "the producer is enforced".
 
 ## Live verification against a real PostgreSQL server
 
