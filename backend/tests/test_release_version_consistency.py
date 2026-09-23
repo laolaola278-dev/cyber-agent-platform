@@ -205,10 +205,29 @@ def test_helm_values_tag_every_image_coordinate_they_declare() -> None:
 #: overrides `settings.app_version` at runtime, so a stale default makes a
 #: deployment self-report the wrong version. Substitutions without a literal
 #: (`${APP_VERSION}`, `${APP_VERSION:?required}`) are not matched.
+#:
+#: There is deliberately no end-of-line anchor here. The rule used to carry `\s*$`,
+#: which made a literal invisible to the guard as soon as the line continued -- and
+#: `.github/workflows/ci.yml` carried exactly such a line (`--build-arg
+#: VERSION=0.0.0-…` followed by ` \`) through five observation runs while the guard
+#: that exists to stop CI stating a version reported nothing. A rule a backslash can
+#: step around is not the rule that was described.
 _VERSION_LITERAL = re.compile(
     r"""VERSION\S*\s*[:=]\s*(?:\$\{[A-Z_]+:-)?(?P<quote>['\"]?)"""
-    r"""(?P<value>\d+\.\d+\.\d+[0-9A-Za-z.+-]*)(?P=quote)\}?\s*$"""
+    r"""(?P<value>\d+\.\d+\.\d+[0-9A-Za-z.+-]*)(?P=quote)\}?"""
 )
+
+
+def version_literal_on(line: str) -> bool:
+    """Whether one line states a version the build layer should have derived.
+
+    Comment-only lines are excluded: a comment mentioning a version reports history, and what
+    this guard exists to catch is a value that reaches a builder. A trailing comment on a
+    command line is still scanned, because the command part is what runs.
+    """
+    if line.lstrip().startswith("#"):
+        return False
+    return bool(_VERSION_LITERAL.search(line))
 
 
 def _deriving_sources() -> list[Path]:
@@ -240,7 +259,7 @@ def test_no_hardcoded_version_literal_in_build_or_packaging() -> None:
     for path in sources:
         rel = path.relative_to(PROJECT_ROOT).as_posix()
         for lineno, line in enumerate(path.read_text("utf-8").splitlines(), start=1):
-            if _VERSION_LITERAL.search(line):
+            if version_literal_on(line):
                 offenders.append(f"{rel}:{lineno}: {line.strip()}")
 
     assert not offenders, (
@@ -248,3 +267,29 @@ def test_no_hardcoded_version_literal_in_build_or_packaging() -> None:
         "version (read it from the VERSION file / a step output instead):\n  "
         + "\n  ".join(offenders)
     )
+
+
+def test_the_guard_reads_a_continued_line_as_well_as_a_terminated_one() -> None:
+    r"""The control that keeps the anchor's removal from being a claim.
+
+    The old pattern ended in `\s*$`, so `--build-arg VERSION=0.0.0-x \` -- a literal,
+    continued -- was not an offender, and the guard passed over the line it was written for.
+    Asserting the two forms side by side is what makes "we removed the anchor" mean something:
+    both are caught now, and a derived substitution is still not.
+    """
+    caught = [
+        "          build-args: VERSION=1.0.0-rc1",                     # the original defect
+        '          APP_VERSION: ${APP_VERSION:-1.0.0-rc1}',            # the Compose default
+        "                  --build-arg VERSION=0.0.0-producer-observation \\",  # continued
+        '              args+=(--build-arg "VERSION=2.5.1" --push)',    # mid-line
+    ]
+    for line in caught:
+        assert version_literal_on(line), f"the guard still misses: {line}"
+    derived = [
+        '                  --build-arg "VERSION=${OBSERVE_VERSION}"',
+        "        version: ${{ needs.validate-tag.outputs.version }}",
+        "          APP_VERSION: ${APP_VERSION:?required}",
+        "          # a CI VERSION=1.0.0-rc1 once mislabelled every CI-built image",
+    ]
+    for line in derived:
+        assert not version_literal_on(line), f"the guard flags something that derives it: {line}"

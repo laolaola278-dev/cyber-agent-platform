@@ -582,8 +582,13 @@ jobs:
             echo "$image: build exit $status"
             tail -n 20 "$OUT/$image.build.log"
           }
+          # The version an observation build reports is the repository's canonical version
+          # plus a metadata marker, read from VERSION rather than typed here. A literal in a
+          # workflow is correct only on the day it is written -- and `test_no_hardcoded_version_literal_in_build_or_packaging`
+          # exists because a CI `VERSION=1.0.0-rc1` once mislabelled every CI-built image.
+          OBSERVE_VERSION="$(cat VERSION)+producer-observation"
           COMMON=(--builder "$CAP_OBSERVE_BUILDER" --provenance=false --sbom=false
-                  --build-arg VERSION=0.0.0-producer-observation
+                  --build-arg "VERSION=${OBSERVE_VERSION}"
                   --build-arg "REVISION=$GITHUB_SHA")
           # The sandbox images build from a staged context, through the same
           # staging script the release uses: an observation of a different file
