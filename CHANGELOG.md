@@ -357,11 +357,16 @@ inherits from that candidate rather than re-certifying it.
   config image, image ID and `RepoDigests`, the engine, the runner) as three separate
   sources, and scores them with **three** answers -- `lock_vs_workflow`,
   `workflow_vs_observed`, `lock_vs_observed` -- rather than one boolean. Because a pinned
-  BuildKit digest names a *manifest list* while a running container reports the *child
-  manifest* it pulled and `docker inspect` reports the *config* digest, the digest comparison
-  resolves the pinned index in the registry and accepts a platform child as conforming;
-  string equality across those three layers would be a false mismatch, and tag equality a
-  false match. An unreadable side is `UNKNOWN` with a reason, never a match, and
+  BuildKit digest names a *manifest list*, an image's `RepoDigests` name the *child manifest*
+  the daemon fetched, and `docker inspect` reports the *config* digest, the record reads all
+  three levels: the pull digest is asked of the image object that carries it (a container has
+  no `RepoDigests`, so asking one is a question that can never be answered), and the registry
+  read goes past the index to the child for the platform the running image itself reports, to
+  its `config.digest`. The two layers are then scored as two named relations --
+  `digest_relation` and `config_digest_relation` -- with the manifest layer left as the only
+  required digest field, so the easier layer can never satisfy the stronger claim; string
+  equality across those layers would be a false mismatch, and tag equality a false match. An
+  unreadable side is `UNKNOWN` with a reason, never a match, and
   `--self-check` fails on a field the observation promised but could not read -- not on a
   disagreement. CI's new `producer-observation` job creates a named, non-publishing
   `docker-container` builder, scratch-builds `cap-backend` through it with `--output

@@ -462,11 +462,19 @@ listed so that an import name is not mistaken for a working capability.
     image, image ID and `RepoDigests`, the engine, the runner) -- and answers three
     comparisons (`lock_vs_workflow`, `workflow_vs_observed`, `lock_vs_observed`) instead of
     one boolean. The digest question is layered rather than string-compared: the lock pins a
-    manifest *list*, a running container reports the *child manifest* it pulled and
-    `docker inspect` reports the *config* digest, so the recorder resolves the pinned index
-    in the registry and accepts a platform child as conforming -- an equality test across
-    those three strings would call the conforming case a mismatch, and a tag match would call
-    an unknown one a pass. `.github/workflows/ci.yml`'s `producer-observation` job runs it
+    manifest *list*, an image's `RepoDigests` name the *child manifest* fetched for a platform
+    and `docker inspect` reports the *config* digest, so the recorder asks the pull digest of
+    the image object that carries it (a container has no `RepoDigests`, and asking one is a
+    question that can never be answered) and reads the registry down to the pinned index's
+    child for the platform the running image itself reports, to that child's `config.digest`.
+    Two named relations follow -- `digest_relation` and `config_digest_relation` -- with the
+    manifest layer left as the only required digest field, so the easier layer cannot satisfy
+    the stronger claim; an equality test across those strings without the layering would call
+    the conforming case a mismatch, and a tag match would call an unknown one a pass. What CI
+    measured at `7d3d6a5` (run `35834970797`): both digest layers `CONFORMING` -- the
+    builder's running image is the pinned BuildKit -- while `buildx_version` is still `v0.37.0`
+    against a `v0.37.1` declaration, so the open half of F-44 is now the CLI, not the daemon.
+    `.github/workflows/ci.yml`'s `producer-observation` job runs it
     against a named, non-publishing `docker-container` builder and a scratch untagged
     `cap-backend` build, and uploads the record. Two things do **not** change: the release
     build path still names no builder (`release.yml` and `build_release_image.sh` are
