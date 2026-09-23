@@ -113,27 +113,44 @@ def _logical_commands(text: str) -> list[str]:
     return commands + ([pending] if pending else [])
 
 
-def _is_build_command(tokens: list[str]) -> bool:
-    """`docker build …` or `docker buildx build …` -- and nothing else that starts with them.
+def _build_arguments_start(tokens: list[str]) -> int | None:
+    """Where a build's own arguments begin, or None when the line builds nothing.
 
-    The scan used to ask `line.startswith("docker build")`, which is a prefix over the
-    subcommand: `docker buildx create --name "$CAP_OBSERVE_BUILDER" --use` is a builder
-    lifecycle command with no build context at all, and CI's Batch 3A observation job made
-    that read a build whose context is a quoted variable. Naming the two subcommands that
-    actually take a context is both narrower about the false positive and wider about the
-    real thing, because `docker buildx build` -- which the prefix matched by accident -- is
-    now parsed as the build it is.
+    Three shapes are recognised, and the third exists because of A2.1:
+
+    * ``docker build …`` -- the certification workflows.
+    * ``docker buildx build …`` -- what the release script runs.
+    * ``"$BX" build …`` -- a *pinned executable invoked through a variable*, which is exactly
+      what A2.1's observation job does on purpose. A scanner that read only the literal
+      ``docker`` prefix would have stopped covering the five builds whose contexts this batch
+      added, i.e. the check would have gone quiet at the moment it mattered most.
+
+    The scan previously asked ``line.startswith("docker build")``, a prefix over the
+    subcommand: ``docker buildx create --name … --use`` is a builder lifecycle command with no
+    build context at all, and CI's Batch 3A observation job made that read a build whose
+    context is a quoted variable.
     """
-    return (tokens[:2] == ["docker", "build"]
-            or tokens[:3] == ["docker", "buildx", "build"])
+    if tokens[:2] == ["docker", "build"]:
+        return 2
+    if tokens[:3] == ["docker", "buildx", "build"]:
+        return 3
+    for index, token in enumerate(tokens[:6]):
+        if token == "build" and index and "BX" in tokens[index - 1].upper():
+            return index + 1
+    return None
+
+
+def _is_build_command(tokens: list[str]) -> bool:
+    return _build_arguments_start(tokens) is not None
 
 
 def _build_context_of(command: str) -> str | None:
     """The positional argument a build ends with, ignoring flags and the shell around it."""
     tokens = command.split()
-    if not _is_build_command(tokens):
+    start = _build_arguments_start(tokens)
+    if start is None:
         return None
-    rest = tokens[3:] if tokens[1] == "buildx" else tokens[2:]
+    rest = tokens[start:]
     cut = [token for index, token in enumerate(rest)
            if any(mark in token for mark in _SHELL_BREAKS)]
     if cut:  # everything from the first redirection on belongs to the shell, not to build
@@ -213,17 +230,35 @@ def test_repo_tooling_reaches_no_shipped_artifact() -> None:
     """
     builds = _workflow_build_commands(WORKFLOW_DIR)
     assert builds, "no docker build commands found -- scanner is reading nothing"
-    assert any("docker buildx build" in command for command in builds), (
-        "the scan stopped reading `docker buildx build`: the build CI's observation job "
-        "actually runs would escape the only check on whether scripts/ reaches a container")
+    # A2.1 replaced the observation job's literal `docker buildx build` with a pinned
+    # executable invoked by absolute path through a shell variable. That is the shape the
+    # scan has to follow, so the count of variable-headed builds it now reads is asserted
+    # rather than the string it used to find: the day the scan reads five again is the day
+    # this stops covering the builds that ship the product.
+    pinned = [command for command in builds
+              if "docker buildx build" not in command and "BX" in command.upper()]
+    assert len(pinned) >= 5, (
+        f"the scanner reads {len(pinned)} pinned-executable builds; A2.1 runs five, and a "
+        "build whose executable is a variable is exactly the one this check must not miss")
     assert any(command.startswith("docker build ") for command in builds), (
         "the plain `docker build` lines the certification workflows run are gone")
     contexts: dict[str, list[str]] = {}
+    runtime_only = []
     for command in builds:
         context = _build_context_of(command) or "."
+        if "$" in context or "{" in context:
+            # A staged context directory that only exists on a job runner (A2.1 assembles
+            # three of them through `prepare_sandbox_context.sh`). It cannot be listed here,
+            # and pretending otherwise would fail the test for a path that is not a bug --
+            # so it is counted and reported, and the *repository* contexts still are checked.
+            runtime_only.append(context)
+            continue
         directory = REPO_ROOT / context
         assert directory.is_dir(), f"build context {context} does not exist"
         contexts[context] = [entry.name for entry in directory.iterdir()]
+    assert contexts, "no build context could be checked -- the scan is reading nothing real"
+    assert all("context-" in item for item in runtime_only), (
+        f"an unresolvable context that is not a staged sandbox directory: {runtime_only}")
     dockerfiles = {
         "backend/Dockerfile": (REPO_ROOT / "backend" / "Dockerfile").read_text("utf-8"),
         "backend/docker/egress-proxy/Dockerfile": (

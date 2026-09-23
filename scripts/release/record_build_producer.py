@@ -1,32 +1,38 @@
 """Record the *producer* of a build, separating what was declared from what was read back.
 
-B2 of the post-rc hardening plan pinned the builder; Batch 3A adds the half that was
-missing. Pinning is only a claim until the evidence says **which binary executed the build,
-which builder it selected, and what image that builder's container is actually running** --
-and it says so from the tool, not from the YAML that expressed the wish. Three sources are
-therefore kept apart on purpose:
+B2 of the post-rc hardening plan pinned the builder; Batch 3A added the half that was missing,
+and Batch 3 A2.1 added the half 3A could only measure. Four sources are kept apart on purpose:
 
     configured.lock       what deployment/third-party-images.json declares
     configured.workflow   what the workflow file declares (its own pins, its own builder name)
-    observed.*            independent read-back of the runner, the CLI, the builder and its
-                          container -- plus a registry read of the pinned reference
+    configured.controlled what scripts/release/controlled_buildx.json pins the executable to be
+    observed.*            read-back of the runner, the CLI, the builder, its container and the
+                          controlled executable -- plus a registry read of the pinned reference
 
-and they are compared three ways (``lock_vs_workflow``, ``workflow_vs_observed``,
-``lock_vs_observed``) rather than collapsed into one boolean: a release that agrees with
-itself while disagreeing with the runner is exactly the F-44 situation this file was written
-to make visible.
+and they are compared by name (``lock_vs_workflow``, ``controlled_pin_vs_lock``,
+``workflow_vs_observed``, ``lock_vs_observed``) rather than collapsed into one boolean: a
+release that agrees with itself while disagreeing with the runner is exactly the F-44
+situation these files were written to make visible.
+
+A2.1 also changes *which* buildx a record is about. ``observed.controlled_buildx`` invokes the
+pinned executable by absolute path and reads back its version, its commit and a hash of its
+bytes; ``observed.build_invocation`` reads back the argv the build step recorded, so "the
+pinned executable built these bytes" is falsifiable rather than asserted; and once that binary
+answers, the builder and registry reads go through it too. What ``docker buildx`` would have
+dispatched to is still read and still reported, unscored -- A2.1 removes the runner from
+producer identity, it does not delete the measurement that showed the runner was there.
 
 Nothing is invented. A read that fails is reported with its status and the complaint that
 explains it; an unreadable value never becomes ``None``-and-therefore-matches, because a
 blank field a reader cannot distinguish from an unrecorded one is how F-33's gate read a
 verdict nobody wrote.
 
-``--mode observe`` is the non-publishing observation path used by CI's producer-observation
-job. The default mode is the one ``build_release_image.sh`` calls, and its keys are
-additive: switching the release build onto the pinned builder is a later decision, so
-nothing here changes what the release build command is or whether a mismatch blocks
-publication -- it only makes the difference readable, and fails on a *broken observation*
-rather than on an unwelcome measurement.
+``--mode observe`` is the non-publishing observation path CI's producer-observation job calls,
+once per image, and ``--combine`` scores those records as one round. The default mode is the
+one ``build_release_image.sh`` calls, and its keys stay additive: A2.1 does not switch the
+release build onto the pinned executable, so ``--mode build`` records the controlled layer as
+``NOT_PROVIDED`` rather than as a producer nobody declared. ``--self-check`` fails on a broken
+instrument, never on an unwelcome measurement.
 """
 
 from __future__ import annotations
@@ -65,6 +71,11 @@ PLUGIN_DIRS = (
 )
 
 ATTESTATION_REF_TYPE = "oci.ref.attestation"
+
+#: The buildx every read used before Batch 3 A2.1, and the one the release path still uses:
+#: `docker buildx`, whose plugin dispatch is exactly what A2.1 removes from producer identity.
+#: Once a controlled executable has been read off the machine, `buildx_prefix` replaces this.
+DEFAULT_BUILDX_PREFIX = ("docker", "buildx")
 
 
 def run_command(argv: list[str]) -> tuple[int, str, str]:
@@ -308,7 +319,8 @@ def _buildkit_containers(run: CommandRunner) -> tuple[list[dict], str]:
     return rows, record.get("status", "READ")
 
 
-def observe_builder(run: CommandRunner, name: str | None = None) -> dict:
+def observe_builder(run: CommandRunner, name: str | None = None,
+                    bx: tuple[str, ...] = DEFAULT_BUILDX_PREFIX) -> dict:
     """The builder that actually ran: driver, nodes, and the BuildKit identity behind them.
 
     `--builder <name>` is passed when the caller named one explicitly, because `docker
@@ -316,8 +328,12 @@ def observe_builder(run: CommandRunner, name: str | None = None) -> dict:
     runner where `setup-buildx-action` ran, is a builder nobody chose by name. Recording
     the named one is the difference between "a builder exists with these settings" and
     "the build went there".
+
+    `bx` says which buildx asks the question. Once A2.1 has read a controlled executable off
+    the machine the instrument uses it: a pinned BuildKit container read through an unpinned
+    CLI would leave the runner inside the measurement that is supposed to be about the pin.
     """
-    argv = ["docker", "buildx", "inspect"] + ([f"--builder={name}"] if name else [])
+    argv = [*bx, "inspect"] + ([f"--builder={name}"] if name else [])
     command = " ".join(shlex.quote(part) for part in argv)
     code, out, err = run(argv)
     if code != 0 or not out.strip():
@@ -450,7 +466,8 @@ def observe_builder(run: CommandRunner, name: str | None = None) -> dict:
 
 
 def resolve_pinned_ref(run: CommandRunner, ref: str | None,
-                       target_platform: str | None = None) -> dict:
+                       target_platform: str | None = None,
+                       bx: tuple[str, ...] = DEFAULT_BUILDX_PREFIX) -> dict:
     """Ask the *registry* what the pinned BuildKit reference contains -- a separate layer.
 
     The pinned digest is a manifest-list, so the only way to check a running child
@@ -469,7 +486,7 @@ def resolve_pinned_ref(run: CommandRunner, ref: str | None,
     if not ref:
         return {"ok": False, "status": "NOT_APPLICABLE",
                 "error": "no pinned BuildKit reference was declared"}
-    code, out, err = run(["docker", "buildx", "imagetools", "inspect", ref, "--raw"])
+    code, out, err = run([*bx, "imagetools", "inspect", ref, "--raw"])
     if code != 0 or not out.strip():
         return {"ok": False, "status": "ERROR", "ref": ref, "exit": code,
                 "error": ((err.splitlines() or [""])[0].strip() or out)[:ERROR_TEXT_LIMIT]}
@@ -492,11 +509,12 @@ def resolve_pinned_ref(run: CommandRunner, ref: str | None,
             "media_type": (doc.get("mediaType") if isinstance(doc, dict) else None),
             "is_index": bool(isinstance(doc, dict) and doc.get("manifests")),
             "children": children, "attestation_descriptors": attestations,
-            "platform_child": _pinned_platform_child(run, ref, children, target_platform)}
+            "platform_child": _pinned_platform_child(run, ref, children, target_platform, bx)}
 
 
 def _pinned_platform_child(run: CommandRunner, ref: str, children: list[dict],
-                           target_platform: str | None) -> dict:
+                           target_platform: str | None,
+                           bx: tuple[str, ...] = DEFAULT_BUILDX_PREFIX) -> dict:
     """The pinned index's entry for one platform, read down to its config digest."""
     if not target_platform:
         return {"platform": None, "status": "NOT_REQUESTED",
@@ -516,7 +534,7 @@ def _pinned_platform_child(run: CommandRunner, ref: str, children: list[dict],
     if not coordinate or not child_digest:
         return {"platform": target_platform, "status": "ERROR",
                 "error": f"the child {child_digest!r} cannot be addressed on {repository!r}"}
-    code, out, err = run(["docker", "buildx", "imagetools", "inspect", coordinate, "--raw"])
+    code, out, err = run([*bx, "imagetools", "inspect", coordinate, "--raw"])
     child = {"platform": target_platform, "manifest_digest": child_digest,
              "coordinate": coordinate}
     if code != 0 or not out.strip():
@@ -623,6 +641,232 @@ def cli_plugins(run: CommandRunner, environ) -> dict:
             "resolves_to": None}
 
 
+def buildx_prefix(controlled: dict | None) -> tuple[str, ...]:
+    """Which buildx the *instrument* runs on, kept separate from which one built.
+
+    Once a controlled executable has been read back from the machine, the recorder asks the
+    builder and the registry through that binary rather than through `docker buildx`: an
+    observation that reads a pinned BuildKit container with an unpinned CLI is measuring the
+    runner again. With no controlled path the prefix stays `docker buildx`, which is what the
+    release path still uses -- A2.1 observes, it does not switch anything.
+    """
+    path = (controlled or {}).get("path")
+    if path and (controlled or {}).get("status") == "READ":
+        return (path,)
+    return DEFAULT_BUILDX_PREFIX
+
+
+def load_controlled_pin(path: str | None) -> dict:
+    """What the repository declares about the one buildx executable it will run.
+
+    Read from `scripts/release/controlled_buildx.json` rather than from the job: the lock file
+    under `deployment/` is what the shipped deployment reads (F-20), and a CI-time executable
+    pin does not belong in it. Both name a buildx version, so the two are *compared*, not
+    merged -- a pin bumped without the lock is a finding about the repository.
+    """
+    if not path or not Path(path).exists():
+        return {"ok": False, "status": "NOT_PROVIDED",
+                "error": f"no controlled buildx pin at {path!r}"}
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        return {"ok": False, "status": "ERROR", "source": path,
+                "error": f"{type(error).__name__}: {error}"[:ERROR_TEXT_LIMIT]}
+    return {"ok": True, "status": "READ", "source": path,
+            "version": doc.get("version"),
+            "expected_git_commit": doc.get("expected_git_commit"),
+            "expected_sha256": (doc.get("integrity") or {}).get("expected"),
+            "integrity_algorithm": (doc.get("integrity") or {}).get("algorithm"),
+            "download_url": (doc.get("source") or {}).get("download_url"),
+            "platform": (doc.get("source") or {}).get("platform"),
+            "declared_path": (doc.get("install") or {}).get("path")}
+
+
+def observe_controlled_buildx(run: CommandRunner, pin: dict, declared_path: str | None) -> dict:
+    """Ask the pinned executable who it is, and hash the bytes it is made of.
+
+    Two independent reads, because either one alone can be satisfied by the wrong binary:
+
+    * `version` -- a standalone buildx prints **its own argv[0]** in the version line, so the
+      path here is read back from the process rather than restated from the workflow. That is
+      the difference from `docker buildx version`, which CI measured printing no path at all.
+    * `sha256sum` -- the file the job is about to run, hashed on the machine that runs it. The
+      expected value comes from the repository's pin, not from the server the file came from,
+      so a replaced release asset or a truncated download cannot pass by being self-consistent.
+
+    A missing or unreadable file is ERROR, never "unknown version, so nothing disagrees".
+    """
+    path = declared_path or (pin or {}).get("declared_path")
+    answer = {"declared_path": path, "pin_source": (pin or {}).get("source")}
+    if not (pin or {}).get("ok") and not declared_path:
+        # The release build path passes no pin, because it still builds through `docker buildx`.
+        # That is a stated absence, not a failed read: calling it ERROR would make every existing
+        # release record look like a broken instrument for a change it was never asked to make.
+        return {**answer, "ok": False, "status": "NOT_PROVIDED",
+                "reason": ("no controlled buildx pin was given, so this record describes a build "
+                           "whose executable the repository does not pin -- the release path "
+                           "until A2.2 switches it, the observation job as a defect after A2.1"),
+                "integrity": {"status": "NOT_PROVIDED"}}
+    if not path:
+        return {**answer, "ok": False, "status": "ERROR",
+                "error": ((pin or {}).get("error")
+                          or "no controlled buildx path was declared, so no executable can be "
+                             "named as the producer"),
+                "integrity": {"status": "ERROR",
+                              "reason": "no file was named, so nothing was hashed"}}
+    if not (pin or {}).get("ok"):
+        # A path without a readable pin is not "no requirement": the job installed something and
+        # nothing declares what its bytes should be. The reads still happen -- an unreadable
+        # expected digest shows up as an integrity ERROR, which is the honest report -- but the
+        # record says out loud that the comparison has no declared side.
+        answer["pin_error"] = (pin or {}).get("error") or "no pin was readable"
+    record = read(run, "controlled_buildx_version", [path, "version"])
+    if record["ok"]:
+        # parse_version_line puts the leading token in `path` only when it looks like one, and
+        # a standalone binary's own line always does.
+        answer.update({key: value for key, value in parse_version_line(record["value"]).items()
+                       if key in ("version", "commit", "build_metadata", "module")})
+        answer["status"] = "READ"
+        answer["value"] = record["value"]
+        answer["path_reported_by_binary"] = parse_version_line(record["value"]).get("path")
+        answer["path"] = answer["path_reported_by_binary"] or path
+        answer["path_status"] = ("READ" if answer["path_reported_by_binary"] else
+                                 "NOT_REPORTED -- the binary printed no argv[0], so the path "
+                                 "carried here is the one that was invoked, not one it stated")
+    else:
+        answer["status"] = "ERROR"
+        answer["error"] = record.get("error")
+        answer["command"] = record.get("command")
+        answer["path"] = path
+    expected = (pin or {}).get("expected_sha256")
+    hashed = read(run, "controlled_buildx_sha256", ["sha256sum", path])
+    computed = None
+    if hashed["ok"]:
+        computed = hashed["value"].split()[0].strip()
+    integrity = {"expected": expected, "computed": (f"sha256:{computed}" if computed else None),
+                 "command": hashed.get("command")}
+    if not expected or not computed:
+        integrity["status"] = "ERROR"
+        integrity["reason"] = (
+            "the pin names no expected digest" if not expected else
+            "sha256sum did not answer for the controlled path")
+    else:
+        match = computed == expected.split(":", 1)[-1]
+        integrity["status"] = "CONFORMING" if match else "MISMATCH"
+        integrity["relation"] = "equal" if match else "different"
+    answer["integrity"] = integrity
+    answer["ok"] = answer["status"] == "READ"
+    return answer
+
+
+def observe_build_invocation(run: CommandRunner, command_file: str | None,
+                             controlled_path: str | None) -> dict:
+    """Which executable the *build* actually ran under -- read from the job, not from intent.
+
+    The observation step writes the argv it used into a file and the recorder reads it back.
+    Without that, "the controlled binary built this image" would be a sentence in this script;
+    with it, the claim is falsifiable: an argv headed `docker buildx` is a plugin dispatch and
+    scores MISMATCH even when every declared value agrees with itself.
+    """
+    if not command_file:
+        return {"status": "NOT_PROVIDED", "required_by": "observe mode",
+                "error": "no build-command file was given, so what executed is unrecorded"}
+    if not Path(command_file).exists():
+        return {"status": "ERROR", "source": command_file,
+                "error": f"no build-command file at {command_file!r}"}
+    try:
+        doc = json.loads(Path(command_file).read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        return {"status": "ERROR", "source": command_file,
+                "error": f"{type(error).__name__}: {error}"[:ERROR_TEXT_LIMIT]}
+    argv = [str(part) for part in (doc.get("argv") or [])]
+    answer = {"status": "READ" if argv else "ERROR", "source": command_file, "argv": argv,
+              "argv0": argv[0] if argv else None,
+              "image": doc.get("image"), "build_exit": doc.get("exit")}
+    if not argv:
+        answer["error"] = "the recorded build command carried no argv"
+        return answer
+    through_cli = argv[0] == "docker" and len(argv) > 1 and argv[1] == "buildx"
+    answer["dispatch"] = ("docker CLI plugin" if through_cli else
+                          "invoked directly" if "/" in argv[0] else "unqualified executable")
+    if controlled_path:
+        match = argv[0] == controlled_path
+        answer["controlled"] = {"declared": controlled_path, "invoked": argv[0],
+                                "relation": "equal" if match else "different",
+                                "status": "CONFORMING" if match else "MISMATCH"}
+    else:
+        answer["controlled"] = {"status": "ERROR",
+                                "reason": "no controlled executable was declared to have run it"}
+    return answer
+
+
+def base_image_bindings(dockerfile: str | None, build_args: list[str],
+                        named_contexts: list[str]) -> dict:
+    """What each image was built ON, with the reference that actually resolved.
+
+    `cap-sandbox-browser` has no default base: the HTTP sandbox image of the same round is
+    handed to it as a named build context (`--build-context name=oci-layout://dir@sha256:...`),
+    so the evidence has to say which *bytes* the base was -- a tag would be a pointer somebody
+    else can move. The resolution mirrors what the builder does: the Dockerfile's `ARG` default,
+    overridden by `--build-arg`, then replaced by a named context when the resulting name is one.
+    """
+    if not dockerfile or not Path(dockerfile).exists():
+        return {"status": "NOT_PROVIDED", "error": f"no Dockerfile at {dockerfile!r}", "bases": []}
+    text = Path(dockerfile).read_text(encoding="utf-8")
+    args = dict(re.findall(r"^ARG\s+(\w+)=(\S+)", text, re.MULTILINE))
+    for token in build_args:
+        if "=" in token:
+            name, _, value = token.partition("=")
+            args[name] = value
+    contexts = {}
+    for token in named_contexts:
+        name, sep, value = token.partition("=")
+        if sep:
+            contexts[name] = value
+    bases = []
+    for ref in re.findall(r"^FROM\s+(\S+)", text, re.MULTILINE):
+        entry = {"declared_in_dockerfile": ref}
+        if ref.startswith("${"):
+            key = ref[2:-1]
+            ref = args.get(key, "")
+            entry["resolved_from_arg"] = key
+        if not ref:
+            bases.append({**entry, "status": "ERROR",
+                          "error": "the base resolves to nothing in this Dockerfile"})
+            continue
+        binding = {"status": "READ", "ref": ref}
+        if ref in contexts:
+            value = contexts[ref]
+            binding["named_context"] = value
+            if value.startswith("oci-layout://"):
+                location, _, digest = value.partition("@")
+                binding["binding"] = "same_round_oci_layout"
+                binding["digest"] = digest or None
+                binding["layout"] = location.removeprefix("oci-layout://")
+                if not digest:
+                    binding["status"] = "MISMATCH"
+                    binding["error"] = ("a same-round base named without a digest is not bound "
+                                        "immutably: the layout directory could be re-written")
+            else:
+                binding["binding"] = "named_context"
+                _left, _, digest = value.rpartition("@")
+                binding["digest"] = digest if digest.startswith("sha256:") else None
+        else:
+            _left, _, tail = ref.rpartition("@")
+            binding["binding"] = "registry_reference"
+            binding["digest"] = tail if tail.startswith("sha256:") else None
+            if not binding["digest"]:
+                # The rule reads the *normalised* digest, not the raw split: a reference with
+                # no "@" leaves the whole string in rpartition's last field, which would make
+                # every tag-only base look "not empty" and therefore pinned.
+                binding["status"] = "MISMATCH"
+                binding["error"] = "the base names a tag but no digest, so it is not pinned"
+        bases.append({**entry, **binding})
+    return {"status": "READ", "bases": bases,
+            "note": ("digests are the ones the build resolved, read out of the Dockerfile and "
+                     "the arguments it was given -- not re-stated from the produced image")}
+
+
 def docker_cli_build_note(engine_version, buildx_version) -> dict:
     """What `docker build` means for a builder: the daemon's kit produced the bytes."""
     return {
@@ -638,14 +882,26 @@ def docker_cli_build_note(engine_version, buildx_version) -> dict:
 
 
 def observe(run: CommandRunner, docker_cli_build: bool = False, builder_name: str | None = None,
-            environ=None) -> dict:
-    """Every producer field the tooling can be asked about, read back."""
+            environ=None, controlled_pin: dict | None = None,
+            build_command_file: str | None = None,
+            controlled_path: str | None = None) -> dict:
+    """Every producer field the tooling can be asked about, read back.
+
+    Order matters here. The controlled executable is read first because once it answers, it is
+    the buildx the *instrument* uses for the builder and registry reads too; and the `docker
+    buildx` plugin dispatch is still read and still recorded, because "what the runner would have
+    given you" is the fact F-44 was filed over and A2.1 must not delete it to look clean.
+    """
     env = environ if environ is not None else os.environ
+    controlled = observe_controlled_buildx(run, controlled_pin or {}, controlled_path)
+    bx = buildx_prefix(controlled)
+    invocation = observe_build_invocation(run, build_command_file,
+                                          controlled.get("declared_path"))
     buildx = read(run, "buildx_version", ["docker", "buildx", "version"])
     if buildx["ok"]:
         buildx.update(parse_version_line(buildx["value"]))
     engine = read(run, "docker_server", ["docker", "version", "--format", "{{.Server.Version}}"])
-    builder = observe_builder(run, builder_name)
+    builder = observe_builder(run, builder_name, bx)
     plugins = cli_plugins(run, env)
     # The candidates are read first because they are the second evidence route: a CLI that
     # prints no install path can still have its executing binary identified by matching the
@@ -657,7 +913,9 @@ def observe(run: CommandRunner, docker_cli_build: bool = False, builder_name: st
                    "inspected_builder": builder}
     return {"buildx_version": buildx, "builder": builder, "docker_engine": engine,
             "executing_buildx": executing, "docker_cli_plugin": plugins,
-            "builders": read_all(run, "buildx_ls", ["docker", "buildx", "ls"]),
+            "controlled_buildx": controlled, "build_invocation": invocation,
+            "buildx_reads_via": list(bx),
+            "builders": read_all(run, "buildx_ls", [*bx, "ls"]),
             "engine": {**engine, "version": engine.get("value")}}
 
 
@@ -683,6 +941,7 @@ def configured_values(lock: dict, buildkit_entry: str, buildx_entry: str = "buil
     parts = _ref_parts(ref)
     lock_block = {
         "buildx_version": binary.get("version") if binary else None,
+        "buildx_source": binary.get("source") if binary else None,
         "buildkit_image": ref,
         "buildkit_repository": parts["repository"],
         "buildkit_tag": parts["tag"],
@@ -765,6 +1024,11 @@ def configured_workflow_values(path: str | None, job_name: str | None,
                 "builder_name": builder, "driver": driver,
                 "buildkit_image": buildkit,
                 "driver_opts_image": image_ref,
+                # A2.1's two new claims, read out of the same env: block as the builder name.
+                # The path is a literal because a producer identity assembled from
+                # `${{ runner.temp }}` is a claim about the runner, not about the repository.
+                "controlled_buildx_path": declared_env.get("CAP_OBSERVE_BUILDX_PATH"),
+                "controlled_pin_file": declared_env.get("CAP_OBSERVE_BUILDX_PIN"),
                 "declared_env_keys": sorted(declared_env),
                 "source": path, "job": job_name}
     if expressions:
@@ -799,18 +1063,31 @@ def _status_of(fields: dict, required: tuple[str, ...]) -> str:
 
 
 def compare(configured: dict, observed: dict, pin: dict | None = None) -> dict:
-    """The three comparisons M3 asks for, each with its own answer.
+    """The named comparisons M3 asks for, each with its own answer.
 
     One boolean would let a release agree with its own YAML while disagreeing with the
     machine that built it -- which is precisely what F-44 was. `configured.lock` and
     `configured.workflow` are two authorities that must agree with each other before
-    either can be believed against the runner.
+    either can be believed against the runner, and A2.1 adds a third declared authority --
+    the controlled-executable pin -- which is compared rather than merged.
     """
     lock = configured.get("lock") or {}
     workflow = configured.get("workflow") or {}
+    controlled_pin = configured.get("controlled") or {}
     executing = observed.get("executing_buildx") or {}
+    controlled = observed.get("controlled_buildx") or {}
+    invocation = observed.get("build_invocation") or {}
     builder = observed.get("builder") or {}
-    seen_buildx = executing.get("version") or (observed.get("buildx_version") or {}).get("version")
+    cli_plugin_buildx = executing.get("version") or (observed.get("buildx_version") or {}
+                                                     ).get("version")
+    # Which buildx a comparison is *about*. A2.1's whole claim is that the producer is the
+    # controlled executable rather than whatever plugin the runner dispatches to, so once that
+    # binary has been read back it is the side the pins are scored against -- and the runner's
+    # own answer stays in the record as `cli_plugin_buildx_version`, because deleting the fact
+    # that F-44 measured would make a green A2.1 mean less, not more.
+    seen_buildx = controlled.get("version") or cli_plugin_buildx
+    scored_from = ("controlled_buildx" if controlled.get("version") else
+                   "docker CLI plugin dispatch (no controlled executable was read)")
     running = builder.get("running_image") or {}
     running_image = {"repository": running.get("repository"), "tag": running.get("tag"),
                      "digest": running.get("digest")}
@@ -834,11 +1111,49 @@ def compare(configured: dict, observed: dict, pin: dict | None = None) -> dict:
     }
     lock_vs_workflow["status"] = _status_of(lock_vs_workflow["fields"],
                                            lock_vs_workflow["required"])
+    integrity = (controlled.get("integrity") or {}).get("relation")
+    invoked = (invocation.get("controlled") or {}).get("relation")
     workflow_vs_observed = {
-        "fields": {"buildx_version": _pair(workflow.get("buildx_version"), seen_buildx),
-                   "builder_name": _pair(workflow.get("builder_name"), builder.get("builder")),
-                   "driver": _pair(workflow.get("driver"), builder.get("driver"))},
-        "required": ("buildx_version", "builder_name", "driver"),
+        "fields": {
+            "buildx_version": _pair(workflow.get("buildx_version"), seen_buildx),
+            "builder_name": _pair(workflow.get("builder_name"), builder.get("builder")),
+            "driver": _pair(workflow.get("driver"), builder.get("driver")),
+            # The four A2.1 claims about the producer itself. `buildx_version` above can be
+            # satisfied by any binary reporting the right string, so the executable is also
+            # identified by the commit it prints, by the absolute path it prints as its own
+            # argv[0], and by a hash of the bytes that ran -- and separately by which file the
+            # build was actually invoked with. Each answers a different failure: a replaced
+            # release asset passes the version and fails the hash; a job that silently went
+            # back to `docker buildx` passes all three and fails the invocation.
+            "controlled_buildx_version": _pair(workflow.get("buildx_version"),
+                                               controlled.get("version")),
+            "controlled_buildx_commit": _pair(controlled_pin.get("expected_git_commit"),
+                                              controlled.get("commit")),
+            "controlled_buildx_path": _pair(workflow.get("controlled_buildx_path"),
+                                            controlled.get("path_reported_by_binary")),
+            "controlled_buildx_integrity": {"declared": controlled_pin.get("expected_sha256"),
+                                            "read_back": (controlled.get("integrity") or {}).get(
+                                                "computed"),
+                                            "relation": integrity},
+            "build_invoked_controlled_executable": {
+                "declared": (invocation.get("controlled") or {}).get("declared"),
+                "read_back": (invocation.get("controlled") or {}).get("invoked"),
+                "relation": invoked},
+            # Kept, never scored here: what the runner's `docker buildx` would have dispatched
+            # to. This is the field F-44 was filed over, and A2.1 proving the build did not go
+            # through it is only meaningful while the disagreement stays on the record.
+            "cli_plugin_buildx_version": {"declared": workflow.get("buildx_version"),
+                                          "read_back": cli_plugin_buildx,
+                                          "relation": (None if not cli_plugin_buildx else
+                                                       ("equal" if cli_plugin_buildx ==
+                                                        workflow.get("buildx_version")
+                                                        else "different")),
+                                          "scored": False},
+        },
+        "required": ("buildx_version", "builder_name", "driver", "controlled_buildx_version",
+                     "controlled_buildx_commit", "controlled_buildx_path",
+                     "controlled_buildx_integrity", "build_invoked_controlled_executable"),
+        "scored_buildx_from": scored_from,
     }
     workflow_vs_observed["status"] = _status_of(workflow_vs_observed["fields"],
                                                 workflow_vs_observed["required"])
@@ -866,10 +1181,13 @@ def compare(configured: dict, observed: dict, pin: dict | None = None) -> dict:
                                                "read_back": (pin or {}).get("status"),
                                                "relation": None if not pin or not pin.get("ok")
                                                else "resolved"}},
-        # `buildkit_digest` stays the only required digest field: the manifest layer is the
-        # stronger claim, and letting the config layer satisfy it would report a verified
-        # pull from evidence that only verifies content.
-        "required": ("buildx_version", "buildkit_digest"),
+        # Both digest layers are required from A2.1 on, because A2.2 is going to block on them:
+        # the contract names "running BuildKit digest" and "running config relationship" as
+        # separate fields. Requiring both is not the substitution Batch 3A refused -- each is
+        # scored against its own pinned-side value, so a conforming config layer can never stand
+        # in for a manifest layer that was not read, and the manifest layer can never answer for
+        # content the config layer was asked about.
+        "required": ("buildx_version", "buildkit_digest", "buildkit_child_config"),
         "digest_relation": relation,
         "config_digest_relation": child_relation,
         "layers": {"manifest": ("scored" if relation.get("relation")
@@ -884,6 +1202,24 @@ def compare(configured: dict, observed: dict, pin: dict | None = None) -> dict:
     lock_vs_observed["status"] = _status_of(lock_vs_observed["fields"],
                                             lock_vs_observed["required"])
     plugins = (observed.get("docker_cli_plugin") or {}).get("candidates") or {}
+    # A fourth authority, compared rather than merged. `deployment/third-party-images.json` pins
+    # the buildx the release *asks* for; `scripts/release/controlled_buildx.json` pins the bytes
+    # A2.1 installs and runs. Two files naming one tool is a drift risk created by this batch, so
+    # it is scored: bumping the lock without the pin (or the reverse) reads MISMATCH here instead
+    # of becoming a record where the declared producer quietly means two things.
+    controlled_pin_vs_lock = {
+        "fields": {"buildx_version": _pair(lock.get("buildx_version"),
+                                           controlled_pin.get("version")),
+                   "buildx_source": _pair(lock.get("buildx_source"),
+                                          controlled_pin.get("download_url"))},
+        "required": ("buildx_version",),
+        "note": ("both files declare a buildx version and a source for the same tool; agreeing "
+                 "is a precondition for calling either one the pin. The source is recorded and "
+                 "compared but not required, because the lock's entry is prose about the action "
+                 "while the pin's is the URL A2.1 downloads from"),
+    }
+    controlled_pin_vs_lock["status"] = _status_of(controlled_pin_vs_lock["fields"],
+                                                  controlled_pin_vs_lock["required"])
     return {
         # Kept for the evidence the release already publishes.
         "buildx_version": {"pinned": pinned_buildx, "observed": legacy_buildx,
@@ -896,14 +1232,23 @@ def compare(configured: dict, observed: dict, pin: dict | None = None) -> dict:
         "lock_vs_workflow": lock_vs_workflow,
         "workflow_vs_observed": workflow_vs_observed,
         "lock_vs_observed": lock_vs_observed,
+        "controlled_pin_vs_lock": controlled_pin_vs_lock,
         "buildx_binaries": {
+            "built_with": (invocation.get("controlled") or {}).get("invoked"),
+            "controlled": controlled.get("path"),
+            "controlled_status": controlled.get("status"),
             "executing": executing.get("resolved_path"),
             "identified_by": executing.get("identified_by"),
             "executing_version": seen_buildx,
+            "cli_plugin_version": cli_plugin_buildx,
+            "scored_buildx_from": scored_from,
+            "reads_via": observed.get("buildx_reads_via"),
             "installed_on_disk": {path: (entry.get("version"))
                                   for path, entry in plugins.items() if entry.get("exists")},
-            "note": ("both are recorded whenever they differ; the executing one is what built "
-                     "the bytes, and the installed one is only what the action placed"),
+            "note": ("`built_with` is the executable the build was actually invoked with, read "
+                     "back from the job's own record of its argv; `executing` is what "
+                     "`docker buildx` would have dispatched to. Both stay in the record because "
+                     "the difference between them is what A2.1 exists to remove."),
         },
     }
 
@@ -927,9 +1272,19 @@ def _images_match(pinned: str | None, seen: str | None) -> bool | None:
 
 
 def producer_alignment(comparison: dict) -> dict:
-    """The one-sentence answer, built from the three answers rather than replacing them."""
-    statuses = {name: (comparison.get(name) or {}).get("status")
-                for name in ("lock_vs_workflow", "workflow_vs_observed", "lock_vs_observed")}
+    """The one-sentence answer, built from the named comparisons rather than replacing them.
+
+    Every component listed here is a separate answer with its own fields; the verdict only
+    summarises them. Adding the controlled-executable comparison did not merge any of the three
+    M3 asked for, and dropping a name from this tuple is what would collapse them.
+    """
+    names = ["lock_vs_workflow", "workflow_vs_observed", "lock_vs_observed"]
+    if (comparison.get("controlled_pin_vs_lock") or {}).get("status"):
+        # Only a record that was given a controlled-executable pin can answer for it. In the
+        # release path, which has none until A2.2, leaving it out keeps the verdict about the
+        # authorities that actually exist rather than manufacturing an UNKNOWN.
+        names.append("controlled_pin_vs_lock")
+    statuses = {name: (comparison.get(name) or {}).get("status") for name in names}
     if MISMATCH in statuses.values():
         verdict = MISMATCH
     elif UNKNOWN in statuses.values():
@@ -1016,6 +1371,9 @@ def oci_layout_facts(tar_path: str | None) -> dict:
     return output
 
 
+#: What a record must carry to be an observation at all. A value in here being *disagreed
+#: with* is never a gap -- that is the measurement. A gap is a field the instrument promised
+#: and could not fill.
 CONTRACT_REQUIRED = (
     "observed.executing_buildx.resolved_path", "observed.executing_buildx.version",
     "observed.docker_cli_plugin.candidates", "observed.docker_cli_plugin.resolves_to",
@@ -1024,7 +1382,26 @@ CONTRACT_REQUIRED = (
     "configured.lock.buildkit_digest", "configured.workflow.buildx_version",
     "comparison.lock_vs_workflow.status", "comparison.workflow_vs_observed.status",
     "comparison.lock_vs_observed.digest_relation.status",
+    # A2.1: the producer is a file on the machine, so the record has to name that file, what
+    # it says it is, and the bytes it is made of -- and separately show that the *build* was
+    # invoked with it. A controlled executable that was installed but never run is not a
+    # deterministic producer, which is why `observed.build_invocation.argv` is in the contract
+    # and not merely a convenience.
+    "observed.controlled_buildx.version", "observed.controlled_buildx.commit",
+    "observed.controlled_buildx.path_reported_by_binary",
+    "observed.controlled_buildx.integrity.expected",
+    "observed.controlled_buildx.integrity.computed",
+    "observed.build_invocation.argv", "configured.controlled.version",
+    "configured.controlled.expected_git_commit", "configured.controlled.expected_sha256",
+    "configured.workflow.controlled_buildx_path",
 )
+
+#: Contract keys only the observation path promises. The release build path declares none of
+#: this yet -- A2.2 switches it -- so requiring it there would fail every existing record for
+#: a change that has not been made.
+OBSERVE_ONLY_PREFIXES = ("configured.workflow", "configured.controlled", "observed.builder",
+                         "observed.controlled_buildx", "observed.build_invocation",
+                         "configured.lock.buildx_source")
 
 
 def _dig(payload: dict, dotted: str):
@@ -1045,9 +1422,9 @@ def contract_gaps(payload: dict, observe_mode: bool) -> list[str]:
     value is that the instrument is trustworthy.
     """
     gaps = []
-    for dotted in (CONTRACT_REQUIRED if observe_mode else
-                   tuple(k for k in CONTRACT_REQUIRED
-                         if not k.startswith(("configured.workflow", "observed.builder")))):
+    promised = (CONTRACT_REQUIRED if observe_mode else
+                tuple(k for k in CONTRACT_REQUIRED if not k.startswith(OBSERVE_ONLY_PREFIXES)))
+    for dotted in promised:
         value = _dig(payload, dotted)
         if value in (None, "", [], {}):
             gaps.append(dotted)
@@ -1063,7 +1440,145 @@ def contract_gaps(payload: dict, observe_mode: bool) -> list[str]:
     child = (payload.get("pinned_index_resolution") or {}).get("platform_child") or {}
     if observe_mode and child.get("status") == "ERROR":
         gaps.append("pinned_index_resolution.platform_child")
+    # The same rule one layer up. A controlled executable that hashes differently from the pin
+    # is a finding the evidence must carry; one that could not be read or hashed at all, or a
+    # build whose argv was never recorded, means the job is not measuring what it claims, and
+    # `NOT_PROVIDED` is included there because after A2.1 the observation job always has a pin
+    # to pass -- an absent one is a step that stopped running, not a mode of working.
+    controlled = (payload.get("observed") or {}).get("controlled_buildx") or {}
+    if observe_mode and controlled.get("status") in ("ERROR", "NOT_PROVIDED"):
+        gaps.append("observed.controlled_buildx.status")
+    if observe_mode and (controlled.get("integrity") or {}).get("status") in ("ERROR",
+                                                                             "NOT_PROVIDED"):
+        gaps.append("observed.controlled_buildx.integrity.status")
+    if observe_mode and (payload.get("observed") or {}).get("build_invocation", {}) \
+            .get("status") in ("ERROR", "NOT_PROVIDED"):
+        gaps.append("observed.build_invocation.status")
     return gaps
+
+
+def set_acceptance(records: list[dict], expected_images: list[str]) -> dict:
+    """Score a whole set of per-image observation records -- A2.1's acceptance rule.
+
+    Three rules shape this function, and each one is here because a set verdict can be made to
+    look good without it:
+
+    * **Every image separately.** A set is CONFORMING only when each named image's own record
+      says so. Two conforming images cannot average out a third that disagreed, and an image
+      with no record is a failure of the set rather than an absent row in a table.
+    * **Same round.** The five images of one round have to come from one commit and one run, or
+      "all five conforming" would be true of a set assembled from whichever runs happened to
+      look good -- which is the cherry-picking A2.2's evidence rules forbid, applied here so
+      the habit does not start at the stage where it is easier to avoid.
+    * **A build that failed is not a conforming image,** even when the producer read perfectly.
+      "Can the pinned producer build all five CAP images?" is half the question A2.1 exists to
+      answer, so the build's own exit status is part of the row, not a separate report.
+    """
+    comparisons = ("lock_vs_workflow", "workflow_vs_observed", "lock_vs_observed",
+                   "controlled_pin_vs_lock")
+    by_image: dict[str, list[dict]] = {}
+    for record in records:
+        by_image.setdefault(str(record.get("image") or "<unnamed>"), []).append(record)
+    rows: dict[str, dict] = {}
+    problems: list[str] = []
+    for image in expected_images:
+        found = by_image.get(image) or []
+        if not found:
+            problems.append(f"no observation record was produced for {image}")
+            rows[image] = {"status": "MISSING", "problems": ["no record"]}
+            continue
+        if len(found) > 1:
+            problems.append(f"{image} has {len(found)} records; a set row needs exactly one")
+        record = found[0]
+        comparison = record.get("comparison") or {}
+        statuses = {name: (comparison.get(name) or {}).get("status") for name in comparisons}
+        alignment = (record.get("producer_alignment") or {}).get("verdict")
+        invocation = (record.get("observed") or {}).get("build_invocation") or {}
+        build_exit = invocation.get("build_exit")
+        gaps = record.get("contract_gaps") or []
+        row = {"comparisons": statuses, "producer_alignment": alignment,
+               "build_exit": build_exit, "contract_gaps": gaps,
+               "built_with": (comparison.get("buildx_binaries") or {}).get("built_with"),
+               "running_buildkit_digest": ((record.get("observed") or {}).get("builder") or {}
+                                           ).get("running_image", {}).get("digest")}
+        row_problems = []
+        if MISMATCH in list(statuses.values()) + [alignment]:
+            row_problems.append("a required comparison disagrees")
+        if UNKNOWN in list(statuses.values()) + [alignment]:
+            row_problems.append("a required layer could not be read")
+        if build_exit != 0:
+            row_problems.append(f"the build did not succeed (exit {build_exit!r})")
+        if gaps:
+            row_problems.append("the record itself is incomplete: " + ", ".join(gaps))
+        row["problems"] = row_problems
+        row["status"] = CONFORMING if not row_problems else (
+            MISMATCH if "a required comparison disagrees" in row_problems else UNKNOWN)
+        problems.extend(f"{image}: {problem}" for problem in row_problems)
+        rows[image] = row
+    for image in sorted(set(by_image) - set(expected_images)):
+        problems.append(f"{image} was recorded but is not an expected image of the set")
+    rounds = {(str((record.get("runner") or {}).get("github_sha") or "<unknown sha>"),
+               str((record.get("runner") or {}).get("github_run_id") or "<unknown run>"))
+              for record in records}
+    if len(rounds) > 1:
+        problems.append(f"the records came from {len(rounds)} different runs/commits: "
+                        + "; ".join(f"{sha}#{run}" for sha, run in sorted(rounds)))
+    verdict = CONFORMING if not problems else (
+        MISMATCH if any("disagrees" in problem for problem in problems) else UNKNOWN)
+    return {"expected_images": list(expected_images), "images": rows,
+            "rounds": [{"source_revision": sha, "run_id": run} for sha, run in sorted(rounds)],
+            "verdict": verdict, "problems": problems,
+            "authorizes_a2_2": verdict == CONFORMING,
+            "meaning": ("every image of the set was built by the pinned producer, from one "
+                        "round, with every required layer read and agreeing"
+                        if verdict == CONFORMING else
+                        "at least one image is not conforming evidence, which is not a pass")}
+
+
+def combine_records(args, run: CommandRunner | None = None) -> int:
+    """The A2.1 acceptance step: read the per-image records, score the set, write the verdict.
+
+    It reads files rather than machines, so the same scoring runs locally against artifacts
+    downloaded from CI -- and it exits non-zero only on an *instrument* problem (a missing or
+    incomplete record). A measured MISMATCH is written out and reported, because failing the
+    step there would throw away the evidence the next decision is made from.
+    """
+    records = []
+    unreadable = []
+    for path in args.combine:
+        try:
+            records.append(json.loads(Path(path).read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError) as error:
+            unreadable.append(f"{path}: {type(error).__name__}")
+    expected = list(args.expected_images or [])
+    if not expected:
+        expected = [str(record.get("image")) for record in records if record.get("image")]
+    payload = set_acceptance(records, expected)
+    payload["record_files"] = list(args.combine)
+    if unreadable:
+        payload["problems"] = payload["problems"] + [f"record file unreadable: {item}"
+                                                     for item in unreadable]
+        payload["status"] = "ERROR"
+    if not expected:
+        payload["problems"] = payload["problems"] + ["no images were declared or recorded"]
+        payload["status"] = "ERROR"
+    payload["verdict"] = CONFORMING if not payload["problems"] else payload["verdict"]
+    payload["a2_1_acceptance"] = {
+        "verdict": "BATCH 3 A2.1 PRODUCER CONFORMING" if not payload["problems"]
+        and payload["verdict"] == CONFORMING else "BATCH 3 A2.1 PRODUCER NOT CONFORMING",
+        "requires": ("every expected image: four named comparisons CONFORMING, "
+                     "producer_alignment CONFORMING, build exit 0, no contract gaps, "
+                     "one round for all records")}
+    with open(args.out, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    print(json.dumps(payload, sort_keys=True))
+    if args.self_check and (payload.get("status") == "ERROR" or unreadable
+                            or any(problem.startswith("no observation record")
+                                   for problem in payload["problems"])):
+        print("the producer set could not be scored from the records given", file=sys.stderr)
+        return 1
+    return 0
 
 
 def main(argv: list[str] | None = None, run: CommandRunner | None = None,
@@ -1086,24 +1601,51 @@ def main(argv: list[str] | None = None, run: CommandRunner | None = None,
                         help="an --output type=oci archive from the build, for the F-39 fields")
     parser.add_argument("--dockerfile", default=None,
                         help="the Dockerfile built, read only for its `# syntax=` directive")
+    parser.add_argument("--controlled-pin", default=None,
+                        help="the JSON pinning the buildx executable this build must run under")
+    parser.add_argument("--image", default=None, help="which image this record is about")
+    parser.add_argument("--build-command", default=None,
+                        help="a JSON file the build step wrote, carrying the argv it used")
+    parser.add_argument("--build-arg", action="append", default=[], dest="build_args",
+                        help="KEY=VALUE passed to the build, used to resolve the base it named")
+    parser.add_argument("--build-context", action="append", default=[], dest="named_contexts",
+                        help="name=value named context, used to record a same-round base binding")
+    parser.add_argument("--combine", nargs="*", default=None, metavar="RECORD.json",
+                        help="score a set of per-image observation records instead of reading "
+                             "a machine -- the A2.1 acceptance step")
+    parser.add_argument("--expected-image", action="append", default=[], dest="expected_images",
+                        help="with --combine: an image the set must contain a record for")
     parser.add_argument("--self-check", action="store_true",
                         help="exit non-zero when the observation contract is not satisfied")
     args = parser.parse_args(argv)
     runner = run or run_command
     env = environ if environ is not None else os.environ
 
+    if args.combine:
+        return combine_records(args, run=runner)
+
     with open(args.lock, encoding="utf-8") as handle:
         lock = json.load(handle)
     configured = configured_values(lock, args.buildkit_entry, args.buildx_entry)
     configured["workflow"] = configured_workflow_values(args.workflow, args.job, args.builder)
+    configured["controlled"] = load_controlled_pin(args.controlled_pin)
+    # The path the job declared in its own `env:` wins over the pin file's, because
+    # `configured.workflow` is the authority being compared; the pin is what that path has to
+    # hash and version-check against.
+    declared_path = (configured["workflow"].get("controlled_buildx_path")
+                     if configured["workflow"].get("ok") else None)
     observed = observe(runner, docker_cli_build=args.docker_cli_build,
                        builder_name=args.builder if args.mode == "observe" else None,
-                       environ=env)
+                       environ=env, controlled_pin=configured["controlled"],
+                       build_command_file=args.build_command,
+                       controlled_path=declared_path)
     pin = (resolve_pinned_ref(runner, configured["lock"]["buildkit_image"],
-                              (observed.get("builder") or {}).get("image_platform"))
+                              (observed.get("builder") or {}).get("image_platform"),
+                              buildx_prefix(observed.get("controlled_buildx")))
            if args.mode == "observe" else {"ok": False, "status": "NOT_APPLICABLE"})
     comparison = compare(configured, observed, pin)
     f39 = oci_layout_facts(args.oci_tar)
+    bases = base_image_bindings(args.dockerfile, args.build_args, args.named_contexts)
     if f39.get("ok") and args.dockerfile and Path(args.dockerfile).exists():
         for line in Path(args.dockerfile).read_text(encoding="utf-8").splitlines():
             if line.strip().startswith("# syntax=") or line.strip().startswith("#syntax="):
@@ -1111,6 +1653,9 @@ def main(argv: list[str] | None = None, run: CommandRunner | None = None,
                 break
     payload = {
         "mode": args.mode,
+        "image": args.image,
+        "dockerfile": args.dockerfile,
+        "base_images": bases,
         "configured": configured,
         "observed": observed,
         "pinned_index_resolution": pin,

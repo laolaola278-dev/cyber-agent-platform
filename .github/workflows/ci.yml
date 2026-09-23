@@ -458,80 +458,197 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------
-  # BATCH 3A OBSERVATION (F-44). A pinned builder is a sentence in a YAML file
-  # until something reads the builder, the executing binary and the running
-  # BuildKit container back off the machine that built. This job does that
-  # reading on a clean runner, through an explicitly named builder that
-  # publishes nothing: no login, no `--push`, no image tag. It changes no
-  # release build -- the release path stays `release.yml` ->
-  # `build_release_image.sh`, and neither is touched here.
+  # BATCH 3 A2.1 OBSERVATION (F-44). Batch 3A made the instrument say what ran;
+  # A2.1 makes what runs stop depending on the runner. The producer here is one
+  # executable this repository pins by version, git commit and sha256, installed
+  # to a path the job controls and then invoked *by that path* -- never through
+  # `docker buildx`, whose plugin dispatch is the measurement F-44 was filed
+  # over. The runner's own plugin is still read and still recorded (unscored):
+  # "the pinned binary built it" is only evidence while what would otherwise
+  # have built it is still on the page.
   #
-  # What makes this an observation rather than a restatement: the pins live in
-  # `deployment/third-party-images.json` (read by the recorder as
-  # `configured.lock`), in this job's own `env:` and `with:` blocks (read as
-  # `configured.workflow`, from the file, not from an argument), and on the
-  # runner (read back as `observed.*` plus a registry read of the pinned
-  # BuildKit index). The three are compared three ways and the answers are
-  # kept apart.
+  # Five images now, not one. The question A2.1 has to answer is whether the
+  # pinned producer can build the whole shipped set -- including the browser
+  # image, whose base is the HTTP sandbox image of *this round*, bound by that
+  # round's own digest out of a local OCI layout, with no registry in the path.
   #
-  # A *mismatch* is the expected measurement while F-44 is open, so it is
-  # recorded and never a failure. The job goes red only when the instrument
-  # itself is broken (`--self-check`: a field the observation promised but
-  # could not read) or when the scratch build does not succeed -- because "can
-  # the intended pinned producer build CAP in Actions?" has to be answered,
-  # not assumed. The assertion runs last so the evidence is uploaded either way.
+  # Still observation-only: no push, no login, no image tag, no registry
+  # credential. The release path (`release.yml` -> `build_release_image.sh`)
+  # is untouched until A2.2 is approved, and
+  # `test_the_release_build_path_is_still_not_switched` is the fence that says
+  # so. Installing a pinned executable is not the same as switching the release
+  # onto it, and this job keeps those two facts apart.
+  #
+  # A MISMATCH remains a measurement, not a failure. This job goes red on a
+  # build that did not succeed, on a record the instrument could not complete
+  # (`--self-check`), or on evidence that is missing. A2.1's *acceptance* is the
+  # set verdict in producer-set.json, which the job prints and uploads -- and
+  # which nobody here quietly turns into a green tick.
   # ---------------------------------------------------------------------
   producer-observation:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
-      # The three declarations the recorder reads back out of this file. They
-      # are literals on purpose: a value built from a step output or an
-      # expression exists only after the runner expands it, and `configured.
-      # workflow` is supposed to be a claim about the repository.
+      # The literals the recorder reads back out of this file as
+      # `configured.workflow`. A value built from a step output or an
+      # expression is not a claim about the repository, so the executable's
+      # path is spelled out here even though `${{ runner.temp }}` would have
+      # been shorter and tidier.
       CAP_OBSERVE_BUILDER: cap3a-producer-observation
       CAP_OBSERVE_DRIVER: docker-container
       CAP_OBSERVE_BUILDKIT: moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      CAP_OBSERVE_BUILDX_PIN: scripts/release/controlled_buildx.json
+      CAP_OBSERVE_BUILDX_PATH: /tmp/cap-a21-controlled-buildx/buildx
     steps:
       - uses: actions/checkout@v6
       # The same action ref, the same buildx version and the same BuildKit
-      # reference the release jobs ask for -- so what this job measures about
-      # which binary executes is a measurement of the same installation path,
-      # not of a nearby one.
+      # reference the release jobs ask for. This job deliberately still runs it:
+      # what it installs and what the CLI dispatches to are the runner-provided
+      # half of the evidence, and F-44 is only closed when the record can show
+      # both the runner's answer and the pinned one side by side.
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
         with:
           buildx-version: v0.37.1
           driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      - name: Install the controlled buildx (never into a CLI plugin directory)
+        run: |
+          set -euo pipefail
+          # Refuse the runner's own plugin paths before writing anything. The
+          # point of A2.1 is that the producer is selected, not that the system
+          # binary is replaced -- overwriting the directory the docker CLI
+          # dispatches from would make this job a mutable machine again and
+          # destroy the very evidence it is supposed to be reading.
+          case "$CAP_OBSERVE_BUILDX_PATH" in
+            */cli-plugins/*|*/docker-buildx)
+              echo "refusing to install into a docker CLI plugin path" >&2
+              exit 1
+              ;;
+          esac
+          URL="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["source"]["download_url"])' "$CAP_OBSERVE_BUILDX_PIN")"
+          EXPECTED="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["integrity"]["expected"].split(":",1)[1])' "$CAP_OBSERVE_BUILDX_PIN")"
+          mkdir -p "$(dirname "$CAP_OBSERVE_BUILDX_PATH")"
+          curl -sSL --fail --retry 3 --max-time 900 -o "$CAP_OBSERVE_BUILDX_PATH" "$URL"
+          # Hashed before it is ever executed, against the digest the repository
+          # carries rather than one fetched from the server that sent the file:
+          # a replaced or truncated release asset has to fail here instead of
+          # becoming a build whose CLI happens to print the right version.
+          echo "$EXPECTED  $CAP_OBSERVE_BUILDX_PATH" | sha256sum --check --strict
+          chmod 0755 "$CAP_OBSERVE_BUILDX_PATH"
+          "$CAP_OBSERVE_BUILDX_PATH" version
+          # What `docker buildx` would have dispatched to on this runner, read
+          # for the record and changing nothing.
+          docker buildx version || echo "the runner's docker buildx did not answer"
       - name: Create the named, non-publishing observation builder
         run: |
           set -euo pipefail
-          docker buildx create --name "$CAP_OBSERVE_BUILDER" \
+          "$CAP_OBSERVE_BUILDX_PATH" create --name "$CAP_OBSERVE_BUILDER" \
             --driver "$CAP_OBSERVE_DRIVER" \
-            --driver-opt "image=$CAP_OBSERVE_BUILDKIT" \
-            --use
-          docker buildx inspect --bootstrap "$CAP_OBSERVE_BUILDER"
-      - name: Scratch-build cap-backend through that builder (untagged, unpushed)
-        # `--provenance=false --sbom=false` is what the CI dry-build already
-        # runs with: attestations belong to what a registry serves, and nothing
-        # here is served anywhere. The exporter writes an OCI archive, which is
-        # where the F-39 fields (config digest, layer digests, diff_ids, index
-        # composition) come from without a registry round trip.
+            --driver-opt "image=$CAP_OBSERVE_BUILDKIT" --use
+          "$CAP_OBSERVE_BUILDX_PATH" inspect --bootstrap "$CAP_OBSERVE_BUILDER"
+      - name: Build all five CAP images through that builder (untagged, unpublished)
         run: |
           set -uo pipefail
-          mkdir -p outputs/producer-observation
-          status=0
-          docker buildx build \
-            --builder "$CAP_OBSERVE_BUILDER" \
+          OUT=outputs/producer-observation
+          rm -rf "$OUT" && mkdir -p "$OUT"
+          BX="$CAP_OBSERVE_BUILDX_PATH"
+          # Every build writes down the argv it is about to run before running
+          # it, then records its exit status into the same file. That is what
+          # makes "the controlled executable built these bytes" a claim the
+          # recorder can check rather than a sentence this script asserts about
+          # itself: an argv headed `docker` is a plugin dispatch and reads as a
+          # disagreement even when every declared value agrees.
+          record_and_run() {
+            local image="$1"; shift
+            python3 - "$OUT/$image.build-command.json" "$image" "$@" <<'PY'
+          import json
+          import sys
+          out_path, image, *argv = sys.argv[1:]
+          with open(out_path, "w", encoding="utf-8") as handle:
+              json.dump({"image": image, "argv": argv, "exit": None}, handle)
+          PY
+            local status=0
+            "$@" > "$OUT/$image.build.log" 2>&1 || status=$?
+            python3 - "$OUT/$image.build-command.json" "$status" <<'PY'
+          import json
+          import sys
+          path, status = sys.argv[1], int(sys.argv[2])
+          with open(path, encoding="utf-8") as handle:
+              doc = json.load(handle)
+          doc["exit"] = status
+          with open(path, "w", encoding="utf-8") as handle:
+              json.dump(doc, handle)
+          PY
+            echo "$status" > "$OUT/$image.build.exit"
+            echo "$image: build exit $status"
+            tail -n 20 "$OUT/$image.build.log"
+          }
+          COMMON=(--builder "$CAP_OBSERVE_BUILDER" --provenance=false --sbom=false
+                  --build-arg VERSION=0.0.0-producer-observation
+                  --build-arg "REVISION=$GITHUB_SHA")
+          # The sandbox images build from a staged context, through the same
+          # staging script the release uses: an observation of a different file
+          # list would be measuring a different image.
+          for role in http browser egress-proxy; do
+            mkdir -p "$OUT/context-$role"
+            bash backend/docker/prepare_sandbox_context.sh "$OUT/context-$role" "$role"
+          done
+          record_and_run cap-backend "$BX" build "${COMMON[@]}" \
             --file backend/Dockerfile \
-            --build-arg VERSION=0.0.0-producer-observation \
-            --build-arg REVISION="$GITHUB_SHA" \
-            --provenance=false --sbom=false \
-            --metadata-file outputs/producer-observation/scratch.metadata.json \
-            --output "type=oci,dest=outputs/producer-observation/scratch.oci.tar" \
-            backend > outputs/producer-observation/scratch-build.log 2>&1 || status=$?
-          echo "$status" > outputs/producer-observation/scratch-build.exit
-          echo "scratch build exit status: $status"
-          tail -n 30 outputs/producer-observation/scratch-build.log
+            --metadata-file "$OUT/cap-backend.metadata.json" \
+            --output "type=oci,dest=$OUT/cap-backend.oci.tar" backend
+          record_and_run cap-frontend "$BX" build "${COMMON[@]}" \
+            --file frontend/Dockerfile \
+            --metadata-file "$OUT/cap-frontend.metadata.json" \
+            --output "type=oci,dest=$OUT/cap-frontend.oci.tar" frontend
+          record_and_run cap-sandbox-http "$BX" build "${COMMON[@]}" \
+            --file backend/docker/sandbox-http/Dockerfile \
+            --metadata-file "$OUT/cap-sandbox-http.metadata.json" \
+            --output "type=oci,dest=$OUT/cap-sandbox-http.oci.tar" \
+            "$OUT/context-http"
+          record_and_run cap-egress-proxy "$BX" build "${COMMON[@]}" \
+            --file backend/docker/egress-proxy/Dockerfile \
+            --metadata-file "$OUT/cap-egress-proxy.metadata.json" \
+            --output "type=oci,dest=$OUT/cap-egress-proxy.oci.tar" \
+            "$OUT/context-egress-proxy"
+          # The browser image layers on the HTTP sandbox image. The release binds
+          # that base to a digest it has just pushed; here nothing is pushed, so
+          # the base is the OCI archive this same round produced, handed to the
+          # builder as a named layout *and addressed by its own manifest digest*.
+          # `docker-container` cannot see the host docker store, which is exactly
+          # why the existing CI dry build of this image goes through `docker
+          # build` -- and why it is not the producer. Going through the pinned
+          # builder with a digest-pinned local layout is what lets all five images
+          # be observed under one producer without a registry appearing anywhere.
+          mkdir -p "$OUT/http-layout"
+          HTTP_LAYOUT="$GITHUB_WORKSPACE/$OUT/http-layout"
+          HTTP_BASE_DIGEST=""
+          if tar -xf "$OUT/cap-sandbox-http.oci.tar" -C "$OUT/http-layout"; then
+            HTTP_BASE_DIGEST="$(python3 - "$HTTP_LAYOUT/index.json" <<'PY'
+          import json
+          import sys
+          index = json.load(open(sys.argv[1], encoding="utf-8"))
+          images = [item for item in index.get("manifests", [])
+                    if (item.get("annotations") or {}).get(
+                        "vnd.docker.reference.type") != "attestation-manifest"]
+          print(images[0]["digest"] if len(images) == 1 else "")
+          PY
+          )"
+          fi
+          if [[ -z "$HTTP_BASE_DIGEST" ]]; then
+            # No digest, no binding: the browser build is refused rather than run
+            # against a base nobody can name, and the missing exit file is what
+            # the final assertion reports.
+            echo "cap-sandbox-browser: refused -- the same-round base digest is unreadable" >&2
+            echo refuse > "$OUT/cap-sandbox-browser.build.exit"
+          else
+            record_and_run cap-sandbox-browser "$BX" build "${COMMON[@]}" \
+              --build-arg "SANDBOX_HTTP_BASE=cap-sandbox-http" \
+              --build-context "cap-sandbox-http=oci-layout://$HTTP_LAYOUT@$HTTP_BASE_DIGEST" \
+              --file backend/docker/sandbox-browser/Dockerfile \
+              --metadata-file "$OUT/cap-sandbox-browser.metadata.json" \
+              --output "type=oci,dest=$OUT/cap-sandbox-browser.oci.tar" \
+              "$OUT/context-browser"
+          fi
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -541,67 +658,130 @@ jobs:
           python-version: "3.13"
       - name: Install locked dependencies
         run: uv sync --project backend --frozen --extra dev
-      - name: Record the producer (observe mode, never a build change)
+      - name: Record the producer for each image (observe mode, never a build change)
         run: |
           set -uo pipefail
+          OUT=outputs/producer-observation
+          record_one() {
+            local image="$1" dockerfile="$2"; shift 2
+            local code=0
+            uv run --project backend python scripts/release/record_build_producer.py \
+              --mode observe --self-check \
+              --builder "$CAP_OBSERVE_BUILDER" \
+              --workflow .github/workflows/ci.yml --job producer-observation \
+              --lock deployment/third-party-images.json \
+              --controlled-pin "$CAP_OBSERVE_BUILDX_PIN" \
+              --image "$image" \
+              --build-command "$OUT/$image.build-command.json" \
+              --oci-tar "$OUT/$image.oci.tar" \
+              --dockerfile "$dockerfile" \
+              --out "$OUT/$image.producer-evidence.json" \
+              "$@" > "$OUT/$image.producer-evidence.stdout.json" || code=$?
+            echo "$code" > "$OUT/$image.record.exit"
+            echo "$image: recorder exit $code"
+          }
+          record_one cap-backend backend/Dockerfile
+          record_one cap-frontend frontend/Dockerfile
+          record_one cap-sandbox-http backend/docker/sandbox-http/Dockerfile
+          record_one cap-egress-proxy backend/docker/egress-proxy/Dockerfile
+          record_one cap-sandbox-browser backend/docker/sandbox-browser/Dockerfile \
+            --build-arg "SANDBOX_HTTP_BASE=cap-sandbox-http"
+          for image in cap-backend cap-frontend cap-sandbox-http cap-sandbox-browser \
+                       cap-egress-proxy; do
+            [[ -f "$OUT/$image.producer-evidence.json" ]] || continue
+            uv run --project backend python - "$OUT/$image.producer-evidence.json" <<'PY'
+          import json
+          import sys
+          payload = json.load(open(sys.argv[1], encoding="utf-8"))
+          alignment = payload["producer_alignment"]
+          binaries = payload["comparison"]["buildx_binaries"]
+          builder = payload["observed"]["builder"]
+          print(f"{payload['image']}: {alignment['verdict']} {alignment['components']}")
+          print(f"  built_with={binaries.get('built_with')} "
+                f"cli_plugin={binaries.get('cli_plugin_version')} "
+                f"scored_from={binaries.get('scored_buildx_from')}")
+          print(f"  buildkit digest={builder.get('running_image', {}).get('digest')} "
+                f"config={builder.get('config_digest')}")
+          print(f"  bases={[(base.get('ref'), base.get('binding'), base.get('digest')) for base in payload['base_images'].get('bases', [])]}")
+          print(f"  contract_gaps={payload.get('contract_gaps', [])}")
+          PY
+          done
+      - name: Score the five-image set (A2.1 acceptance, not a green tick)
+        run: |
+          set -uo pipefail
+          OUT=outputs/producer-observation
           code=0
           uv run --project backend python scripts/release/record_build_producer.py \
-            --mode observe --self-check \
-            --builder "$CAP_OBSERVE_BUILDER" \
-            --workflow .github/workflows/ci.yml --job producer-observation \
-            --lock deployment/third-party-images.json \
-            --oci-tar outputs/producer-observation/scratch.oci.tar \
-            --dockerfile backend/Dockerfile \
-            --out outputs/producer-observation/producer-evidence.json \
-            > outputs/producer-observation/producer-evidence.stdout.json || code=$?
-          echo "$code" > outputs/producer-observation/record.exit
-          python3 - <<'PY'
+            --self-check --out "$OUT/producer-set.json" \
+            --expected-image cap-backend --expected-image cap-frontend \
+            --expected-image cap-sandbox-http --expected-image cap-sandbox-browser \
+            --expected-image cap-egress-proxy \
+            --combine "$OUT"/*.producer-evidence.json \
+            || code=$?
+          echo "$code" > "$OUT/set.exit"
+          uv run --project backend python - "$OUT/producer-set.json" <<'PY'
           import json
-          payload = json.load(open("outputs/producer-observation/producer-evidence.json"))
-          alignment = payload["producer_alignment"]
-          print("producer alignment:", alignment["verdict"], alignment["components"])
-          for name, block in alignment["components"].items():
-              print(f"  {name}: {block}")
-          print("contract gaps:", payload.get("contract_gaps", []))
-          print("builder:", json.dumps(payload["observed"]["builder"].get(
-              "running_image", payload["observed"]["builder"].get("error"))))
-          print("executing buildx:", payload["observed"]["executing_buildx"].get("path"),
-                payload["observed"]["executing_buildx"].get("version"))
-          print("f39 measurement:", payload["f39_measurement"].get("measurement_status"))
+          import sys
+          doc = json.load(open(sys.argv[1], encoding="utf-8"))
+          print("A2.1 acceptance:", doc["a2_1_acceptance"]["verdict"])
+          print("authorizes A2.2:", doc["authorizes_a2_2"])
+          for image in doc["expected_images"]:
+              row = doc["images"].get(image) or {}
+              print(f"  {image}: {row.get('status')} "
+                    f"comparisons={row.get('comparisons')} "
+                    f"alignment={row.get('producer_alignment')} "
+                    f"build_exit={row.get('build_exit')}")
+              for problem in row.get("problems") or []:
+                  print(f"    - {problem}")
+          for problem in doc["problems"]:
+              if ":" not in problem:
+                  print(f"  set: {problem}")
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cap-3a-producer-observation
-          # The OCI archive itself stays out (it is hundreds of MB and its
-          # digests are already transcribed into the JSON); the record, the two
-          # exit codes, the build log and the buildx metadata file travel.
+          # The OCI archives stay out (hundreds of MB each, and their digests are
+          # transcribed into the JSON); the records, the argv each build used, the
+          # exit codes, the logs, the buildx metadata files and the set verdict
+          # travel.
           path: |
-            outputs/producer-observation/producer-evidence.json
-            outputs/producer-observation/producer-evidence.stdout.json
-            outputs/producer-observation/scratch-build.exit
-            outputs/producer-observation/scratch-build.log
-            outputs/producer-observation/scratch.metadata.json
-            outputs/producer-observation/record.exit
+            outputs/producer-observation/*.producer-evidence.json
+            outputs/producer-observation/*.producer-evidence.stdout.json
+            outputs/producer-observation/*.build-command.json
+            outputs/producer-observation/*.build.exit
+            outputs/producer-observation/*.build.log
+            outputs/producer-observation/*.record.exit
+            outputs/producer-observation/*.metadata.json
+            outputs/producer-observation/producer-set.json
+            outputs/producer-observation/set.exit
           if-no-files-found: error
-      - name: Fail only on a broken observation or a build that did not succeed
+      - name: Fail on a build that did not succeed or on evidence that is missing
         if: always()
         run: |
           set -uo pipefail
+          OUT=outputs/producer-observation
           problems=()
-          [[ -f outputs/producer-observation/scratch-build.exit ]] \
-            || problems+=("the scratch build step never recorded an exit status")
-          [[ "$(cat outputs/producer-observation/scratch-build.exit 2>/dev/null)" == "0" ]] \
-            || problems+=("the scratch build did not succeed (exit $(cat outputs/producer-observation/scratch-build.exit 2>/dev/null)) -- see scratch-build.log")
-          [[ -f outputs/producer-observation/producer-evidence.json ]] \
-            || problems+=("no producer evidence was written")
-          [[ "$(cat outputs/producer-observation/record.exit 2>/dev/null)" == "0" ]] \
-            || problems+=("the observation contract was not satisfied (exit $(cat outputs/producer-observation/record.exit 2>/dev/null)) -- see contract_gaps in producer-evidence.json")
+          for image in cap-backend cap-frontend cap-sandbox-http cap-sandbox-browser \
+                       cap-egress-proxy; do
+            [[ -f "$OUT/$image.build.exit" ]] \
+              || problems+=("$image: the build step never recorded an exit status")
+            [[ "$(cat "$OUT/$image.build.exit" 2>/dev/null)" == "0" ]] \
+              || problems+=("$image: the build did not succeed (exit $(cat "$OUT/$image.build.exit" 2>/dev/null)) -- see $image.build.log")
+            [[ -f "$OUT/$image.producer-evidence.json" ]] \
+              || problems+=("$image: no producer evidence was written")
+            [[ "$(cat "$OUT/$image.record.exit" 2>/dev/null)" == "0" ]] \
+              || problems+=("$image: the observation contract was not satisfied (exit $(cat "$OUT/$image.record.exit" 2>/dev/null)) -- see contract_gaps in $image.producer-evidence.json")
+          done
+          [[ -f "$OUT/producer-set.json" ]] \
+            || problems+=("the five-image set was never scored")
           if (( ${#problems[@]} )); then
-            # Note what a mismatch is NOT: the three-way comparison above can
-            # read MISMATCH and this job still passes, because measuring a
-            # disagreement is the point of the job (Batch 3A blocks nothing).
+            # What a MISMATCH still is not: a required comparison can read
+            # MISMATCH or UNKNOWN here and this job stays green, because measuring
+            # a disagreement is the point of the job and the disagreement is the
+            # evidence A2.1's verdict is made from. What is not survivable is a
+            # build that failed or a record that could not be completed.
             for problem in "${problems[@]}"; do echo "FAIL: $problem"; done
             exit 1
           fi
-          echo "observation recorded; any MISMATCH above is measured evidence, not a verdict"
+          echo "five observations recorded; any MISMATCH in the set verdict is measured evidence, not a verdict"
