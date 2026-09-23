@@ -119,15 +119,15 @@ same installation path, not a neighbouring one. What the runner answered:
 | `c8a5d2b` | `github.com/docker/buildx v0.37.0 ac30b249211430b85fb8f37b6e7154b5c47ba0b6` | **v0.37.0** | `/usr/libexec/docker/cli-plugins/docker-buildx` | the same labelled match |
 | `7d3d6a5` | `github.com/docker/buildx v0.37.0 ac30b249211430b85fb8f37b6e7154b5c47ba0b6` | **v0.37.0** | `/usr/libexec/docker/cli-plugins/docker-buildx` | the only installed candidate whose version and commit equal the executing line's |
 
-Four heads, three facts -- and all of them matter for Step 2.
+Five heads, three facts -- and all of them matter for Step 2.
 
 * The runner **prints no install path** in the version line, so "which binary executed the
   build" cannot be answered by `docker buildx version` alone. Stage 2 now has a second,
   labelled route (match the executing version *and* commit against the binaries on disk);
   zero matches or two identical matches stay a gap rather than becoming a pick.
 * The *same* job text, run four times, reported **two different executing versions**
-  (v0.37.0, v0.37.1, v0.37.0, v0.37.0), each time with exactly one buildx present in the
-  scanned directories and `which docker-buildx` finding nothing. So the executed buildx
+  (v0.37.0, v0.37.1, v0.37.0, v0.37.0, v0.37.0), each time with exactly one buildx present
+  in the scanned directories and `which docker-buildx` finding nothing. So the executed buildx
   version is
   **not deterministic** across GitHub-hosted runners: the pin is honoured on some runners and
   silently not on others, and F-44's mismatch is therefore a property of runner state rather
@@ -319,6 +319,7 @@ descriptors of a *pushed* build remain unmeasured (F-25's pending item).
 | --- | --- | --- | --- | --- |
 | `13930dc` | CONFORMING (all four fields equal) | **MISMATCH** -- declared buildx `v0.37.1`, executing `v0.37.0`; builder name and driver equal | **MISMATCH** -- buildx differs; digest `UNKNOWN` (running side unreadable) | MISMATCH |
 | `8610914` | CONFORMING | **CONFORMING** -- `v0.37.1` declared and executing; builder name and driver equal | **UNKNOWN** -- buildx equal, digest unreadable | UNKNOWN |
+| `f78eb2c` | CONFORMING | **MISMATCH** -- `v0.37.1` declared, `v0.37.0` executing | **MISMATCH on buildx alone** -- both digest relations `CONFORMING` (manifest `same_digest`, config `running_config_is_the_pinned_child_config`) | MISMATCH |
 | `c8a5d2b` | CONFORMING | **MISMATCH** -- `v0.37.1` declared, `v0.37.0` executing | **MISMATCH** -- buildx differs, digest `UNKNOWN` (the read asked a container for an image field) | MISMATCH |
 | `7d3d6a5` | CONFORMING (four fields equal) | **MISMATCH** -- `v0.37.1` declared, `v0.37.0` executing; builder name and driver equal | **MISMATCH, and now only because of buildx** -- `buildkit_digest` equal on the manifest layer, `buildkit_child_config` equal on the config layer, `pinned_index_resolution` resolved, `buildx_version` different | MISMATCH |
 
@@ -460,7 +461,8 @@ demanding a re-certification round.
 | `13930dc` | `35826852945` (push) | 9 jobs success, `producer-observation` **failure** | `cap-3a-producer-observation`, artifact `10735771235` (17,250 B): `scratch-build.exit = 0`, `record.exit = 1`, `contract_gaps = [observed.executing_buildx.path, observed.docker_cli_plugin.resolves_to, observed.builder.error]`, `incomplete = [builder]` |
 | `8610914` | `35828323456` (push) | `producer-observation` **failure** after the first fix; other jobs success | artifact `10735957267` (17,245 B): `scratch-build.exit = 0`, `record.exit = 1`, `contract_gaps = [observed.builder.error]`, executing buildx **v0.37.1** identified, `lock_vs_workflow`/`workflow_vs_observed` **CONFORMING**, `lock_vs_observed` UNKNOWN |
 | `c8a5d2b` | `35830268377` (push) | run **success** -- 11/11 jobs, `producer-observation` included (container discovered by the hostname join, `record.exit = 0`, no gaps) | artifact `10736258866` (17,590 B): `scratch-build.exit = 0`, `container = buildx_buildkit_cap3a-producer-observation0`, `RepoDigests = []`, `digest_relation = UNKNOWN`, executing buildx **v0.37.0** vs declared `v0.37.1` |
-| `7d3d6a5` | `35834970797` (push) | run **success** -- 11 jobs, `producer-observation` **success** with no contract gaps , all successful | artifact `10739115755` (17,855 B): `scratch-build.exit = 0`, `record.exit = 0`, `image_platform = linux/amd64`, `RepoDigests = [moby/buildkit@sha256:6c2fa84a…]`, `digest_relation = CONFORMING / same_digest`, `config_digest_relation = CONFORMING`, `platform_child` manifest `sha256:a461e7f0…` with `config.digest` `sha256:41f915d3…`; executing buildx **v0.37.0** vs declared `v0.37.1` |
+| `7d3d6a5` | `35834970797` (push) | run **success** -- 11 jobs, `producer-observation` **success** with no contract gaps and all 11 jobs successful | artifact `10739115755` (17,855 B): `scratch-build.exit = 0`, `record.exit = 0`, `image_platform = linux/amd64`, `RepoDigests = [moby/buildkit@sha256:6c2fa84a…]`, `digest_relation = CONFORMING / same_digest`, `config_digest_relation = CONFORMING`, `platform_child` manifest `sha256:a461e7f0…` with `config.digest` `sha256:41f915d3…`; executing buildx **v0.37.0** vs declared `v0.37.1` |
+| `f78eb2c` | `35840512203` (push) | run **success** -- `producer-observation` green on a docs-only head and a different runner, reproducing both digest relations | artifact `10741143423` (17,448 B): `scratch-build.exit = 0`, `record.exit = 0`, `RepoDigests = [moby/buildkit@sha256:6c2fa84a…]`, `digest_relation = CONFORMING / same_digest`, `config_digest_relation = CONFORMING`, executing buildx **v0.37.0** vs declared `v0.37.1` |
 
 The first two failures were the instrument refusing to over-claim, not the build or the
 comparisons: the scratch build succeeded in each, and each record carries the reason the
@@ -472,6 +474,24 @@ under a `v0.37.1` declaration. Those statuses are the measured state of the prod
 verdict about it; `--self-check` gates the instrument, and nothing on the release path reads
 the answer. No certification workflow was dispatched, no tag was created, and no publication
 was performed in any of the four runs.
+
+The docs-only heads after `7d3d6a5` add no measurement, and their CI behaved the way a repository
+with `cancel-in-progress: true` on its own concurrency group (`.github/workflows/ci.yml` lines
+13-15) makes it behave: run `35839046835` at `c06dfe0` ended **cancelled**, `producer-observation`
+already **success** and `backend` stopped mid-flight, because the next docs push superseded it. A
+cancelled job says nothing about the code under test -- it was stopped, not failed.
+
+The next head's run does say something, and it is the most useful sentence in this report. CI
+`35840512203` at `f78eb2c` -- a docs-only commit, a different runner, 45 minutes after the record
+above -- completed **success** with `producer-observation` green, `record.exit = 0`,
+`scratch-build.exit = 0`, no `contract_gaps` and no `incomplete`, and it reproduced the digest
+conclusion exactly: `digest_relation` **CONFORMING / same_digest** against
+`moby/buildkit@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3`, `config_digest_relation` **CONFORMING** for
+`41f915d3a122bca46b3d…` against the pinned child `sha256:a461e7f0ce921…`, and
+`workflow_vs_observed` **MISMATCH** for the one reason it always was -- executing buildx
+`v0.37.0` under a `v0.37.1` declaration. So the instrument's answer is not a one-runner artefact:
+what it reported about the BuildKit replicated, and what it reported about F-44 replicated. No
+tag, no publication and no strict certification dispatch happened at any of these heads (§M).
 
 ## M. Sealed-release integrity (re-read after the push)
 
@@ -541,7 +561,10 @@ Stated plainly, with what is settled and what is not:
   identity is verified at both digest layers from CI's own record -- the pull digest equals
   the pinned index digest (`same_digest`) and the running config digest equals the pinned
   child's `config.digest` (§F) -- so Stage 3's verification half is met and `digest_relation`
-  is no longer `UNKNOWN` for a reason the instrument could not have answered.
+  is no longer `UNKNOWN` for a reason the instrument could not have answered. A fifth run at a
+  docs-only head (`f78eb2c`, a different runner) reproduced both relations as `CONFORMING` over
+  the same digests, and reproduced the single buildx disagreement unchanged (§L, §H) -- which is
+  what separates an observation from one lucky machine.
 * **Open, and this is the decision Step 2 must make rather than a defect of the observation:**
   F-44's buildx disagreement. `v0.37.0` executed against a `v0.37.1` declaration at three of
   four heads, `v0.37.1` at one, always from `/usr/libexec/docker/cli-plugins/docker-buildx`,
