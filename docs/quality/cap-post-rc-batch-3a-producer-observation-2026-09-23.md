@@ -436,8 +436,14 @@ perfectly with the lock, and it was the real-CLI run that surfaced it.
 | `313cf63 → 13930dc` | INHERITED | false | `docs` ×4 |
 | `13930dc → 8610914` | INHERITED | false | `certification_generator`, `test_harness` |
 | `8610914 → c8a5d2b` | INHERITED | false | `certification_generator`, `test_harness` |
+| `c8a5d2b → 7d3d6a5` (the measured head) | INHERITED | false | `certification_generator`, `test_harness` |
+| `7d3d6a5 →` the docs-only heads after it | INHERITED | false | `docs` |
 | `f23d1fd → HEAD` (cumulative from the docs tip) | INHERITED | false | the union above |
 | `257ba18 → HEAD` (cumulative from the certified candidate) | INHERITED | false | plus the `docs` of the earlier reconciliation |
+
+All five cumulative and per-step ranges were re-run at the pushed docs tip, not only at the
+code head: the classifier is unmodified and fail-closed, and nothing in the batch touches a
+path that could change an image's bytes.
 
 No `deployment/`, no `Dockerfile`, no product runtime, no release-build behaviour: the STOP
 condition never applied, and Batch 3A's evidence inherits from `257ba18` rather than
