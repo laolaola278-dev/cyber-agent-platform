@@ -411,7 +411,13 @@ investigation, not a reason to touch `classify_diff.py`.
    signature/verification — and which of them `builder.id` is allowed to answer, if any.
 7. **F-39/G(i) sequencing**: extend the per-build record first, then run the two-build pair
    (§J); and under Option B, how the runner/engine is pinned so "same producer" means anything.
-8. **Push of this docs reconciliation** — see §N note; not authorised by anything in this batch.
+8. **Push of this docs reconciliation — CLOSED, already completed.** Batch 3A's Stage 0 re-read
+   the remote rather than trusting this file: `origin/main` is
+   `f23d1fd7ef07b63a1a8f4b8bd764d6f1b87ed938`, and `44fb73d3e88ed277058f1c6bae933a24624c6a50`
+   (the reconciliation §A describes) is an ancestor of it, so the push happened under the
+   authorisation given at that round's Stage 4. Nothing was re-pushed and no history was
+   rewritten — correcting the §A amend-count sentence after the push could only be a new commit
+   (`f23d1fd`), which is what it was. What remains open is not the push but the decisions below it.
 
 ## N. FINAL DESIGN STATUS
 

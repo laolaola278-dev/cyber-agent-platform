@@ -134,6 +134,37 @@ browser base, apt/apk resolution policy, pinned buildx, the comparison job) all 
 Dockerfiles or the build scripts, so they cost a full re-certification round and are
 batch 4's, not this batch's.
 
+## 5.1 Batch 3A extends the field list (2026-09-23)
+
+Batch 3A did not run the two-build experiment; it built the record the experiment has to
+fill in. `scripts/release/record_build_producer.py --mode observe --oci-tar <archive>` now
+writes an `f39_measurement` block parsed from an `--output type=oci` archive with stdlib
+`tarfile` (`index.json` → manifests → config blob), plus a producer identity beside it.
+Element by element, against §5's list:
+
+| §5 element | Where it is recorded now | Still missing |
+| --- | --- | --- |
+| layer compressed digests | `f39_measurement.platform_manifest.layer_digests` | — |
+| layer diff IDs | `f39_measurement.image_config.diff_ids` | — |
+| platform manifest digest | `f39_measurement.platform_manifest.digest` + `media_type` | — |
+| image config digest | `f39_measurement.platform_manifest.config_digest` | — |
+| index composition | `f39_measurement.index_composition` (digest, media type, platform, `attestation` flag) | — |
+| attestation descriptors | `f39_measurement.attestation_descriptors` | a non-pushed scratch build runs `--provenance=false --sbom=false`, so the list is empty by construction; the SBOM/provenance descriptors of a *pushed* build are still unmeasured (F-25's pending item) |
+| buildx version | `observed.executing_buildx.{path,version,commit}`, and every `docker-buildx` on disk under `observed.docker_cli_plugin.candidates` | — |
+| BuildKit version / driver / endpoint | `observed.builder.{driver,nodes[].buildkit,nodes[].endpoint,nodes[].status}`, `observed.engine.version` | — |
+| builder instance | `observed.builder.builder` + `requested_builder` + `observed.builders` (`docker buildx ls`, verbatim) | — |
+| base image digest | `observed.builder.running_image.*` for the *builder's* base, and `pinned_index_resolution.children` for the pinned BuildKit index; the image's own `base_refs` remain in the release evidence | the built image's base *platform child* is recorded only on a `--push` build (`platform_digest`), so a dry record still cannot say which child was pulled |
+| config timestamps | `f39_measurement.image_config.created` and `history_entries` | `stat`-level mtimes of the context are recorded nowhere |
+| runner metadata | `runner.{runner_environment,runner_name,imageos,imageversion,runner_arch,runner_temp,github_run_id,github_sha}` | kernel and region are not in the environment the runner exports |
+| frontend | `f39_measurement.frontend`, read from the Dockerfile's own `# syntax=` line | — |
+| commit built | `runner.github_sha`, and the release evidence's `source_revision` | — |
+
+Two counters keep the claim inside its own boundary: `f39_measurement.builds_compared` is
+`1`, and `measurement_status` reads `PARTIAL -- one build measured; attributing a digest
+difference needs two independent builds of one commit`. Those two fields are what stop the
+format from being mistaken for the measurement, and no amount of field coverage changes
+that: until step 1 of §5 actually runs twice on one commit, F-39 stays open.
+
 ## 6. Status
 
 F-39: **measured, unattributed, not closed.** The gap is now expressed as a field list
@@ -141,3 +172,9 @@ rather than as an observation that two builds differed, and the cost of answerin
 properly is known: one commit, two clean builders, and the fields above in the evidence.
 Nothing in this file should be quoted as the reason the images differ, because no
 reason has been demonstrated.
+
+After Batch 3A the field list is no longer hypothetical — the thirteen elements §5 asked
+for have a named home in the evidence (see §5.1) and the recorder writes them on every CI
+observation run -- but F-39 itself is **unchanged in status**: one build was measured, not
+two, so the finding remains PARTIAL and the experiment of §5 step 1 is still a separate,
+later step (approved as such, after producer observation, not instead of it).

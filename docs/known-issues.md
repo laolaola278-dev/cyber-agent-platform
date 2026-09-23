@@ -453,6 +453,27 @@ listed so that an import name is not mistaken for a working capability.
     lock (`configured_values(lock, …)` on the `buildx` / `buildkit-buildkit` entries), so the
     comparison checks the declared pin against the CLI's answer and cannot see whether the
     workflow's own `buildx-version` request was honoured.
+    Batch 3A's Observation Step 1 landed on 2026-09-23, and it changes the **instrument**,
+    not this finding. `record_build_producer.py --mode observe` now reads three authorities
+    apart -- `configured.lock`, `configured.workflow` (builder name, driver and BuildKit
+    reference taken out of the workflow's own `env:` / `with:` blocks rather than from an
+    argument the recorder was given) and `observed.*` (executing buildx path/version/commit,
+    every `docker-buildx` plugin on disk, the named builder's nodes, its container's config
+    image, image ID and `RepoDigests`, the engine, the runner) -- and answers three
+    comparisons (`lock_vs_workflow`, `workflow_vs_observed`, `lock_vs_observed`) instead of
+    one boolean. The digest question is layered rather than string-compared: the lock pins a
+    manifest *list*, a running container reports the *child manifest* it pulled and
+    `docker inspect` reports the *config* digest, so the recorder resolves the pinned index
+    in the registry and accepts a platform child as conforming -- an equality test across
+    those three strings would call the conforming case a mismatch, and a tag match would call
+    an unknown one a pass. `.github/workflows/ci.yml`'s `producer-observation` job runs it
+    against a named, non-publishing `docker-container` builder and a scratch untagged
+    `cap-backend` build, and uploads the record. Two things do **not** change: the release
+    build path still names no builder (`release.yml` and `build_release_image.sh` are
+    untouched, by approval), and no gate reads any of these fields -- a measured mismatch is
+    evidence in an artifact, not a refusal, so **F-44 stays OPEN** until the project decides
+    whether a mismatch blocks publication and the release path is switched onto an observed
+    producer.
     The decision this waits on -- whether the project requires the published-image build path to
     *be* the pinned producer, or should instead treat the runner's engine as the intended
     producer and stop asserting the container -- is worked out with two contracts and their prices

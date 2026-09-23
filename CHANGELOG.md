@@ -347,6 +347,28 @@ inherits from that candidate rather than re-certifying it.
   buildx-path record reports `incomplete: ["builder"]`). The release path has never
   executed, so the pin's effect on published images is unobserved rather than disproved.
   That gap is **F-44, open**.
+- **Producer observation, step 1: the three authorities are read apart, and CI reads them
+  (Batch 3A).** `scripts/release/record_build_producer.py --mode observe` now keeps
+  `configured.lock` (what `deployment/third-party-images.json` declares),
+  `configured.workflow` (what the workflow file declares -- builder name, driver and BuildKit
+  reference taken out of the job's own `env:` / `with:` blocks, not from a command-line
+  argument the recorder was handed) and `observed.*` (the executing buildx's path, version and
+  commit, every `docker-buildx` plugin on disk, the named builder's nodes, that container's
+  config image, image ID and `RepoDigests`, the engine, the runner) as three separate
+  sources, and scores them with **three** answers -- `lock_vs_workflow`,
+  `workflow_vs_observed`, `lock_vs_observed` -- rather than one boolean. Because a pinned
+  BuildKit digest names a *manifest list* while a running container reports the *child
+  manifest* it pulled and `docker inspect` reports the *config* digest, the digest comparison
+  resolves the pinned index in the registry and accepts a platform child as conforming;
+  string equality across those three layers would be a false mismatch, and tag equality a
+  false match. An unreadable side is `UNKNOWN` with a reason, never a match, and
+  `--self-check` fails on a field the observation promised but could not read -- not on a
+  disagreement. CI's new `producer-observation` job creates a named, non-publishing
+  `docker-container` builder, scratch-builds `cap-backend` through it with `--output
+  type=oci` (no tag, no login, no `--push`), and uploads the record plus the F-39 measurement
+  fields read from that archive. **Nothing about the release build changed**: `release.yml`
+  and `build_release_image.sh` still name no builder, no gate reads these fields, and a
+  measured mismatch blocks nothing yet -- that is step 2's decision, deferred by approval.
 
 ### Fixed
 
