@@ -22,7 +22,7 @@ config digest for that platform, and both agree.
 | `origin/main` re-read at Stage 0 (API GET `/git/ref/heads/main`) | `f23d1fd…` → the post-Batch-2 reconciliation is **PUSH ALREADY COMPLETED**; nothing was re-pushed or rewritten |
 | Batch 3A commit set (in order) | `313cf63` recorder observe mode + CI observation job + tests; `13930dc` docs (F-44 instrument note, CHANGELOG, F-39 §5.1, §M.8 correction); `8610914` fix forced by CI's first record; `c8a5d2b` fix forced by CI's second record; `7d3d6a5` fix forced by CI's third record -- the digest read moved to the image object and the registry read taken down to the platform child's config digest |
 | Head whose CI record this report measures | `7d3d6a5b74262426b2409b177df10ea562ac3b00` (plain fast-forward, `c8a5d2b..7d3d6a5`) |
-| This report's own commits | `f846293` and `be87709`, docs-only on top of `7d3d6a5` and pushed as the fast-forward `7d3d6a5..be87709`; §K classifies each INHERITED. They change no measurement -- every field below comes from `7d3d6a5`'s run, which §L tables together with the docs heads |
+| This report's own commits | docs-only commits on top of `7d3d6a5`, ending at whatever tip carries this file -- a report cannot be evidence about its own SHA, so none below is. Each classifies INHERITED (§K); the CI their push triggers is listed in §L, and every measured field comes from `7d3d6a5`'s run |
 | Release tag created | **none**; publication performed **none**; `v1.0.6-rc1` untouched (§M) |
 
 Stage 8's STOP condition never fired: no commit in the set touches `deployment/`, any
