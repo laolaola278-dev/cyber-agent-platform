@@ -111,6 +111,15 @@ def index_json(children: tuple[str, ...] = (CHILD,)) -> str:
                        "manifests": manifests})
 
 
+def child_manifest_json(config_digest: str) -> str:
+    """What the registry serves for one platform child: a manifest naming its own config."""
+    return json.dumps({"schemaVersion": 2,
+                       "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                       "config": {"mediaType": "application/vnd.oci.image.config.v1+json",
+                                  "digest": config_digest, "size": 7023},
+                       "layers": [{"digest": "sha256:" + "11" * 32, "size": 100}]})
+
+
 PS_FORMAT = "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}"
 
 
@@ -121,15 +130,20 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
                 container_exists: bool = True, server: str = "28.0.4",
                 index: str | None = None, dead_daemon: bool = False,
                 inspect_output: str | None = None, path_plugin: str | None = None,
-                container_rows: list[str] | None = None, worker: str | None = None):
+                container_rows: list[str] | None = None, worker: str | None = None,
+                platform: str | None = "linux/amd64", child_config: str | None = None,
+                child_read_fails: bool = False):
     """A runner that answers every command the observation path issues.
 
     Answers are keyed by the exact argv, which makes the fixture a regression guard on the
-    commands themselves: `docker buildx inspect --format` and a `docker inspect` that asks
-    for a config image and a repo digest in one call both broke the first implementation,
-    and each is visible here as an "unexpected command".
+    commands themselves: `docker buildx inspect --format`, a `docker inspect` that asks
+    for a config image and a repo digest in one call, and a `docker inspect` of a
+    *container* for `RepoDigests` -- an image-object field, which the daemon therefore
+    refuses to template -- each broke an implementation, and each is visible here as an
+    "unexpected command".
     """
     repo_digests = [f"moby/buildkit@{CHILD}"] if repo_digests is None else repo_digests
+    child_config = CONFIG_ID if child_config is None else child_config
     plugins = {ACTION_PLUGIN: BUILDX["version"], SYSTEM_PLUGIN: version} if plugins is None \
         else plugins
     rows = container_rows if container_rows is not None else [
@@ -152,8 +166,10 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
             0 if container_exists else 1,
             f"{BUILDKIT['image_ref']}\t{image_id}" if container_exists else "",
             "" if container_exists else f"Error: No such object: {listed}"),
-        ("docker", "inspect", "--format", "{{json .RepoDigests}}", listed): (
+        ("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image_id): (
             0, json.dumps(repo_digests), ""),
+        ("docker", "image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", image_id): (
+            (0, platform, "") if platform else (1, "", "Error: No such image: " + image_id)),
         ("docker", "buildx", "imagetools", "inspect", BUILDKIT["image_ref"], "--raw"): (
             0, index if index is not None else index_json(), ""),
         ("docker", "version", "--format", "{{.Server.Version}}"): (0, server, ""),
@@ -161,6 +177,17 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
         ("which", "docker-buildx"): (
             (0, PATH_PLUGIN, "") if path_plugin else (1, "", "docker-buildx not found in path")),
     }
+    served = index if index is not None else index_json()
+    try:
+        named = [item["digest"] for item in json.loads(served).get("manifests", [])
+                 if (item.get("platform") or {}).get("architecture") == "amd64"]
+    except (json.JSONDecodeError, AttributeError, KeyError):
+        named = []
+    if len(named) == 1:
+        coordinate = f"moby/buildkit@{named[0]}"
+        answers[("docker", "buildx", "imagetools", "inspect", coordinate, "--raw")] = (
+            (1, "", "ERROR: failed to resolve manifest for " + coordinate) if child_read_fails
+            else (0, child_manifest_json(child_config), ""))
     if path_plugin:
         answers[(PATH_PLUGIN, "version")] = (0, version_line(PATH_PLUGIN, path_plugin), "")
     if dead_daemon:
@@ -707,6 +734,132 @@ def test_an_unresolvable_pinned_index_is_unknown_not_a_mismatch(tmp_path: Path) 
     relation = payload["comparison"]["lock_vs_observed"]["digest_relation"]
     assert relation["status"] == "UNKNOWN"
     assert relation["relation"] == "pinned_index_unresolved", relation
+
+
+# -- the two digest layers, each read from the object that actually carries it -------------
+
+def test_the_pull_digest_is_asked_of_the_object_that_has_it(tmp_path: Path) -> None:
+    """`RepoDigests` is an image field: a container cannot answer it, and CI proved so.
+
+    The first record whose builder layer came back clean carried
+    `map has no entry for key "RepoDigests"` and then reported `UNKNOWN` forever, because a
+    question that can never be answered was being asked of the wrong object. The container
+    read still supplies the image id; the digest read has to target that id.
+    """
+    run = observe_run()
+    recorded(tmp_path, run)
+    assert ("docker", "image", "inspect", "--format", "{{json .RepoDigests}}",
+            CONFIG_ID) in run.seen, run.seen
+    container_digest_asks = [argv for argv in run.seen
+                              if "{{json .RepoDigests}}" in argv
+                              and argv[:2] == ("docker", "inspect")]
+    assert not container_digest_asks, (
+        f"a container cannot answer an image field: {container_digest_asks}")
+    _, payload = recorded(tmp_path, observe_run())
+    read = payload["observed"]["builder"]["repo_digests_read"]
+    assert read["status"] == "READ" and read["asked_of"] == CONFIG_ID, read
+    assert "image-object field" in read["note"], read
+
+
+def test_a_lost_platform_read_leaves_the_child_unrequested_not_guessed(
+        tmp_path: Path) -> None:
+    """Which platform to compare is a read, not an assumption: when it fails, nothing is picked."""
+    _, payload = recorded(tmp_path, observe_run(platform=None))
+    builder = payload["observed"]["builder"]
+    assert builder["image_platform_status"] == "ERROR", builder
+    assert builder["repo_digests"] == [f"moby/buildkit@{CHILD}"], (
+        "the digest read is independent of the platform read -- one failing must not erase the "
+        "other")
+    child = payload["pinned_index_resolution"]["platform_child"]
+    assert child["status"] == "NOT_REQUESTED" and child["platform"] is None, child
+    assert payload["comparison"]["lock_vs_observed"]["config_digest_relation"]["status"] \
+        == "UNKNOWN"
+    assert "contract_gaps" not in payload, payload.get("contract_gaps")
+
+
+def test_the_pinned_child_is_read_down_to_its_own_config_digest(tmp_path: Path) -> None:
+    """Stage 3's verification layer: the running image id against the pin's child config.
+
+    The index names a manifest, the container runs a config, and the only place the two
+    meet is inside that child manifest. So the record fetches the child for the platform the
+    *image* reports -- not the runner's environment, not the tag -- and scores it apart from
+    the manifest layer.
+    """
+    _, payload = recorded(tmp_path, observe_run())
+    child = payload["pinned_index_resolution"]["platform_child"]
+    assert child["status"] == "READ" and child["platform"] == "linux/amd64", child
+    assert child["manifest_digest"] == CHILD and child["config_digest"] == CONFIG_ID, child
+    assert child["layers"] == 1, child
+    relation = payload["comparison"]["lock_vs_observed"]["config_digest_relation"]
+    assert relation["status"] == "CONFORMING", relation
+    assert relation["relation"] == "running_config_is_the_pinned_child_config", relation
+    assert relation["pinned_child_manifest"] == CHILD
+    field = payload["comparison"]["lock_vs_observed"]["fields"]["buildkit_child_config"]
+    assert field["relation"] == "equal" and field["declared"] == field["read_back"], field
+
+
+def test_a_different_config_digest_is_a_mismatch_on_that_layer(tmp_path: Path) -> None:
+    """The control that keeps the layer from being an approval by default."""
+    _, payload = recorded(tmp_path, observe_run(child_config=FOREIGN))
+    relation = payload["comparison"]["lock_vs_observed"]["config_digest_relation"]
+    assert relation["status"] == "MISMATCH", relation
+    assert relation["relation"] == "running_config_is_not_the_pinned_child_config", relation
+    assert relation["pinned_config_digest"] == FOREIGN, relation
+    assert relation["running_config_digest"] == CONFIG_ID, relation
+
+
+def test_the_two_digest_layers_are_never_collapsed_into_one_claim(tmp_path: Path) -> None:
+    """Manifest unreadable, config readable: the record says so layer by layer.
+
+    The `.Image` of a container cannot answer the manifest question -- that is the category
+    error the layering exists to prevent -- so a conforming config layer must not turn the
+    manifest layer's `UNKNOWN` into a match, and the required-field rule must not move to
+    the easier layer.
+    """
+    _, payload = recorded(tmp_path, observe_run(repo_digests=[]))
+    compared = payload["comparison"]["lock_vs_observed"]
+    assert compared["digest_relation"]["status"] == "UNKNOWN", compared["digest_relation"]
+    assert compared["config_digest_relation"]["status"] == "CONFORMING"
+    assert compared["fields"]["buildkit_digest"]["relation"] is None, (
+        "a config digest must not satisfy the manifest field")
+    assert list(compared["required"]) == ["buildx_version", "buildkit_digest"], (
+        "the required layer did not move to the easier one")
+    assert compared["layers"] == {
+        "manifest": "unknown", "config": "scored",
+        "note": compared["layers"]["note"]}, compared["layers"]
+
+
+def test_a_lost_child_manifest_read_fails_the_instrument(tmp_path: Path) -> None:
+    """The registry refused the second read: that is a broken observation, not a measurement."""
+    _, payload = recorded(tmp_path, observe_run(child_read_fails=True))
+    child = payload["pinned_index_resolution"]["platform_child"]
+    assert child["status"] == "ERROR" and child["manifest_digest"] == CHILD, child
+    assert "failed to resolve manifest" in child["error"], child
+    assert payload["comparison"]["lock_vs_observed"]["config_digest_relation"]["status"] \
+        == "UNKNOWN"
+    assert "pinned_index_resolution.platform_child" in payload["contract_gaps"], (
+        payload["contract_gaps"])
+
+
+def test_an_ambiguous_platform_child_is_refused_rather_than_picked(tmp_path: Path) -> None:
+    """Two children for one platform is not a licence to compare against the nicer one."""
+    _, payload = recorded(tmp_path, observe_run(index=index_json((CHILD, FOREIGN))))
+    child = payload["pinned_index_resolution"]["platform_child"]
+    assert child["status"] == "AMBIGUOUS", child
+    assert sorted(child["candidates"]) == sorted([CHILD, FOREIGN]), child
+    relation = payload["comparison"]["lock_vs_observed"]["config_digest_relation"]
+    assert relation["status"] == "UNKNOWN" and relation["pinned_config_digest"] is None, relation
+    assert "contract_gaps" not in payload, (
+        f"an ambiguity is a measurement, not a broken read: {payload.get('contract_gaps')}")
+
+
+def test_a_platform_the_pinned_index_does_not_name_is_not_a_child(tmp_path: Path) -> None:
+    """`linux/arm64` on an amd64-only index has no counterpart, and that is stated."""
+    _, payload = recorded(tmp_path, observe_run(platform="linux/arm64"))
+    child = payload["pinned_index_resolution"]["platform_child"]
+    assert child["status"] == "NOT_NAMED" and child["candidates"] == [], child
+    assert payload["comparison"]["lock_vs_observed"]["config_digest_relation"]["status"] \
+        == "UNKNOWN"
 
 
 # -- the F-39 measurement fields, from an OCI archive rather than from a registry ---------

@@ -202,6 +202,35 @@ def digest_relation(pinned: dict, running: dict, children: list[dict]) -> dict:
             "pinned_digest": pinned_digest, "running_digest": running_digest}
 
 
+def config_digest_relation(pinned_child: dict | None, running_config: str | None) -> dict:
+    """The second digest layer: the running image's config digest against the pin's own child.
+
+    `docker inspect` gives a container's image as a *config* digest, and the only pinned-side
+    string on that layer is the `config.digest` inside the child manifest the index names for
+    this platform -- which is why the registry read goes one level down. Equality here says
+    the running image's content is the content the pinned index selects; it does not say the
+    manifest bytes match, and it is reported beside that layer rather than instead of it.
+    Nothing is inferred from a tag, an inspect line or a driver option: either both sides
+    carry a config digest or the answer is UNKNOWN.
+    """
+    pinned = (pinned_child or {}).get("config_digest")
+    left = pinned.split(":", 1)[-1] if pinned else None
+    right = running_config.split(":", 1)[-1] if running_config else None
+    answer = {"pinned_config_digest": pinned,
+              "running_config_digest": f"sha256:{right}" if right else running_config,
+              "pinned_child_manifest": (pinned_child or {}).get("manifest_digest"),
+              "pinned_child_status": (pinned_child or {}).get("status")}
+    if not left or not right:
+        return {**answer, "status": UNKNOWN,
+                "reason": ("the pinned child's config digest or the running image's config "
+                           "digest could not be read -- an unreadable side is never scored as "
+                           "a match")}
+    return {**answer,
+            "status": CONFORMING if left == right else MISMATCH,
+            "relation": ("running_config_is_the_pinned_child_config" if left == right
+                         else "running_config_is_not_the_pinned_child_config")}
+
+
 def _inspect_sections(text: str) -> tuple[dict[str, str], list[dict[str, str]]]:
     """The builder block and every node block of `docker buildx inspect`.
 
@@ -369,9 +398,15 @@ def observe_builder(run: CommandRunner, name: str | None = None) -> dict:
     reference, _, image_id = image["value"].partition("	")
     # The running container's *pull digest* is a different fact from its config id, so it is
     # asked for on its own -- one command per layer of evidence, never one format string that
-    # quietly makes two claims depend on the same parse.
-    digests = read(run, "container_repo_digests", ["docker", "inspect", "--format",
-                                                   "{{json .RepoDigests}}", container])
+    # quietly makes two claims depend on the same parse. The object matters as much as the
+    # separation: `RepoDigests` belongs to an image, so asking a container for it is answered
+    # "map has no entry for key RepoDigests" and the manifest layer then reads as absent
+    # forever. The container's own `.Image` names the image to ask.
+    digest_target = image_id or reference or container
+    digests = read(run, "image_repo_digests", ["docker", "image", "inspect", "--format",
+                                               "{{json .RepoDigests}}", digest_target])
+    platform = read(run, "image_platform", ["docker", "image", "inspect", "--format",
+                                            "{{.Os}}/{{.Architecture}}", digest_target])
     repo_digests = []
     if digests["ok"]:
         try:
@@ -381,6 +416,12 @@ def observe_builder(run: CommandRunner, name: str | None = None) -> dict:
     else:
         observed["repo_digests_status"] = {"status": digests["status"],
                                            "error": digests.get("error")}
+    observed["repo_digests_read"] = {"command": digests["command"], "status": digests["status"],
+                                     "asked_of": digest_target,
+                                     "note": ("RepoDigests is an image-object field: this read "
+                                              "targets the image id the container reports, so "
+                                              "an empty answer means the daemon recorded no "
+                                              "pull digest rather than the question failing")}
     running = _ref_parts(repo_digests[0]) if repo_digests else {"digest": None}
     config_digest = image_id.split(":", 1)[1] if image_id.startswith("sha256:") else None
     # Two different digests live here and they are never interchangeable: `.Image` is the
@@ -391,14 +432,16 @@ def observe_builder(run: CommandRunner, name: str | None = None) -> dict:
     if not repo_digests:
         observed["running_manifest_digest"] = {
             "status": "UNKNOWN",
-            "reason": ("the container reports no RepoDigests, so only its config digest is "
-                       "known -- a config digest is not a manifest digest and is never "
-                       "compared against the pin")}
+            "reason": ("the image the container runs reports no RepoDigests, so only its "
+                       "config digest is known -- a config digest is not a manifest digest "
+                       "and is never compared against the pin by string")}
     return {**observed, "container": container,
             "container_config_image": reference or None,
             "image_id": image_id or None,
             "container_image_id": image_id or None,
             "repo_digests": repo_digests,
+            "image_platform": (platform.get("value") or "").strip() or None,
+            "image_platform_status": platform.get("status"),
             "container_reference": (repo_digests[0] if repo_digests else reference) or None,
             "running_image": {**running, "image_id": image_id or None,
                               "config_digest": config_digest},
@@ -406,7 +449,8 @@ def observe_builder(run: CommandRunner, name: str | None = None) -> dict:
             "digest": config_digest}
 
 
-def resolve_pinned_ref(run: CommandRunner, ref: str | None) -> dict:
+def resolve_pinned_ref(run: CommandRunner, ref: str | None,
+                       target_platform: str | None = None) -> dict:
     """Ask the *registry* what the pinned BuildKit reference contains -- a separate layer.
 
     The pinned digest is a manifest-list, so the only way to check a running child
@@ -414,6 +458,13 @@ def resolve_pinned_ref(run: CommandRunner, ref: str | None) -> dict:
     the registry rather than the daemon, which keeps this from becoming "the daemon says
     it pulled what I asked for". Attestation entries (`unknown/unknown`) are kept but
     labelled, because they are descriptors with nothing to do with the runnable images.
+
+    One step further: the child for the platform the running image reports is fetched as
+    well, because a container's `.Image` is a *config* digest and the only pinned-side
+    config digest that can be compared with it lives inside that child manifest. Asking
+    the index alone leaves the two layers permanently incommensurable -- which is exactly
+    how the first conforming observation run came to report `UNKNOWN` about a builder that
+    was in fact running the pinned bytes.
     """
     if not ref:
         return {"ok": False, "status": "NOT_APPLICABLE",
@@ -440,7 +491,50 @@ def resolve_pinned_ref(run: CommandRunner, ref: str | None) -> dict:
     return {"ok": True, "status": "READ", "ref": ref,
             "media_type": (doc.get("mediaType") if isinstance(doc, dict) else None),
             "is_index": bool(isinstance(doc, dict) and doc.get("manifests")),
-            "children": children, "attestation_descriptors": attestations}
+            "children": children, "attestation_descriptors": attestations,
+            "platform_child": _pinned_platform_child(run, ref, children, target_platform)}
+
+
+def _pinned_platform_child(run: CommandRunner, ref: str, children: list[dict],
+                           target_platform: str | None) -> dict:
+    """The pinned index's entry for one platform, read down to its config digest."""
+    if not target_platform:
+        return {"platform": None, "status": "NOT_REQUESTED",
+                "reason": ("the running image's platform was not read, so no child of the "
+                           "pinned index is being claimed as its counterpart")}
+    named = [child for child in children if child.get("platform") == target_platform]
+    if len(named) != 1:
+        return {"platform": target_platform,
+                "status": "AMBIGUOUS" if named else "NOT_NAMED",
+                "candidates": [child.get("digest") for child in named],
+                "reason": (f"the pinned index names {len(named)} children for "
+                           f"{target_platform}; a child is only compared when exactly one is "
+                           "named")}
+    repository = _ref_parts(ref)["repository"]
+    child_digest = named[0]["digest"]
+    coordinate = f"{repository}@{child_digest}" if repository else None
+    if not coordinate or not child_digest:
+        return {"platform": target_platform, "status": "ERROR",
+                "error": f"the child {child_digest!r} cannot be addressed on {repository!r}"}
+    code, out, err = run(["docker", "buildx", "imagetools", "inspect", coordinate, "--raw"])
+    child = {"platform": target_platform, "manifest_digest": child_digest,
+             "coordinate": coordinate}
+    if code != 0 or not out.strip():
+        return {**child, "status": "ERROR", "exit": code,
+                "error": ((err.splitlines() or [""])[0].strip()
+                          or out)[:ERROR_TEXT_LIMIT]}
+    try:
+        doc = json.loads(out)
+    except json.JSONDecodeError:
+        return {**child, "status": "ERROR",
+                "error": f"the registry answered non-JSON for {coordinate}"}
+    config = (doc.get("config") or {}) if isinstance(doc, dict) else {}
+    if not config.get("digest"):
+        return {**child, "status": "ERROR",
+                "error": "the child manifest names no config digest, so nothing can be "
+                         "compared against the running image id"}
+    return {**child, "status": "READ", "config_digest": config["digest"],
+            "media_type": doc.get("mediaType"), "layers": len(doc.get("layers") or [])}
 
 
 def executing_buildx(run: CommandRunner, plugins: dict | None = None) -> dict:
@@ -750,6 +844,9 @@ def compare(configured: dict, observed: dict, pin: dict | None = None) -> dict:
                                                 workflow_vs_observed["required"])
     relation = digest_relation({"digest": lock.get("buildkit_digest")}, running_image,
                               (pin or {}).get("children", []))
+    child = (pin or {}).get("platform_child") or {}
+    running_config = builder.get("config_digest")
+    child_relation = config_digest_relation(child, running_config)
     lock_vs_observed = {
         "fields": {"buildx_version": _pair(lock.get("buildx_version"), seen_buildx),
                    "buildkit_digest": {"declared": lock.get("buildkit_digest"),
@@ -757,12 +854,32 @@ def compare(configured: dict, observed: dict, pin: dict | None = None) -> dict:
                                        "relation": {"CONFORMING": "equal",
                                                     "MISMATCH": "different",
                                                     "UNKNOWN": None}[relation["status"]]},
+                   # The config layer, scored on its own terms: both sides carry a `sha256:`
+                   # prefix here so a prefix difference cannot invent a disagreement, and the
+                   # answer stays a field of its own because a config digest is not a manifest
+                   # digest -- two layers agreeing is a different claim from one layer.
+                   "buildkit_child_config": _pair(child.get("config_digest"),
+                                                  f"sha256:{running_config}" if running_config
+                                                  and not str(running_config).startswith("sha256:")
+                                                  else running_config),
                    "pinned_index_resolution": {"declared": lock.get("buildkit_image"),
                                                "read_back": (pin or {}).get("status"),
                                                "relation": None if not pin or not pin.get("ok")
                                                else "resolved"}},
+        # `buildkit_digest` stays the only required digest field: the manifest layer is the
+        # stronger claim, and letting the config layer satisfy it would report a verified
+        # pull from evidence that only verifies content.
         "required": ("buildx_version", "buildkit_digest"),
         "digest_relation": relation,
+        "config_digest_relation": child_relation,
+        "layers": {"manifest": ("scored" if relation.get("relation")
+                                else relation["status"].lower()),
+                   "config": ("scored" if child_relation.get("relation")
+                              else child_relation["status"].lower()),
+                   "note": ("manifest layer: the pulled child of the pinned index; config "
+                            "layer: the running image id against the pinned child's own config "
+                            "digest. Neither is inferred from a tag, `buildx inspect` text or "
+                            "`driver-opts`")},
     }
     lock_vs_observed["status"] = _status_of(lock_vs_observed["fields"],
                                             lock_vs_observed["required"])
@@ -934,9 +1051,18 @@ def contract_gaps(payload: dict, observe_mode: bool) -> list[str]:
         value = _dig(payload, dotted)
         if value in (None, "", [], {}):
             gaps.append(dotted)
-    if (observe_mode
-            and payload.get("observed", {}).get("builder", {}).get("status") == "ERROR"):
+    builder = payload.get("observed", {}).get("builder", {})
+    if observe_mode and builder.get("status") == "ERROR":
         gaps.append("observed.builder.error")
+    # A layer the daemon or the registry refused to answer is a broken instrument; a layer
+    # that answered "there is nothing here" is a measurement. Only the first is a gap, or the
+    # docker driver's stated absence would fail the job it correctly describes.
+    if observe_mode and builder.get("ok") and (builder.get("repo_digests_read") or {}) \
+            .get("status") == "ERROR":
+        gaps.append("observed.builder.repo_digests_read")
+    child = (payload.get("pinned_index_resolution") or {}).get("platform_child") or {}
+    if observe_mode and child.get("status") == "ERROR":
+        gaps.append("pinned_index_resolution.platform_child")
     return gaps
 
 
@@ -973,7 +1099,8 @@ def main(argv: list[str] | None = None, run: CommandRunner | None = None,
     observed = observe(runner, docker_cli_build=args.docker_cli_build,
                        builder_name=args.builder if args.mode == "observe" else None,
                        environ=env)
-    pin = (resolve_pinned_ref(runner, configured["lock"]["buildkit_image"])
+    pin = (resolve_pinned_ref(runner, configured["lock"]["buildkit_image"],
+                              (observed.get("builder") or {}).get("image_platform"))
            if args.mode == "observe" else {"ok": False, "status": "NOT_APPLICABLE"})
     comparison = compare(configured, observed, pin)
     f39 = oci_layout_facts(args.oci_tar)
