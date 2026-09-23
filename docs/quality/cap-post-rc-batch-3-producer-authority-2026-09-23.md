@@ -10,12 +10,15 @@ remote evidence passes, and §H is where that gate is decided.
 | Approved contract | Option A -- published images must ultimately be built by an explicitly selected, pinned and observed producer |
 | Approved now | A2.1 only. The release build path is not switched; a producer mismatch does not yet block publication |
 | Base / docs tip before this batch | `a6a4a9f43958f4631d3462b3ae5955a4eec60148` (Batch 3A's verdict: `BATCH 3A OBSERVATION COMPLETE -- STEP 2 READY FOR DECISION`) |
-| Verdict | §H |
+| A2.1 verdict | **BATCH 3 A2.1 PRODUCER CONFORMING** at head `b98eb3b`, run `35868200920` (§H, §S) |
+| A2.2 | planned in §I–§P, not executed |
+| F-44 / F-47 | both OPEN, with their open halves now stated precisely (§P, §Q) |
 | Sealed release | untouched -- §R |
 
 ## A. A2.1 implementation
 
-Three files carry the change, and none of them is a release file:
+Two files carry the mechanism, one declares the pin, and two test files keep them honest; none of
+them is a release file:
 
 * `scripts/release/controlled_buildx.json` (**new**) -- the repository's declaration of the one
   buildx executable A2.1 is allowed to run: version, the git commit its release tag points at,
@@ -25,6 +28,9 @@ Three files carry the change, and none of them is a release file:
   through the pinned binary, resolves each image's base bindings, and scores a five-image set.
 * `.github/workflows/ci.yml` → `producer-observation` -- installs, verifies, selects and builds
   with it, for all five shipped images, publishing nothing.
+* `backend/tests/test_producer_observation_contract.py` and
+  `backend/tests/test_release_diff_classifier.py` -- the controls in §G's cycle 3 are the reason
+  the first of those two is not a rubber stamp; the second had to learn a new build shape.
 
 What A2.1 does **not** touch: `release.yml`, `scripts/release/build_release_image.sh`, any
 Dockerfile, anything under `deployment/`, and any product runtime. `test_the_release_build_path_is_still_not_switched`
@@ -384,22 +390,46 @@ the verdict that gates A2.2 comes from `producer-set.json`. A green job and a re
 the intended pair, and this cycle is the only way to see them together without inventing the
 expectation after the fact.
 
-The same edit has a second, independent catch, and it was checked rather than predicted: with the
-mutated job text in place, `test_the_observation_job_builds_with_the_controlled_executable_not_the_plugin`
-fails on its first assertion --
+The control run's `backend` job **failed**, and on two independent guards rather than the one
+expected:
 
 ```
-AssertionError: the build must run through the controlled executable, not the CLI plugin
-1 failed, 1 passed, 65 deselected
+E  AssertionError: the build must run through the controlled executable, not the CLI plugin
+   backend/tests/test_producer_observation_contract.py::test_the_observation_job_builds_with_the_controlled_executable_not_the_plugin
+
+E  AssertionError: the scanner reads 4 pinned-executable builds; A2.1 runs five, and a build
+   whose executable is a variable is exactly the one this check must not miss
+   backend/tests/test_release_diff_classifier.py::test_repo_tooling_reaches_no_shipped_artifact
 ```
 
--- while `test_the_observation_job_publishes_nothing` still passes, correctly, because the
-mutation made the build *less* controlled, not more publishing. That is the CI `backend` job's
-check on this head, run against the same file; the repository's own
-`test_control_2c_the_system_plugin_being_used_instead_is_a_mismatch` covers the recorder's half
-under a stub. Three layers -- a workflow-text rule, a recorder control and a live runner record --
-react to one mutation, which is the arrangement this project treats as the minimum for a control
-that is meant to bite.
+The first is the contract this batch wrote. The second is the older `scripts/`-reaches-a-container
+scanner, which A2.1 had taught to follow a build whose executable is a shell variable -- and so it
+counted four where the job runs five, and noticed. A guard that reacts to a mutation it was never
+written for is the evidence that the count is doing work rather than decorating the test.
+
+Meanwhile `producer-observation` on the very same head **passed**, with its record saying
+MISMATCH and its set saying NOT CONFORMING. That pairing -- red where a rule is written, green
+where a disagreement is only measured, refused where the acceptance lives -- is the whole
+distinction Batch 3 A2.1 is built on, and it could not have been demonstrated without deliberately
+making one of the five images build the wrong way.
+
+### Cycle 4 -- head `d255fdc8f` (docs-only), run `35872170214`, artifact `10755956910`
+
+The same job re-ran at a docs-only head, and the acceptance rule gave the same answer: five
+images CONFORMING, `problems: []`, `authorizes_a2_2: True`, one round. What differs between this
+and cycle 2 is the runner, and it is worth naming precisely:
+
+| cycle | head | runner's `docker buildx version` | controlled executable | verdict |
+| --- | --- | --- | --- | --- |
+| 2 | `b98eb3b` | **v0.37.0** | v0.37.1 / `0b265a9f` / integrity CONFORMING | CONFORMING ×5 |
+| 4 | `d255fdc8f` | **v0.37.1** | v0.37.1 / `0b265a9f` / integrity CONFORMING | CONFORMING ×5 |
+
+Two heads, two plugin answers, one producer verdict. Before A2.1 those two rows would have read
+MISMATCH and CONFORMING for the same repository content, which is the whole of F-44 restated as a
+table -- and it is why "the pinned producer conforms" is only claimable across more than one run.
+The unscored `controlled_buildx_path` stayed `relation: null` on both, and the round's own base
+binding re-derived: cycle 4's browser base is `sha256:23b8f16…`, this round's `cap-sandbox-http`,
+not cycle 2's digest -- which is what a per-round binding is supposed to do.
 
 ## H. A2.1 verdict
 
@@ -419,6 +449,10 @@ The acceptance rule is the one the approval specified, applied by
 | each non-publishing build succeeded | exit 0 ×5, and every recorder exited 0 |
 | the records describe one round | one run, one revision; the scorer refuses otherwise |
 | the observation was complete | no contract gap in any record; the set problem list is empty |
+
+Reproduced at a second head (`d255fdc8f`, cycle 4) on a runner whose own buildx answered
+*differently* from the one at `b98eb3b` -- the same five CONFORMING records both times, so the
+verdict does not rest on a runner that happened to agree.
 
 Cycle 1 (`ecd7ac4`) is part of this verdict rather than a contradiction of it: five records that
 agreed on every producer layer and still read `UNKNOWN` because the instrument required an
