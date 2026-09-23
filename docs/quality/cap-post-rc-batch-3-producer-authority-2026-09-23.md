@@ -431,6 +431,12 @@ The unscored `controlled_buildx_path` stayed `relation: null` on both, and the r
 binding re-derived: cycle 4's browser base is `sha256:23b8f16…`, this round's `cap-sandbox-http`,
 not cycle 2's digest -- which is what a per-round binding is supposed to do.
 
+What cycle 4 covers, precisely: its `producer-observation` job ran to completion and scored the
+set. Its `backend` job was **cancelled** -- by the next push to this same ref, under
+`cancel-in-progress: true`, a scheduling fact about the queue and not a measurement of the code.
+The full-suite-passing head is the acceptance head `b98eb3b`, whose eleven jobs all ended
+`success`; §H's verdict rests on that head and this one reproduces the observation, not the suite.
+
 ## H. A2.1 verdict
 
 **BATCH 3 A2.1 PRODUCER CONFORMING.**
@@ -452,7 +458,8 @@ The acceptance rule is the one the approval specified, applied by
 
 Reproduced at a second head (`d255fdc8f`, cycle 4) on a runner whose own buildx answered
 *differently* from the one at `b98eb3b` -- the same five CONFORMING records both times, so the
-verdict does not rest on a runner that happened to agree.
+verdict does not rest on a runner that happened to agree. And `b98eb3b` is a full CI pass, not
+just an observation: all eleven jobs, `backend` included, ended `success`.
 
 Cycle 1 (`ecd7ac4`) is part of this verdict rather than a contradiction of it: five records that
 agreed on every producer layer and still read `UNKNOWN` because the instrument required an
