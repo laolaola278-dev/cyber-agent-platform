@@ -236,17 +236,33 @@ listed so that an import name is not mistaken for a working capability.
 3. **Cancel vs. terminal-state race (Low).** A restrictive policy can finalize
    a run as BLOCKED before a cancel request lands; the cancel API is idempotent
    for already-terminal runs.
-4. **Compose-path third-party services are still pulled by mutable tag (F-24).**
+4. **Compose-path third-party services were pulled by mutable tag (F-24) — CLOSED
+   post-rc, on 2026-09-22, at candidate `257ba18`.**
    `redis:7-alpine`, `prom/prometheus:v2.55.1`, `grafana/grafana:11.3.1`,
-   `dpage/pgadmin4:8` and `postgres:16-alpine` come from `docker-compose.yml`,
-   not from a Dockerfile, so the base-image lock and its digest gate do not reach
-   them -- and the chart does not deploy them either. Consequence: a compose
-   deployment can receive different bytes for the same tag on different days, and
-   `deployment/third-party-images.json` says nothing about them. Closing this
-   means either extending the lock to compose services and rewriting
-   `docker-compose.yml` to digest references, or dropping the compose stack in
-   favour of the chart; both are larger than the artifact-closure scope and were
-   left alone deliberately rather than half-done.
+   `dpage/pgadmin4:8` and `postgres:16-alpine` came from `docker-compose.yml`, not from a
+   Dockerfile, so the base-image lock and its digest gate did not reach them -- and the chart
+   does not deploy them either. The consequence was that a compose deployment could receive
+   different bytes for the same tag on different days while
+   `deployment/third-party-images.json` said nothing about them.
+   It is closed the way the finding said it should be: the lock was extended to the compose
+   services and `docker-compose.yml` rewritten to digest references. All six external images
+   now read `repository@sha256:<index digest>`, each with a comment naming the tag the digest
+   stands for (MinIO's pre-existing immutable ref was re-read and left alone), and the lock
+   gained `redis`, `prometheus`, `grafana` and `pgadmin4` beside the existing entries. Every one
+   of those digests is **generated**, not transcribed: `scripts/release/third_party_registry_evidence.py`
+   writes `docs/quality/artifacts/registry-resolution/third-party-registries.json`, and
+   `policy.compose_images` is the upgrade procedure -- generator refresh, review the digest
+   diff, run the relevant certification, update compose and the lock together.
+   The postgres mutable-tag exception was reversed in the same change:
+   `policy.postgres.form` went from `tag` to `repository@digest`, its known cost (a pinned
+   major version now needs that four-step procedure rather than a tag bump) stated in the lock,
+   and the guard that used to permit the tag replaced by a D.4 contract case that fails if the
+   exception reappears. Contracts 1-5 of that table are each a live assertion plus a control
+   that mutates a copy of its own input, so the green is measuring the rule and not the fixture.
+   The release was not certified by this document: the candidate carries CI green at
+   `head_sha = 257ba18` and the Linux, K8s, reliability and strict-GA rounds at that same SHA,
+   and `docs/quality/cap-post-rc-batch-2-implementation-2026-09-22.md` §C records which
+   artifact said what.
 5. **The certification gate could not tell a strict GA round from a development one
    (F-33) — closed post-rc, on 2026-09-21.**
    `release.yml`'s `verify-certification` used to accept a *successful* run of
@@ -284,30 +300,35 @@ listed so that an import name is not mistaken for a working capability.
    found by that dry build and fixed. What is still verified only by reading:
    `--push`, registry authentication, the stored SBOM/provenance attachments and
    the index-digest hand-off between the two sandbox jobs.
-7. **A tracked file can point its evidence into a gitignored directory (F-37).**
-   `deployment/third-party-images.json` names
-   `outputs/artifact-closure/registry-base-digests.json` as the proof behind five
-   digest pins, and the 1.0.6-rc1 artifact-closure report cited three more paths
-   under that same ignored directory. A fresh clone resolves none of them.
-   It used to be true that no test looked, which is why CI said nothing about it;
-   since 2026-09-21 `test_third_party_image_lock.py` requires every cited path to
-   have a tracked twin under `docs/quality/artifacts/` asserting the **same
-   digests** -- the dates and layout of the two copies are explicitly not the claim
-   -- and refuses any entry that has neither a pointer nor a justification named in
-   the test's own table. That guard is a **transitional contract**: it verifies the
-   claim a clone must be able to resolve, and it was executed inside a fresh clone
-   where the cited generated file does not exist at all. Once the five strings point
-   at tracked paths, the guard tightens to requiring the cited path itself to be
-   tracked. The report's own captures are tracked beside it
-   (`docs/quality/artifacts/cap-1.0.6-rc1-artifact-closure/`); the five pointers
-   in the lock were deliberately not rewritten, because `classify_diff.py` puts
-   every path under `deployment/` in the runtime-affecting `deployment` category,
-   so changing those strings costs a full re-certification of build inputs that did
-   not change -- and the only cheap way round that cost is a metadata-only
-   classifier exception, which is the manoeuvre the release governance refuses.
-   Closing it means either generating the measurement inside the check that consumes
-   it, or deciding that evidence lives at a path the lock may name; the repoint is
-   scheduled into the round that re-certifies anyway.
+7. **A tracked file could point its evidence into a gitignored directory (F-37) — CLOSED
+   post-rc, on 2026-09-22, at candidate `257ba18`.**
+   `deployment/third-party-images.json` used to name
+   `outputs/artifact-closure/registry-base-digests.json` as the proof behind five digest pins,
+   and the 1.0.6-rc1 artifact-closure report cited three more paths under that same ignored
+   directory. A fresh clone resolves none of them.
+   It used to be true that no test looked, which is why CI said nothing about it; since
+   2026-09-21 `test_third_party_image_lock.py` required every cited path to have a tracked twin
+   under `docs/quality/artifacts/` asserting the **same digests** -- the dates and layout of the
+   two copies were explicitly not the claim -- and refused any entry with neither a pointer nor
+   a justification named in the test's own table. That was the **transitional** contract, and it
+   is now deleted rather than left in place beside the real one. What replaces it:
+   `test_cited_evidence_is_tracked_and_asserts_exactly_the_locked_digests` requires the cited
+   file itself to exist, to appear in `git ls-files`, and to state exactly that entry's index
+   digest and `linux/amd64` child digests for its own registry/repository/tag coordinate -- so a
+   pointer can no longer be satisfied by a file that merely shares a name. Two controls keep the
+   contract from decaying: re-planting a same-named twin under `docs/quality/artifacts/` must
+   leave an invalid pointer invalid, and an entry with no evidence pointer at all is refused
+   instead of passing silently.
+   Why it waited for this round rather than riding in a docs-only one: `classify_diff.py` puts
+   every path under `deployment/` in the runtime-affecting `deployment` category, so rewriting
+   those strings costs a full re-certification of build inputs that did not change -- and the
+   only cheap way round that cost is a metadata-only classifier exception, which is the
+   manoeuvre the release governance refuses. The repoint therefore went in beside F-24's digest
+   pinning, in the commit that re-certified anyway. One consequence for anyone reading the
+   finding list by finding rather than by commit: F-37's contract and F-24's pinning share
+   commit `d68ff50`, so the per-item verdicts in
+   `docs/quality/cap-post-rc-batch-2-implementation-2026-09-22.md` §A can only be reported per
+   commit, not per finding.
 8. **CAP images are not reproducible by digest (F-39) -- divergence measured, cause
    not established.** Two clean-runner builds of `cap-sandbox-http` with the same
    `dockerfile_sha256`, the same `context_sha256` and the same pinned base produced
@@ -331,21 +352,32 @@ listed so that an import name is not mistaken for a working capability.
    re-certification -- but the acceptance criterion is two independent clean builds of one
    commit matching on the digests the measurement file defines, not the fix being in
    place. See also the 1.0.6-rc1 artifact closure report, §10.
-9. **The chart schema forbids a digest-only pin for two of six coordinates
-   (F-41, half closed).** `helm lint` in CI and the `helm install`s in the
-   certification rounds do apply `values.schema.json`, and the released
-   `values-release-<version>.yaml` is now evaluated against it coordinate by
-   coordinate in `test_the_released_values_satisfy_the_chart_schema`. What is left
-   is the schema's own asymmetry: `worker.sandbox.image`,
-   `worker.sandbox.browserImage`, `egressProxy.image` and `frontend.image` accept
-   tag **or** digest through `anyOf`, while `backend.image` and `worker.image`
-   require a non-empty `tag` whose pattern rejects the empty string. `cap.imageRef`
-   prefers a digest, so the digest-only form an operator would use to pin exact
-   bytes is unavailable for precisely the API and the acquisition worker. Unifying
-   it means editing `deployment/helm/cap/values.schema.json`, which
-   `classify_diff.py` charges as runtime-affecting, so the change is scheduled in
-   front of its own re-certification rather than slipped into a docs-only round;
-   the test above asserts the difference, and will fail when it is removed.
+9. **The chart schema forbade a digest-only pin for two of six coordinates
+   (F-41) — CLOSED post-rc, on 2026-09-22, at candidate `257ba18`.**
+   `helm lint` in CI and the `helm install`s in the certification rounds did apply
+   `values.schema.json`, and the released `values-release-<version>.yaml` was already evaluated
+   against it coordinate by coordinate in `test_the_released_values_satisfy_the_chart_schema`.
+   What was left was the schema's own asymmetry: `worker.sandbox.image`,
+   `worker.sandbox.browserImage`, `egressProxy.image` and `frontend.image` accepted tag **or**
+   digest through `anyOf`, while `backend.image` and `worker.image` required a non-empty `tag`
+   whose pattern rejected the empty string -- so the digest-only form an operator would use to
+   pin exact bytes was unavailable for precisely the API and the acquisition worker.
+   All six nodes now carry one contract: `required: ["repository"]`, then `anyOf` over a
+   well-formed `tag` or a `digest` matching `^sha256:[0-9a-f]{64}$`, with the `digest: ""`
+   defaults removed from `values.yaml` so an unset field cannot masquerade as an empty-but-valid
+   coordinate. `cap.imageRef` prefers the digest when both are present, which
+   `test_the_digest_is_the_coordinate_the_chart_renders` reads out of `_helpers.tpl` rather than
+   inferring from the schema. `anyOf` rather than `oneOf` is a deliberate choice, not an
+   oversight: tag-plus-digest is a legal, meaningful input (pin the bytes, keep the human-readable
+   tag beside them), and `oneOf` would refuse the safest form an operator can write.
+   Enforcement moved out of Python-only: `ci.yml`'s packaging job runs real `helm lint` and
+   `helm template` for tag-only, digest-only and tag+digest across all six paths, asserts the
+   rendered image strings, and refuses the no-coordinate, empty-tag, empty-digest and
+   malformed-digest shapes. Note what that means for reproducibility of this claim: helm is not
+   installed on every contributor's box, so those four refusals are demonstrated in CI, and the
+   local Python tests cover the schema and the renderer but not the binary.
+   This is a `deployment/` change and therefore runtime-affecting: it is one of the reasons the
+   round that carried it re-certified build inputs instead of shipping as docs.
 10. **A skipped release job read as executed evidence (F-42 — implementation and remote validation
     CLOSED by batch 1.1; tag-time path PENDING).** Found by the
     batch-1 remote validation, in the same class as F-33 — a colour where a decision should be — one
@@ -383,6 +415,127 @@ listed so that an import name is not mistaken for a working capability.
     **tag-time execution** — no tag was created, so the gate's refusal at publication is demonstrated
     by executed code and live-state dry-run, not by a real release. That is the same pending item
     F-33 left behind, now with its cause measured rather than assumed.
+
+11. **The pinned build producer is never demonstrated to be the producer of a built image
+    (F-44) — OPEN.**
+    Measured, not inferred, from CI's own release-image records at candidate `257ba18`
+    (run `35761257654`, the five `ci-release-image-cap-*` artifacts plus one buildx-path record
+    inside them):
+
+    | field | value |
+    | --- | --- |
+    | configured buildx (the lock's declared pin) | `v0.37.1` |
+    | observed buildx (read back on the runner) | `github.com/docker/buildx v0.37.0 ac30b249211430b85fb8f37b6e7154b5c47ba0b6` on **6 of 6** records |
+    | `comparison.buildx_version.matches` | `false` on 6 of 6 |
+    | build paths those six records cover | five `docker build` cells (`--local-docker`) **and** the `docker buildx build` prerequisite (`cap-sandbox-http.prerequisite.json`) |
+    | what the workflows ask for | `ci.yml` (lines 337-341, 395-399) and `release.yml` (680-684, 721-725) both pass `buildx-version: v0.37.1` and `driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a…` to the same pinned `setup-buildx-action@8d2750c6…` |
+    | builder identity behind the bytes | never named: no `--builder` appears in either workflow or in `scripts/release/build_release_image.sh` |
+    | `comparison.buildkit_image.matches` | `null` on all six -- an unreadable observation, deliberately not restated as a pin; the buildx-path record says so in the open way: `incomplete: ["builder"]` |
+    | engine behind the `docker build` cells | Docker Engine `28.0.4`, whose **embedded** BuildKit compiled those layers |
+    | configured BuildKit `moby/buildkit:v0.33.0@sha256:6c2fa84a…` | **not demonstrated as the producer** of any image recorded here |
+
+    Two readings this rules out. It is **not** merely an artefact of the dry-build path using
+    `docker build`: the one CI build that went through `docker buildx build` observed the same
+    `v0.37.0` and could not read its builder either. And it is **not** a claim about published
+    images: the release path (`--push`, `docker buildx build`, attestation attached) has never
+    executed -- that is F-25's remaining scope -- so what the pin would do to the bytes that
+    operators actually pull is **unobserved**, not proven false. What is observed is that on
+    every path that has run, the runner's answer to `docker buildx version` is not the version
+    the workflow asked the installer for, and nothing in the evidence says which builder compiled
+    the layers.
+    What B2 closed, precisely: producer *configuration* pinning (actions by full SHA, an
+    explicit `buildx-version`, a BuildKit image digest, a frontend digest in the two Dockerfiles
+    that already carried a syntax directive), `configured` versus `observed` recorded as separate
+    objects by `scripts/release/record_build_producer.py`, and **visibility** of the mismatch --
+    the comparison is now a field rather than something a reader must eye-diff across artifacts.
+    What B2 did **not** close, and no document may claim: that the actual build producer is
+    pinned. A mechanism detail matters for whoever fixes this: `configured` is read from the
+    lock (`configured_values(lock, …)` on the `buildx` / `buildkit-buildkit` entries), so the
+    comparison checks the declared pin against the CLI's answer and cannot see whether the
+    workflow's own `buildx-version` request was honoured.
+    The decision this waits on -- whether the project requires the published-image build path to
+    *be* the pinned producer, or should instead treat the runner's engine as the intended
+    producer and stop asserting the container -- is worked out with two contracts and their prices
+    in `docs/quality/cap-post-rc-batch-3-design-options-2026-09-23.md` §C-§F. This entry exists
+    so the register does not quietly imply the pin is honoured. Whether a mismatch should block
+    publication is a gate decision the project has not made, which is why it is filed here
+    instead of being enforced by prose.
+    Note on provenance of this entry: the values above are read from the candidate's CI
+    artifacts; the entry itself is a docs-only reconciliation that the classifier inherits, so
+    it is not new certification evidence for any build.
+
+12. **A cancelled acquisition run could lose its terminal `CANCELLED` write (F-45) — CLOSED at
+    candidate `257ba18`.** Found by CI, not designed in: run `35749438118` at `f5a0cdd` went red
+    with 1753 tests and one failure,
+    `test_phase_28_2_cancellation.py::test_cancelled_runs_have_zero_evidence_writes` raising
+    `sqlite3.OperationalError: database is locked` on the worker's own last write
+    (`UPDATE acquisition_runs SET status='CANCELLED' … AND worker_id = ?`). A pre-existing defect,
+    not a regression from the digest work -- the pins only shifted suite timing enough to expose
+    it. It reproduced at roughly 1 in 53 executions and worst under artificial CPU pressure, and
+    the repo already documented the class ("a zombie transaction holds the SQLite write lock until
+    garbage collection": `app/worker/runtime.py:84-91`,
+    `docs/quality/flake-triage-34012500372-pregate-d.md`). If the write is lost the run never
+    reaches a terminal state and the reconciler has to clean up a zombie.
+    The fix is three properties, each with a control that shows the assertion measures the
+    property rather than the fixture: the `WorkerCancelledError` branch now rolls back its own
+    session before finalising, like the four sibling branches that always did
+    (`test_the_cancelled_execution_branch_releases_its_own_writer`); a transient lock on the
+    terminal write is retried under a bounded budget instead of losing the write
+    (`test_cancel_finalize_retries_a_transient_lock_on_the_terminal_write`, controlled by
+    `test_a_non_transient_write_failure_still_propagates`, where a `ProgrammingError` still raises
+    and the run is *not* reported cancelled); and the claim's lease is released in the same
+    transaction as that write, so the two cannot diverge
+    (`test_cancel_finalize_releases_the_run_lease`, controlled by
+    `test_a_lease_release_conflict_never_costs_the_terminal_write`).
+    Two wrong attempts are on record because they are what the pre-existing tests caught: a
+    rollback placed inside `_finalize_cancelled_if_safe` broke
+    `test_phase_28_1_worker_path.py::test_cancel_tolerates_terminate_failure` (the API-side cancel
+    path uses the same helper with legitimately uncommitted work), and giving the lease release its
+    own session broke it again, because on a single-connection bind closing that session rolls back
+    the caller's work. Fixing the lease call also surfaced F-45b: `WorkerLeaseRepository` has no
+    `update` method, and an `except Exception: pass` around it had been turning that
+    `AttributeError` into every cancelled run keeping an ACTIVE lease until the expiry sweep
+    happened to find it.
+    This is a `production_runtime` change, and it is the reason the candidate moved a fourth
+    time: any code fix after a freeze means a new candidate SHA and a fresh round of rounds, not
+    an amendment.
+
+13. **Linux certification pins the socket disclosure instead of requiring isolation (F-46) —
+    OPEN, policy review.** Read from the candidate's own Linux certification artifact:
+    `worker_control_plane_isolation = "PARTIAL"` and `unrestricted_docker_socket_mounted = true`,
+    alongside `sandbox_workload_isolation = "PASS"`,
+    `production_chart_worker_mounts_runtime_socket = false` and
+    `compose_worker_mounts_runtime_socket = true`.
+    What produces them is `scripts/certification/generate_report.py:docker_socket_control_plane()`,
+    which derives both deployment paths from the repository at assertion time:
+    `PASS` only when neither path mounts a runtime socket, `NOT_CERTIFIED` when the **chart**
+    does, `PARTIAL` when only **compose** does, and the legacy boolean is the `or` of the two so
+    an older consumer cannot read `PARTIAL` as full isolation.
+    The precise state of the policy matters here, because "not gated" would be wrong.
+    `cap-linux-certification.yml` does assert on these fields -- it requires
+    `worker_control_plane_isolation != "PASS"`, requires
+    `production_chart_worker_mounts_runtime_socket is False` (labelled `RELEASE BLOCKER`),
+    requires `compose_worker_mounts_runtime_socket is True`, and requires the artifact's recorded
+    values to equal what the repo yields at assertion time. So the fields are **not** release
+    blockers in the security sense -- nothing fails while the compose worker is
+    host-root-equivalent -- but they **are** pinned disclosures: a round cannot quietly claim
+    isolation, and it cannot quietly lose the compose mount either, since the gate asserts the
+    mount is present and tells an author to change the docs and the gate together. That
+    by-design asymmetry is the finding.
+    The open questions, none of which Batch 2 answered or was asked to: whether a
+    host-root-equivalent worker on the path the README quickstart reaches first should remain an
+    accepted shipped state or become a release-blocking gate; what the intended secure value is
+    per path (`PASS`/`false` for both, or `PARTIAL` as a documented exception with an owner); and
+    what enforcing it would cost -- the compose worker drives sandboxes through the docker CLI
+    because `SANDBOX_PROVIDER=oci-sandbox`, so removal means a rootless or socket-brokered
+    sandbox runtime on that path, and the `compose_worker_mounts_runtime_socket is True`
+    assertion, `.env.example`, `docker-compose.yml`'s warning comment,
+    `test_sandbox_socket_boundary.py` and this entry all move together.
+    Explicitly not claimed: this does **not** retroactively invalidate Batch 2, whose rounds ran
+    against exactly these values and passed the policy as written; and it is a distinct decision
+    from F-44's producer question -- different file, different gate, different migration -- so
+    the two must not be merged into one "certification is soft" complaint.
+    Batch 3 §I reviews this as policy and changes no gate.
 
 ## Live verification against a real PostgreSQL server
 

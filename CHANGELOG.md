@@ -4,9 +4,16 @@ All notable changes follow Keep a Changelog categories and Semantic Versioning 2
 
 ## [Unreleased]
 
-Post-1.0.5 delivery audit. These are unreleased fixes on top of the `1.0.5`
-anchor; under the version policy they require a new RC (`1.0.6-rc1`) because
-published release contents are immutable.
+Work on top of the sealed `1.0.6-rc1` anchor, recorded in three post-rc rounds: the
+delivery audit that produced `1.0.6-rc1`, then hardening batches 1 / 1.1 and batch 2.
+Because published release contents are immutable, none of this can be added to
+`1.0.6-rc1`: under the version policy it needs its own future RC, and no tag is
+created by any entry below. Batch 2's runtime candidate
+`257ba18d8cb6c22d330701b69713544254e4f03a` is certified by its own CI, Linux
+production, K8s, 7200 s reliability and strict-GA rounds -- see
+`docs/quality/cap-post-rc-batch-2-implementation-2026-09-22.md` §J-§S for the run and
+artifact ids. Everything in the entries below that is a docs-only reconciliation
+inherits from that candidate rather than re-certifying it.
 
 ### Added
 
@@ -287,6 +294,59 @@ published release contents are immutable.
   pins the *published* index digest, so
   what an operator deploys is still exactly what was certified; "rebuild it and
   compare" is not a check that works today.
+
+### Changed
+
+- **Every deployed third-party image is pinned by digest (F-24, CLOSED).**
+  `docker-compose.yml` now names `repository@sha256:<index digest>` for all six
+  external images -- `postgres`, `redis`, `prometheus`, `grafana`, `pgadmin4` and the
+  already-immutable MinIO ref -- each with a comment saying which tag the digest
+  stands for, and `deployment/third-party-images.json` grew the four entries it was
+  missing. The digests are **generated** by
+  `scripts/release/third_party_registry_evidence.py`, which refuses a tag whose served
+  `Docker-Content-Digest` disagrees with `sha256(body)`, a by-digest refetch that is not
+  byte-identical, a missing single `linux/amd64` child, an ambiguous auth response or a
+  dropped connection, and writes atomically so a failed run cannot damage the last good
+  artifact. `docs/quality/artifacts/registry-resolution/third-party-registries.json` is
+  the tracked output every lock entry cites.
+  The postgres mutable-tag exception was **reversed**, not re-justified:
+  `policy.postgres.form` moved from `tag` to `repository@digest`, the upgrade procedure
+  (generator refresh -> review the digest diff -> run the relevant certification -> update
+  compose and the lock) and its cost are stated in the lock, and where the exception used
+  to live there is now a contract case that fails if it comes back. Each of the five D.4
+  contracts is a live assertion plus a control that mutates its own input.
+- **Evidence pointers resolve inside a clone; the transitional twin is gone (F-37,
+  CLOSED).** Every `provenance.evidence` string names the tracked generated artifact, and
+  the contract now requires the cited file itself to exist, to be `git ls-files` tracked,
+  and to state exactly that entry's index and `linux/amd64` child digests for its own
+  coordinate. A re-planted same-named basename twin must leave an invalid pointer invalid,
+  and an entry with no pointer is refused rather than passing silently.
+- **One Helm image-coordinate contract for all six nodes (F-41, CLOSED).**
+  `backend.image`, `worker.image`, `frontend.image`, `egressProxy.image`,
+  `worker.sandbox.image` and `worker.sandbox.browserImage` share
+  `required: [repository]` plus `anyOf` over a well-formed tag or a
+  `^sha256:[0-9a-f]{64}$` digest, `cap.imageRef` prefers the digest, and the
+  `digest: ""` defaults are removed from `values.yaml`. `anyOf` rather than `oneOf` is
+  deliberate: tag-plus-digest is the safest thing an operator can write. Enforcement is
+  no longer Python-only -- `ci.yml`'s packaging job renders tag-only, digest-only and
+  tag+digest with real `helm template` for all six paths, asserts the rendered strings,
+  and refuses the no-coordinate, empty-tag, empty-digest and malformed-digest shapes.
+- **Build producer: configuration pinned, identity recorded, mismatch visible (B2).**
+  `docker/setup-buildx-action` and `docker/login-action` are pinned by full SHA, the
+  workflows declare `buildx-version: v0.37.1` plus
+  `driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a…`, the
+  `docker/dockerfile:1@sha256:ecfaec9e…` frontend is pinned in the two Dockerfiles that
+  already carried a syntax directive (the other three were deliberately left alone), and
+  `scripts/release/record_build_producer.py` writes `configured` and `observed` as
+  separate objects with a failed read kept failed. This is **not** a claim that the
+  actual build producer is pinned. All six CI producer records at the candidate -- five
+  `docker build` cells and the one `docker buildx build` prerequisite build -- read
+  buildx back as `v0.37.0` against the `v0.37.1` pin with
+  `comparison.buildx_version.matches: false`, no `--builder` is named anywhere in the
+  workflows or the build script, and `comparison.buildkit_image.matches` is `null` (the
+  buildx-path record reports `incomplete: ["builder"]`). The release path has never
+  executed, so the pin's effect on published images is unobserved rather than disproved.
+  That gap is **F-44, open**.
 
 ### Fixed
 
@@ -579,6 +639,28 @@ published release contents are immutable.
   least-privilege set of each role, and the runtime-socket boundary between the
   production chart and the compose evaluation path are now asserted in both
   directions, including negative controls for an unmapped future route.
+
+- **A cancelled acquisition run no longer loses its terminal `CANCELLED` write (F-45,
+  CLOSED at `257ba18`).** `run_claimed`'s `except WorkerCancelledError` branch was the only
+  one of five that finalised without rolling back its own session, so the abandoned
+  operation's uncommitted work held the SQLite write lock that the dedicated finalisation
+  connection then waited for. CI found it, not a design review: run `35749438118` at
+  `f5a0cdd` failed `test_cancelled_runs_have_zero_evidence_writes` with
+  `sqlite3.OperationalError: database is locked` on the run's last write, which is the
+  statement that keeps a cancelled run from becoming a zombie the reconciler must clean
+  up. The branch now rolls back like its siblings, the terminal write retries a transient
+  lock under a bounded budget, and the claim's lease is released in the same transaction as
+  that write -- with a control per property (a non-transient `ProgrammingError` still
+  raises and the run is not reported cancelled; a losing lease-release race still does not
+  cost the write). Pre-existing rather than introduced by the digest work, and
+  `production_runtime`, which is why the candidate moved.
+- **Two policy questions are now filed rather than absorbed (F-44, F-46 -- both OPEN).**
+  The pinned builder is not the builder that produced the images, and the Linux
+  certification pins the container-runtime-socket disclosure instead of requiring
+  isolation on every shipped path. Neither is closed by this round and neither is
+  described here as certified by it: they are register entries with their measurements,
+  awaiting a decision. See `docs/known-issues.md` items 11 and 13 and
+  `docs/quality/cap-post-rc-batch-3-design-options-2026-09-23.md`.
 
 ## [1.0.5] - 2026-09-07
 
