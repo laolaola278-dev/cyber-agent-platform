@@ -28,8 +28,18 @@ disturb a certified candidate.
 - Docs tip: the single commit whose parent is that candidate —
   `git log -1 --format=%H` on `main` reads it. This file cannot contain its own hash, so the
   pointer is given as a command rather than as a stale literal, and §B's measured values are the
-  proof it is the right commit. Reaching this state took one amend, of **the docs commit only**,
-  to fold §A/§B's measurement in; `257ba18` was never amended, rebased or moved.
+  proof it is the right commit. Folding §A/§B's measurement in took amends of **the docs commit
+  only**; `257ba18` was never amended, rebased or moved, and once the commit was pushed further
+  corrections could only be new commits, since amending a pushed commit needs a force push —
+  which this round forbids. (That is why this paragraph exists.)
+
+**As pushed.** The reconciliation went to `origin` as a plain fast-forward
+(`257ba18 → 44fb73d3e88ed277058f1c6bae933a24624c6a50`, no force), and the push-triggered CI run
+`35811320327` at the docs tip completed **success** with all ten jobs green, including
+`packaging` (the real-helm check) and `image-and-security`. That CI is feedback that a docs-only
+commit does not break the pipeline — it is **not** a certification round, and nothing here is
+described as certified by it. The certified runtime candidate remains `257ba18`; the repository
+documentation tip is the commit this file is in, one commit later.
 
 ## B. Classifier inheritance proof
 
