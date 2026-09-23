@@ -260,7 +260,7 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
 
 def recorded(tmp_path: Path, run, *extra: str, environ=None,
              build_argv: list[str] | None = None, build_exit: int = 0,
-             image: str = "cap-backend") -> tuple[int, dict]:
+             image: str = "cap-backend", dockerfile: str | None = None) -> tuple[int, dict]:
     """Run the recorder's observation path over a stubbed machine and read the record back.
 
     The build-command file is written here rather than assumed: A2.1's claim that the pinned
@@ -274,7 +274,10 @@ def recorded(tmp_path: Path, run, *extra: str, environ=None,
     command.write_text(json.dumps({"image": image, "argv": build_list, "exit": build_exit}),
                        "utf-8")
     argv = ["--out", str(out), "--lock", str(LOCK_PATH), *OBSERVE_ARGS,
-            "--image", image, "--build-command", str(command), *extra]
+            "--image", image, "--build-command", str(command)]
+    if dockerfile:
+        argv += ["--dockerfile", dockerfile]
+    argv += list(extra)
     code = recorder.main(argv, run=run,
                          environ=environ if environ is not None else {"HOME": HOME,
                                                                       "RUNNER_ENVIRONMENT":
@@ -1411,6 +1414,19 @@ def test_an_unresolved_base_argument_is_reported_not_invented() -> None:
 FIVE = ["cap-backend", "cap-frontend", "cap-sandbox-http", "cap-sandbox-browser",
         "cap-egress-proxy"]
 
+#: Which Dockerfile each shipped image is built from, and the flags its recorded build
+#: carried. The browser's base arrives only through its build argv, because that is the
+#: evidence the recorder reads -- nothing re-types the digest it is meant to be checking.
+IMAGE_BUILDS = {
+    "cap-backend": (str(PROJECT_ROOT / "backend/Dockerfile"), []),
+    "cap-frontend": (str(PROJECT_ROOT / "frontend/Dockerfile"), []),
+    "cap-sandbox-http": (HTTP_DOCKERFILE, []),
+    "cap-egress-proxy": (str(PROJECT_ROOT / "backend/docker/egress-proxy/Dockerfile"), []),
+    "cap-sandbox-browser": (BROWSER_DOCKERFILE, [
+        "--build-arg", "SANDBOX_HTTP_BASE=cap-sandbox-http",
+        "--build-context", f"cap-sandbox-http=oci-layout:///workspace/http-layout@{CHILD}"]),
+}
+
 
 def five_records(tmp_path: Path, broken: str | None = None,
                  broken_run: str | None = None) -> list[Path]:
@@ -1418,27 +1434,37 @@ def five_records(tmp_path: Path, broken: str | None = None,
 
     `broken` names the image whose record is made untrue in the way the caller asks for, so a
     set verdict can be tested against a real set rather than against a hand-written summary of
-    one. `broken_run` gives that image's record a different commit, which is how a set could
-    otherwise be assembled from whichever runs looked good.
+    one. `broken_run` chooses the untruth: a disagreeing controlled version, an unreadable
+    builder, a failed build, or the same conforming record carrying a different commit -- the
+    last being how a set could otherwise be assembled from whichever runs looked good.
     """
     paths = []
     for image in FIVE:
+        dockerfile, flags = IMAGE_BUILDS[image]
         record_dir = tmp_path / image
         record_dir.mkdir()
-        code, payload = recorded(
-            record_dir, observe_run(), image=image,
-            build_exit=1 if broken == image and broken_run == "exit" else 0)
+        argv = [CONTROLLED, "build", "--builder", BUILDER, "--file", dockerfile, *flags, image]
+
+        def write(payload: dict, into: Path = record_dir / "producer-evidence.json") -> None:
+            into.write_text(json.dumps(payload), "utf-8")
+
+        code, payload = recorded(record_dir, observe_run(), image=image, dockerfile=dockerfile,
+                                 build_argv=argv,
+                                 build_exit=1 if broken == image and broken_run == "exit" else 0)
         assert code == 0, payload
+        write(payload)
         if broken == image and broken_run == "mismatch":
             _, payload = recorded(record_dir, observe_run(controlled_version="v0.36.0"),
-                                  image=image)
+                                  image=image, dockerfile=dockerfile, build_argv=argv)
+            write(payload)
+        if broken == image and broken_run == "unknown":
+            _, payload = recorded(record_dir, observe_run(builder_exists=False), image=image,
+                                  dockerfile=dockerfile, build_argv=argv)
+            write(payload)
         if broken == image and broken_run == "round":
             payload["runner"]["github_sha"] = "a-different-commit"
-        if broken == image and broken_run == "unknown":
-            _, payload = recorded(record_dir, observe_run(builder_exists=False), image=image)
-        out = record_dir / "producer-evidence.json"
-        out.write_text(json.dumps(payload), "utf-8")
-        paths.append(out)
+            write(payload)
+        paths.append(record_dir / "producer-evidence.json")
     return paths
 
 
@@ -1525,3 +1551,45 @@ def test_an_unexpected_image_in_the_set_is_reported(tmp_path: Path) -> None:
     doc = scored(tmp_path, five_records(tmp_path), FIVE[:-1])
     assert any("not an expected image" in problem for problem in doc["problems"]), doc["problems"]
     assert doc["authorizes_a2_2"] is False
+
+
+def test_the_same_round_base_binding_is_read_out_of_the_build_itself(tmp_path: Path) -> None:
+    """The browser's base digest comes from its argv, because that is the build's fact.
+
+    Passing `--build-context` to the recorder as well would let a record state a binding the
+    builder never used. Nothing here passes it on the command line: the value is read back out
+    of the invocation the step recorded, which is the same route the executable's identity
+    takes.
+    """
+    record_dir = tmp_path / "browser"
+    record_dir.mkdir()
+    dockerfile, flags = IMAGE_BUILDS["cap-sandbox-browser"]
+    argv = [CONTROLLED, "build", "--builder", BUILDER, "--file", dockerfile, *flags,
+            "outputs/producer-observation/context-browser"]
+    _, payload = recorded(record_dir, observe_run(), image="cap-sandbox-browser",
+                          dockerfile=dockerfile, build_argv=argv)
+    base, = payload["base_images"]["bases"]
+    assert base["binding"] == "same_round_oci_layout", base
+    assert base["digest"] == CHILD, base
+    assert base["status"] == "READ", base
+
+
+def test_an_image_built_on_an_unnamed_base_refuses_the_set(tmp_path: Path) -> None:
+    """A pinned producer on an un-pinned base has produced something nobody can re-derive.
+
+    Every comparison can read CONFORMING while the image itself floats. The set rule says no
+    anyway, which is the difference between measuring the producer and measuring the build.
+    """
+    records = five_records(tmp_path)
+    browser = tmp_path / "cap-sandbox-browser/producer-evidence.json"
+    payload = json.loads(browser.read_text("utf-8"))
+    payload["base_images"] = recorder.base_image_bindings(
+        IMAGE_BUILDS["cap-sandbox-browser"][0], ["SANDBOX_HTTP_BASE=cap-sandbox-http:latest"],
+        [])
+    browser.write_text(json.dumps(payload), "utf-8")
+    doc = scored(tmp_path, records, FIVE)
+    assert doc["authorizes_a2_2"] is False, records
+    row = doc["images"]["cap-sandbox-browser"]
+    assert row["status"] == "UNKNOWN" and row["comparisons"]["lock_vs_observed"] == "CONFORMING", (
+        "the producer agreed; the base did not, and the row says so")
+    assert any("not bound by digest" in problem for problem in doc["problems"]), doc["problems"]

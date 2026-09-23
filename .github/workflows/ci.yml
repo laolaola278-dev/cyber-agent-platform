@@ -684,8 +684,10 @@ jobs:
           record_one cap-frontend frontend/Dockerfile
           record_one cap-sandbox-http backend/docker/sandbox-http/Dockerfile
           record_one cap-egress-proxy backend/docker/egress-proxy/Dockerfile
-          record_one cap-sandbox-browser backend/docker/sandbox-browser/Dockerfile \
-            --build-arg "SANDBOX_HTTP_BASE=cap-sandbox-http"
+          # No `--build-arg` here for the browser image on purpose: the base it was built on,
+          # and that base's digest, are read back out of the build's recorded argv rather than
+          # repeated to the recorder, which would only be the same script agreeing with itself.
+          record_one cap-sandbox-browser backend/docker/sandbox-browser/Dockerfile
           for image in cap-backend cap-frontend cap-sandbox-http cap-sandbox-browser \
                        cap-egress-proxy; do
             [[ -f "$OUT/$image.producer-evidence.json" ]] || continue

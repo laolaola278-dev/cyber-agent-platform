@@ -800,6 +800,34 @@ def observe_build_invocation(run: CommandRunner, command_file: str | None,
     return answer
 
 
+def build_flags_from_argv(argv: list[str]) -> tuple[list[str], list[str]]:
+    """The `--build-arg` and `--build-context` values a recorded build actually carried.
+
+    Read back rather than re-typed: the same-round base binding is a fact about the build, and
+    the build's own argv is the evidence for it. Repeating the value on the recorder's command
+    line would let a record state a binding the builder never used, which is the restatement
+    this whole file is written to avoid.
+    """
+    build_args: list[str] = []
+    contexts: list[str] = []
+    for index, token in enumerate(argv):
+        if token not in ("--build-arg", "--build-context") or index + 1 >= len(argv):
+            continue
+        value = argv[index + 1]
+        (build_args if token == "--build-arg" else contexts).append(value)
+    return build_args, contexts
+
+
+def _merge_flags(cli_values: list[str], recorded_values: list[str]) -> list[str]:
+    """One entry per key, with the recorded build winning over what was typed by hand."""
+    merged: dict[str, str] = {}
+    for token in list(cli_values) + list(recorded_values):
+        key, sep, value = token.partition("=")
+        if sep:
+            merged[key] = value
+    return [f"{key}={value}" for key, value in merged.items()]
+
+
 def base_image_bindings(dockerfile: str | None, build_args: list[str],
                         named_contexts: list[str]) -> dict:
     """What each image was built ON, with the reference that actually resolved.
@@ -1499,6 +1527,7 @@ def set_acceptance(records: list[dict], expected_images: list[str]) -> dict:
         row = {"comparisons": statuses, "producer_alignment": alignment,
                "build_exit": build_exit, "contract_gaps": gaps,
                "built_with": (comparison.get("buildx_binaries") or {}).get("built_with"),
+               "bases": (record.get("base_images") or {}).get("bases") or [],
                "running_buildkit_digest": ((record.get("observed") or {}).get("builder") or {}
                                            ).get("running_image", {}).get("digest")}
         row_problems = []
@@ -1508,6 +1537,17 @@ def set_acceptance(records: list[dict], expected_images: list[str]) -> dict:
             row_problems.append("a required layer could not be read")
         if build_exit != 0:
             row_problems.append(f"the build did not succeed (exit {build_exit!r})")
+        unbound = [base for base in row["bases"] if base.get("status") != "READ"]
+        if unbound:
+            # A pinned producer building on a base nobody can name has produced something this
+            # record cannot re-derive, which is the whole point of pinning it. So an unbound
+            # base is a set problem even with every comparison green, and a base list that
+            # came back empty is treated the same way -- no bases read is not bases conforming.
+            row_problems.append("a base image is not bound by digest: "
+                                + "; ".join(str(base.get("ref") or base.get("status"))
+                                           for base in unbound))
+        elif not row["bases"]:
+            row_problems.append("no base image was resolved from the Dockerfile and argv")
         if gaps:
             row_problems.append("the record itself is incomplete: " + ", ".join(gaps))
         row["problems"] = row_problems
@@ -1645,7 +1685,14 @@ def main(argv: list[str] | None = None, run: CommandRunner | None = None,
            if args.mode == "observe" else {"ok": False, "status": "NOT_APPLICABLE"})
     comparison = compare(configured, observed, pin)
     f39 = oci_layout_facts(args.oci_tar)
-    bases = base_image_bindings(args.dockerfile, args.build_args, args.named_contexts)
+    # The build's own argv is the authority on what it was given. A flag repeated on the
+    # recorder's command line is a claim; the same flag in the recorded invocation is a fact,
+    # and the same-round base digest only means something as the latter.
+    recorded_args, recorded_contexts = build_flags_from_argv(
+        (observed.get("build_invocation") or {}).get("argv") or [])
+    bases = base_image_bindings(args.dockerfile,
+                                _merge_flags(args.build_args, recorded_args),
+                                _merge_flags(args.named_contexts, recorded_contexts))
     if f39.get("ok") and args.dockerfile and Path(args.dockerfile).exists():
         for line in Path(args.dockerfile).read_text(encoding="utf-8").splitlines():
             if line.strip().startswith("# syntax=") or line.strip().startswith("#syntax="):
