@@ -184,7 +184,11 @@ recorder reads. Measured (all four runs):
 Publishing surface of the job: none. Its steps contain no `--push`, no `login-action`, no
 `--tag`/`-t`, no `ghcr.io`, and no job-level `permissions` block (so the workflow-level
 `contents: read` is all it has). That is asserted by
-`test_the_observation_job_publishes_nothing`, which reads the job's own text.
+`test_the_observation_job_publishes_nothing`, which reads the job's own text -- and the claim
+was also re-read straight from the file, independent of that test, so a bug in the test could
+not hide a real token: the `producer-observation:` block is `.github/workflows/ci.yml` lines
+484-607, and none of `--push`, `login-action`, `build-push-action`, `ghcr.io`, `--tag`,
+` -t `, `docker push`, `push: true` or `permissions:` occurs anywhere in it.
 
 ## F. The actual BuildKit container identity
 
