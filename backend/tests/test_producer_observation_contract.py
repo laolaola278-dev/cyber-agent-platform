@@ -80,15 +80,18 @@ def version_line(path: str, version: str, commit: str = "62ab6b42a64bcf84f225559
     return f"{path} github.com/docker/buildx {version} {commit}"
 
 
-def inspect_text(driver: str = "docker-container", image: str | None = None) -> str:
+def inspect_text(driver: str = "docker-container", image: str | None = None,
+                 worker: str | None = None) -> str:
     node_image = BUILDKIT["image_ref"] if image is None else image
     head = (f"Name:          {BUILDER}\n"
             f"Driver:        {driver}\n"
             "Last Activity: 2026-09-23 05:00:00 +0000 UTC\n\nNodes:\n")
     node = (f"Name:      {NODE}\n"
             "Endpoint:  unix:///var/run/docker.sock\n"
-            "Status:    running\n"
-            "Buildkit:  v0.33.0\n")
+            "Status:    running\n")
+    if worker:
+        node += f"org.mobyproject.buildkit.worker.hostname: {worker}\n"
+    node += "Buildkit:  v0.33.0\n"
     if node_image:
         node += f"Image:     {node_image}\n"
     return head + node
@@ -108,13 +111,17 @@ def index_json(children: tuple[str, ...] = (CHILD,)) -> str:
                        "manifests": manifests})
 
 
+PS_FORMAT = "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}"
+
+
 def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
                 driver: str = "docker-container", inspect_image: str | None = None,
                 repo_digests: list[str] | None = None, image_id: str = CONFIG_ID,
                 builder_exists: bool = True, plugins: dict[str, str] | None = None,
                 container_exists: bool = True, server: str = "28.0.4",
                 index: str | None = None, dead_daemon: bool = False,
-                inspect_output: str | None = None, path_plugin: str | None = None):
+                inspect_output: str | None = None, path_plugin: str | None = None,
+                container_rows: list[str] | None = None, worker: str | None = None):
     """A runner that answers every command the observation path issues.
 
     Answers are keyed by the exact argv, which makes the fixture a regression guard on the
@@ -125,6 +132,9 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
     repo_digests = [f"moby/buildkit@{CHILD}"] if repo_digests is None else repo_digests
     plugins = {ACTION_PLUGIN: BUILDX["version"], SYSTEM_PLUGIN: version} if plugins is None \
         else plugins
+    rows = container_rows if container_rows is not None else [
+        "\t".join(("abc123def456", CONTAINER, BUILDKIT["image_ref"], "running"))]
+    listed = rows[0].split("\t")[1] if rows else CONTAINER
     answers: dict[tuple[str, ...], tuple[int, str, str]] = {
         ("docker", "buildx", "version"): (0, version_line(path, version), ""),
         ("docker", "buildx", "ls"): (0, "\n".join((
@@ -134,13 +144,15 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
         ("docker", "buildx", "inspect", f"--builder={BUILDER}"): (
             0 if builder_exists else 1,
             (inspect_output if inspect_output is not None
-             else inspect_text(driver, inspect_image)) if builder_exists else "",
+             else inspect_text(driver, inspect_image, worker)) if builder_exists else "",
             "" if builder_exists else f'ERROR: no builder "{BUILDER}" found'),
-        ("docker", "inspect", "--format", "{{.Config.Image}}\t{{.Image}}", CONTAINER): (
+        ("docker", "ps", "-a", "--filter", "name=buildx_buildkit_", "--format", PS_FORMAT): (
+            0, "\n".join(rows), ""),
+        ("docker", "inspect", "--format", "{{.Config.Image}}\t{{.Image}}", listed): (
             0 if container_exists else 1,
             f"{BUILDKIT['image_ref']}\t{image_id}" if container_exists else "",
-            "" if container_exists else f"Error: No such object: {CONTAINER}"),
-        ("docker", "inspect", "--format", "{{json .RepoDigests}}", CONTAINER): (
+            "" if container_exists else f"Error: No such object: {listed}"),
+        ("docker", "inspect", "--format", "{{json .RepoDigests}}", listed): (
             0, json.dumps(repo_digests), ""),
         ("docker", "buildx", "imagetools", "inspect", BUILDKIT["image_ref"], "--raw"): (
             0, index if index is not None else index_json(), ""),
@@ -608,17 +620,33 @@ def test_a_version_line_without_an_install_path_invents_none() -> None:
     assert with_path["version"] == "v0.37.1"
 
 
-def test_the_container_is_named_after_the_builder_not_after_the_node(tmp_path: Path) -> None:
-    """`buildx create --name X` starts `buildx_buildkit_X`; its first node is `X0`.
+def test_the_buildkit_container_is_discovered_not_assumed(tmp_path: Path) -> None:
+    """CI disproved the naming guess, so the daemon's own listing decides.
 
-    The first implementation looked up the node name and reported a lost observation for a
-    container that never existed -- a wrong question, recorded as if it were an absence.
+    The first observation runs asked for `buildx_buildkit_<builder>` and got
+    `Error: No such object` -- while the scratch build through that very builder had already
+    succeeded. buildx names the container after the *node* (`…-observation0`), and the node's
+    attributes carry its id as `org.mobyproject.buildkit.worker.hostname`; joining the two is
+    a read, guessing a convention is not, and the record says which produced the answer.
     """
-    run = observe_run()
+    node_container = f"buildx_buildkit_{NODE}"
+    run = observe_run(
+        worker="ffffffffffff",
+        container_rows=["\t".join(("d613bc1212b9", CONTAINER, BUILDKIT["image_ref"],
+                                   "running")),
+                        "\t".join(("ffffffffffff", node_container, BUILDKIT["image_ref"],
+                                   "running"))])
     recorded(tmp_path, run)
-    lookups = [argv for argv in run.seen if argv[:2] == ("docker", "inspect")]
-    assert {argv[-1] for argv in lookups} == {CONTAINER}, (
-        f"the recorder asked about {sorted({a[-1] for a in lookups})}, not {CONTAINER}")
+    lookups = {argv[-1] for argv in run.seen if argv[:2] == ("docker", "inspect")}
+    assert lookups == {node_container}, (
+        f"the hostname join should have inspected {node_container!r}, not {sorted(lookups)}")
+
+    # With a listing that names nothing, the convention is a labelled fallback, not a fact.
+    _, payload = recorded(tmp_path, observe_run(container_rows=[]))
+    lookup = payload["observed"]["builder"]["container_lookup"]
+    assert lookup["daemon_rows"] == []
+    assert lookup["matched_by"] == "guessed-from-naming-rule"
+    assert lookup["candidates"] == [node_container, CONTAINER], "node first: the measured order"
 
 
 def test_nodes_are_read_as_nodes_with_their_own_identity(tmp_path: Path) -> None:

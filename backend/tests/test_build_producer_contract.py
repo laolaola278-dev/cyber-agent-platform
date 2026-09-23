@@ -187,6 +187,10 @@ def stub_runner():
                 "LinuxEngine" if version_fails else "",
             ),
             ("docker", "buildx", "inspect"): (0, inspect_text, ""),
+            ("docker", "ps", "-a", "--filter", "name=buildx_buildkit_", "--format",
+             "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}"): (
+                0, "\t".join(("abc123def456", f"buildx_buildkit_{builder}",
+                              builder_image, "running")), ""),
             ("docker", "inspect", "--format", "{{.Config.Image}}\t{{.Image}}",
              f"buildx_buildkit_{builder}"): (
                 1 if container_read_fails else 0,

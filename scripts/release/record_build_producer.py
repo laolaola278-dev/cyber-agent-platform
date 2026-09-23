@@ -252,6 +252,33 @@ def _driver_option_image(text: str | None) -> str | None:
     return None
 
 
+def _buildkit_containers(run: CommandRunner) -> tuple[list[dict], str]:
+    """Every container the daemon holds whose name starts with `buildx_buildkit_`.
+
+    This is the layer that says what is *actually running*, and it is read from the daemon
+    rather than derived from a naming convention -- which mattered: the first two CI
+    observation runs proved that `buildx_buildkit_<builder>` is not the container a named
+    builder starts (`Error: No such object: buildx_buildkit_cap3a-producer-observation`),
+    while the node's own attributes name the container by its id.
+    """
+    record = read_all(run, "buildkit_containers", [
+        "docker", "ps", "-a", "--filter", "name=buildx_buildkit_", "--format",
+        "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}"])
+    rows = []
+    for line in record.get("lines", []) if record["ok"] else []:
+        parts = line.split("\t")
+        if len(parts) < 2:  # `docker ps` may print a column header; it is not a container
+            continue
+        rows.append({"id": parts[0], "name": parts[1],
+                     "image": parts[2] if len(parts) > 2 else None,
+                     "state": parts[3] if len(parts) > 3 else None})
+    if not record["ok"] and not rows:
+        # An unreadable listing is a lost observation about the machine -- recorded, never
+        # folded into "the daemon has no buildx containers".
+        return [], record.get("status", "ERROR")
+    return rows, record.get("status", "READ")
+
+
 def observe_builder(run: CommandRunner, name: str | None = None) -> dict:
     """The builder that actually ran: driver, nodes, and the BuildKit identity behind them.
 
@@ -292,10 +319,39 @@ def observe_builder(run: CommandRunner, name: str | None = None) -> dict:
         observed["node_image_note"] = (
             "buildx inspect printed no per-node Image:, so the declared reference is read "
             "from the node's Driver Options and the running bytes from the container read")
-    # The container is named after the *builder*, not the node: `buildx create --name X`
-    # starts `buildx_buildkit_X`, while its first node is called `X0`. Using the node name
-    # here would look up a container that never existed and report a lost observation.
-    container = f"buildx_buildkit_{(builder or (node.get('name') or '')).strip()}"
+    # Which container is this builder's BuildKit? CI measured that the naming convention
+    # cannot be assumed: `buildx_buildkit_<builder>` did not exist for a builder created with
+    # `--name cap3a-producer-observation` ("Error: No such object"), while the node's own
+    # attributes carried `org.mobyproject.buildkit.worker.hostname` -- the id of the container
+    # that runs the worker. So the daemon's container list is read and joined on that id, and
+    # only if the join is unavailable do the two naming conventions get used, with the reason
+    # for the answer recorded beside it. A guess here costs the whole builder layer.
+    worker = (node.get("org.mobyproject.buildkit.worker.hostname") or "").strip()
+    inventory, inventory_status = _buildkit_containers(run)
+    candidates = [f"buildx_buildkit_{part}" for part in
+                  (node.get("name") or "", builder or "") if part]
+    container, matched_by = "", None
+    if worker:
+        joined = [row for row in inventory if row["id"] == worker
+                  or row["id"].startswith(worker) or worker.startswith(row["id"])]
+        if len(joined) == 1:
+            container, matched_by = joined[0]["name"], "worker-hostname"
+    if not container:
+        for candidate in candidates:
+            if any(row["name"] == candidate for row in inventory):
+                container, matched_by = candidate, "name-candidate-in-daemon-list"
+                break
+    if not container:
+        container = candidates[0] if candidates else ""
+        matched_by = ("guessed-from-naming-rule" if candidates else "no-container-name")
+    observed["container_lookup"] = {
+        "worker_hostname": worker or None, "candidates": candidates,
+        "daemon_rows": inventory, "daemon_rows_status": inventory_status, "matched_by": matched_by,
+        "note": ("joined on the worker hostname the builder itself reports" if matched_by
+                 == "worker-hostname" else
+                 "the hostname join did not resolve, so a naming convention was used and the "
+                 "answer is weaker than a join"),
+    }
     image = read(run, "container_image", ["docker", "inspect", "--format",
                                           "{{.Config.Image}}	{{.Image}}", container])
     if not image["ok"]:
