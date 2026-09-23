@@ -117,16 +117,18 @@ same installation path, not a neighbouring one. What the runner answered:
 | `13930dc` | `github.com/docker/buildx v0.37.0 ac30b249211430b85fb8f37b6e7154b5c47ba0b6` | **v0.37.0** | not resolved (contract gap) | -- |
 | `8610914` | `github.com/docker/buildx v0.37.1 0b265a9f62db554fa9aba6dd19e1bd5704bc7d8a` | **v0.37.1** | `/usr/libexec/docker/cli-plugins/docker-buildx` | the only installed candidate whose version **and** commit equal the executing line's |
 | `c8a5d2b` | `github.com/docker/buildx v0.37.0 ac30b249211430b85fb8f37b6e7154b5c47ba0b6` | **v0.37.0** | `/usr/libexec/docker/cli-plugins/docker-buildx` | the same labelled match |
+| `7d3d6a5` | `github.com/docker/buildx v0.37.0 ac30b249211430b85fb8f37b6e7154b5c47ba0b6` | **v0.37.0** | `/usr/libexec/docker/cli-plugins/docker-buildx` | the only installed candidate whose version and commit equal the executing line's |
 
-Three facts fall out of that table, and all three matter for Step 2.
+Four heads, three facts -- and all of them matter for Step 2.
 
 * The runner **prints no install path** in the version line, so "which binary executed the
   build" cannot be answered by `docker buildx version` alone. Stage 2 now has a second,
   labelled route (match the executing version *and* commit against the binaries on disk);
   zero matches or two identical matches stay a gap rather than becoming a pick.
-* The *same* job text, run three times, reported **two different executing versions**
-  (v0.37.0, v0.37.1, v0.37.0), each time with exactly one buildx present in the scanned
-  directories and `which docker-buildx` finding nothing. So the executed buildx version is
+* The *same* job text, run four times, reported **two different executing versions**
+  (v0.37.0, v0.37.1, v0.37.0, v0.37.0), each time with exactly one buildx present in the
+  scanned directories and `which docker-buildx` finding nothing. So the executed buildx
+  version is
   **not deterministic** across GitHub-hosted runners: the pin is honoured on some runners and
   silently not on others, and F-44's mismatch is therefore a property of runner state rather
   than of the workflows. This batch does not know which action or image behaviour produced the
@@ -147,6 +149,11 @@ Three facts fall out of that table, and all three matter for Step 2.
 | `/usr/lib/docker/cli-plugins/docker-buildx` | no | -- |
 | `which docker-buildx` | not found | `path_lookup.status = ERROR`, `error = "exit 1"` |
 
+At `7d3d6a5` the scan answered the same way -- exactly one existing candidate,
+`/usr/libexec/docker/cli-plugins/docker-buildx`, reporting `v0.37.0`, with `which docker-buildx` still
+not found -- so the fourth head's executing `v0.37.0` is the version that one
+file reports there, not a second binary the recorder preferred.
+
 That is the record of the action-installed buildx **and** the CLI-plugin buildx without
 cherry-picking: on this runner the action's binary landed in a system plugin directory and
 is the same file the CLI dispatches to; there was no second binary to prefer. Where a
@@ -162,7 +169,7 @@ explicitly that the executing one is what built the bytes.
 `docker buildx create --name "$CAP_OBSERVE_BUILDER" --driver "$CAP_OBSERVE_DRIVER"
 --driver-opt "image=$CAP_OBSERVE_BUILDKIT" --use` then `inspect --bootstrap`, with the
 three values declared as literals in the job's `env:` so the workflow file is what the
-recorder reads. Measured (both runs):
+recorder reads. Measured (all four runs):
 
 | Field | Value read back |
 | --- | --- |
@@ -282,16 +289,17 @@ builder runs the pinned BuildKit image digest**, with the identity read at two l
 
 ## G. The scratch, non-publishing build through that builder
 
-Answered affirmatively, and measured twice:
+Answered affirmatively, and measured at all four heads:
 
 | Fact | Value |
 | --- | --- |
-| `scratch-build.exit` | `0` at `13930dc` and at `8610914` |
+| `scratch-build.exit` | `0` at `13930dc`, `8610914`, `c8a5d2b` and `7d3d6a5` |
 | Builder the build used (log line 1) | `#0 building with "cap3a-producer-observation" instance using docker-container driver` |
 | Frontend resolved by the builder | `docker-image://docker.io/docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32` (the locked coordinate, resolved from the registry) |
-| Exported platform manifest | `sha256:ffb1a5fe87bbc9bc768459798aa13e1de2b990d326d1813999feeab10cdec6d6` |
-| Exported image config | `sha256:644d39ccb5cf74f2ad20c1a4a804a6432600fa64ce62b69f308e2412ce2d7e5b` |
-| Layer count / diff IDs / history | 11 diff IDs, 24 history entries, `linux/amd64`, 13 blobs in the archive |
+| Exported platform manifest | `8610914`: `sha256:ffb1a5fe87bbc9bc768459798aa13e1de2b990d326d1813999feeab10cdec6d6`; `7d3d6a5`: `sha256:ba528f72ae1cb284501507feffa0567c886aade35d0a7bac0481afb558d52222` |
+| Exported image config | `8610914`: `sha256:644d39ccb5cf74f2ad20c1a4a804a6432600fa64ce62b69f308e2412ce2d7e5b`; `7d3d6a5`: `sha256:b4bc6b023085c5262cf4967e17228e6d4ae18dd04e105e46d138e85d4df46907` |
+| Layer count / diff IDs / history | at `7d3d6a5`: 11 layer digests, 11 diff IDs, 24 history entries, `linux/amd64`, 13 blobs in the archive |
+| Same builder, same frontend, different bytes | the two exported manifests differ, which is F-39's subject. The producer behind them is now observed and identical at the two heads whose builder layer read cleanly (`c8a5d2b` and `7d3d6a5`, both `sha256:41f915d3a122bca…`), so a future two-build run can attribute a difference to builds rather than to an unwatched machine |
 | Invocation | `docker buildx build --builder "$CAP_OBSERVE_BUILDER" --file backend/Dockerfile --build-arg VERSION=0.0.0-producer-observation --build-arg REVISION=$GITHUB_SHA --provenance=false --sbom=false --metadata-file … --output type=oci,dest=… backend` |
 
 So the question Stage 4 asks -- *can the intended pinned producer build CAP successfully in
