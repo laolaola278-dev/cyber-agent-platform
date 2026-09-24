@@ -74,6 +74,19 @@ def target_of(pin_path: Path) -> str:
     return json.loads(pin_path.read_text("utf-8"))["install"]["path"]
 
 
+def _stat_of(path: str) -> tuple[int, int, int] | None:
+    """What the machine holds at this path -- enough to prove a file was left alone.
+
+    Used where the path is a real system location that may already exist, so "it is not there"
+    is not the property under test and "it is exactly what it was" is.
+    """
+    candidate = Path(path)
+    if not candidate.is_file():
+        return None
+    stat = candidate.stat()
+    return (stat.st_size, stat.st_mtime_ns, stat.st_mode)
+
+
 def version_answer(version: str = BUILDX["version"], commit: str = FAKE_COMMIT) -> str:
     """A standalone buildx's version line: it prints no install path, as CI measured at A2.1."""
     return f"github.com/docker/buildx {version} {commit}"
@@ -223,13 +236,22 @@ def test_a_target_inside_a_cli_plugin_directory_is_refused_before_anything_is_do
 
     Refused *before* the download: writing into one of these directories changes what the next
     `docker buildx` on that runner dispatches to, whether or not the bytes turn out to be right.
+
+    Several of these paths exist on a CI runner -- that is the whole point of refusing them -- so
+    the check is that the installer left whatever was there exactly as it found it. Asserting
+    non-existence would measure the machine, not the behaviour, and would pass on a box with no
+    docker install while failing on the runner this mechanism is for.
     """
     events = Events()
+    before = _stat_of(path)
     pin = make_pin(tmp_path, path=path)
     facts, code = run_install(tmp_path, events, pin=pin, target=path)
     assert code == 1 and facts["failed_step"] == "path"
     assert events.order == [], "no download, no execution, no write"
-    assert not Path(path).exists()
+    assert "plugin" in str(facts.get("error", "")).lower(), (
+        f"refused, but not for the reason this test is about: {facts.get('error')!r}")
+    assert _stat_of(path) == before, (
+        f"{path} existed before ({before}) and the installer changed it")
 
 
 def test_a_relative_target_is_refused(tmp_path: Path) -> None:
