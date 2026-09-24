@@ -370,6 +370,16 @@ jobs:
   release-image-builds:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # BATCH 3 A2.2: the CI rehearsal of the release build path. It names its own producer for
+      # the same reason `release.yml` does -- `configured.workflow` has to be a claim about this
+      # job's file, and a builder inherited from another job's env would be evidence about a
+      # builder this job never created.
+      CAP_RELEASE_BUILDER: cap-ci-release-producer
+      CAP_RELEASE_DRIVER: docker-container
+      CAP_RELEASE_BUILDKIT: moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      CAP_RELEASE_BUILDX_PIN: scripts/release/controlled_buildx.json
+      CAP_RELEASE_BUILDX_PATH: /tmp/cap-controlled-buildx/buildx
     strategy:
       fail-fast: false
       matrix:
@@ -396,6 +406,20 @@ jobs:
         with:
           buildx-version: v0.37.1
           driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      - name: Install the controlled buildx and create the named producer
+        run: |
+          set -euo pipefail
+          # The same mechanism `release.yml` and the observation job run: refuse a plugin target
+          # before downloading, verify the bytes before executing them, read the version and commit
+          # back, check the BuildKit reference against the lock, then create the named builder.
+          python3 scripts/release/install_controlled_buildx.py \
+            --pin "$CAP_RELEASE_BUILDX_PIN" \
+            --path "$CAP_RELEASE_BUILDX_PATH" \
+            --builder "$CAP_RELEASE_BUILDER" \
+            --driver "$CAP_RELEASE_DRIVER" \
+            --buildkit "$CAP_RELEASE_BUILDKIT" \
+            --lock deployment/third-party-images.json \
+            --facts outputs/ci-release-images/producer/buildx-install.json
       - name: Resolve release version
         id: version
         run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
@@ -407,29 +431,50 @@ jobs:
           ROLE: ${{ matrix.role }}
           BASE_IMAGE: ${{ matrix.base-image }}
           VERSION: ${{ steps.version.outputs.version }}
+          WORKFLOW_FILE: .github/workflows/ci.yml
+          WORKFLOW_JOB: release-image-builds
         run: |
           set -euo pipefail
+          PRODUCER=(--buildx "$CAP_RELEASE_BUILDX_PATH" --builder "$CAP_RELEASE_BUILDER"
+                    --workflow "$WORKFLOW_FILE" --job "$WORKFLOW_JOB")
           if [[ -n "$BASE_IMAGE" ]]; then
-            # The browser image layers on the HTTP sandbox image. On a clean
-            # runner that base does not exist, which is the point: build it
-            # here from this same workflow and name it, instead of inheriting
-            # whatever `:latest` a developer machine happened to keep.
+            # The browser image layers on the HTTP sandbox image. On a clean runner that base does
+            # not exist, which is the point: build it here from this same workflow and name it,
+            # instead of inheriting whatever `:latest` a developer machine happened to keep.
             #
-            # The record goes under `$BASE_IMAGE.prerequisite.json`, not
-            # `$BASE_IMAGE.json`: this build and the cap-sandbox-http cell's own
-            # build are different builds of one image (this one uses buildx
-            # because nothing here needs the local store), and both cells upload
-            # the whole directory. One file name for two records is how F-34
+            # The record goes under `$BASE_IMAGE.prerequisite.json`, not `$BASE_IMAGE.json`: this
+            # build and the cap-sandbox-http cell's own build are different builds of one image,
+            # and both cells upload the whole directory. One file name for two records is how F-34
             # looked like a content bug before it was a naming one.
+            #
+            # The bytes are handed to the next build as an OCI archive rather than through the
+            # docker store, because a `docker-container` builder cannot see that store -- which is
+            # exactly why this cell used to build with `docker build`, and why that build was not
+            # the producer. The publishing path keeps its real hand-off (push, then bind the
+            # published digest); only this rehearsal uses the archive.
+            mkdir -p outputs/ci-release-layouts/"$BASE_IMAGE"
             bash scripts/release/build_release_image.sh \
               --name "$BASE_IMAGE" --role http \
               --dockerfile backend/docker/sandbox-http/Dockerfile \
-              --version "$VERSION" --revision "$GITHUB_SHA" \
+              --version "$VERSION" --revision "$GITHUB_SHA" "${PRODUCER[@]}" \
+              --oci-out "outputs/ci-release-layouts/$BASE_IMAGE.oci.tar" \
               --out "outputs/ci-release-images/$BASE_IMAGE.prerequisite.json"
+            # The archives stay outside `outputs/ci-release-images/` on purpose: that directory is
+            # the job's artifact, and a few hundred MB of image bytes would travel with it for no
+            # reader. The layout *directory* is what the next build addresses.
+            tar -xf "outputs/ci-release-layouts/$BASE_IMAGE.oci.tar" \
+              -C "outputs/ci-release-layouts/$BASE_IMAGE"
+            BASE_REF="$(python3 scripts/release/oci_image_digest.py \
+              "outputs/ci-release-layouts/$BASE_IMAGE" || true)"
+            if [[ -z "$BASE_REF" ]]; then
+              # No digest, no binding: refused rather than built on a base nobody can name.
+              echo "$IMAGE: refused -- the same-round base digest is unreadable" >&2
+              exit 1
+            fi
           fi
           args=(--name "$IMAGE" --dockerfile "$DOCKERFILE"
                 --version "$VERSION" --revision "$GITHUB_SHA"
-                --local-docker
+                "${PRODUCER[@]}"
                 --out "outputs/ci-release-images/$IMAGE.json")
           if [[ -n "$ROLE" ]]; then
             args+=(--role "$ROLE")
@@ -437,7 +482,9 @@ jobs:
             args+=(--context "$CONTEXT")
           fi
           if [[ -n "$BASE_IMAGE" ]]; then
-            args+=(--build-arg "SANDBOX_HTTP_BASE=$BASE_IMAGE:$VERSION")
+            args+=(--build-arg "SANDBOX_HTTP_BASE=$BASE_IMAGE"
+                   --named-context
+                   "$BASE_IMAGE=oci-layout://$GITHUB_WORKSPACE/outputs/ci-release-layouts/$BASE_IMAGE@$BASE_REF")
           fi
           bash scripts/release/build_release_image.sh "${args[@]}"
       - name: Show what was built
@@ -616,17 +663,11 @@ jobs:
           mkdir -p "$OUT/http-layout"
           HTTP_LAYOUT="$GITHUB_WORKSPACE/$OUT/http-layout"
           HTTP_BASE_DIGEST=""
+          # One reader of "which image is in this archive", shared with the CI rehearsal of the
+          # release path: it excludes attestation descriptors and refuses an index that names more
+          # than one image, rather than taking the first entry.
           if tar -xf "$OUT/cap-sandbox-http.oci.tar" -C "$OUT/http-layout"; then
-            HTTP_BASE_DIGEST="$(python3 - "$HTTP_LAYOUT/index.json" <<'PY'
-          import json
-          import sys
-          index = json.load(open(sys.argv[1], encoding="utf-8"))
-          images = [item for item in index.get("manifests", [])
-                    if (item.get("annotations") or {}).get(
-                        "vnd.docker.reference.type") != "attestation-manifest"]
-          print(images[0]["digest"] if len(images) == 1 else "")
-          PY
-          )"
+            HTTP_BASE_DIGEST="$(python3 scripts/release/oci_image_digest.py "$HTTP_LAYOUT" || true)"
           fi
           if [[ -z "$HTTP_BASE_DIGEST" ]]; then
             # No digest, no binding: the browser build is refused rather than run

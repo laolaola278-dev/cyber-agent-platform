@@ -29,10 +29,17 @@ verdict nobody wrote.
 
 ``--mode observe`` is the non-publishing observation path CI's producer-observation job calls,
 once per image, and ``--combine`` scores those records as one round. The default mode is the
-one ``build_release_image.sh`` calls, and its keys stay additive: A2.1 does not switch the
-release build onto the pinned executable, so ``--mode build`` records the controlled layer as
-``NOT_PROVIDED`` rather than as a producer nobody declared. ``--self-check`` fails on a broken
-instrument, never on an unwelcome measurement.
+one ``build_release_image.sh`` calls -- and since BATCH 3 A2.2 the two names describe *what a build
+was for*, not how much is knowable about it: both pass a builder, a pin, a workflow file and the
+argv the build recorded, and the reads are gated on those inputs rather than on the mode. What the
+mode still decides is which obligations a record carries: a build naming no controlled executable
+(``--local-docker``, a developer's own machine) reports that layer as an absent claim rather than a
+failed read, and cannot be held to reads it never undertook. ``--self-check`` fails on a broken
+instrument, never on an unwelcome measurement -- and blocking a publication is not this tool's job
+either. It belongs to ``release-image-completeness``, which reads these records (A2.2 Stage 5) and
+decides whether a mismatch, an unknown or a missing record stops a release. A producer measurement
+that disagrees is evidence a release has to be able to see; a producer nobody read is not evidence
+at all, and the two arrive under different words on purpose.
 """
 
 from __future__ import annotations
@@ -72,10 +79,19 @@ PLUGIN_DIRS = (
 
 ATTESTATION_REF_TYPE = "oci.ref.attestation"
 
-#: The buildx every read used before Batch 3 A2.1, and the one the release path still uses:
-#: `docker buildx`, whose plugin dispatch is exactly what A2.1 removes from producer identity.
-#: Once a controlled executable has been read off the machine, `buildx_prefix` replaces this.
+#: What every read ran through before Batch 3 A2.1: `docker buildx`, whose plugin dispatch is
+#: exactly what the pinned executable removes from producer identity. A2.2 took the release path
+#: off it too, so this remains only as the fallback for a build that claims no controlled
+#: executable -- a `--local-docker` dry build, or an observation whose pin could not be read --
+#: and `buildx_prefix` replaces it as soon as one answers.
 DEFAULT_BUILDX_PREFIX = ("docker", "buildx")
+#: The `env:` prefixes a job may declare its producer with. `CAP_OBSERVE_` belongs to the
+#: non-publishing observation job (Batch 3A/A2.1); `CAP_RELEASE_` belongs to a job that builds
+#: release images (A2.2). Two names rather than one neutral one, because which path a job is on
+#: is part of what its evidence means, and each job is compared against its *own* declarations --
+#: a release record that read the observation job's literals would be a claim about a file that
+#: made it.
+PRODUCER_DECLARATION_PREFIXES = ("CAP_OBSERVE_", "CAP_RELEASE_")
 
 
 def run_command(argv: list[str]) -> tuple[int, str, str]:
@@ -957,6 +973,125 @@ def runner_identity(environ) -> dict:
     return {key.lower(): environ.get(key) for key in keys if environ.get(key)}
 
 
+def build_identity(args, environ, runner: dict) -> dict:
+    """Which build this record belongs to, and whether its own claims about that agree.
+
+    These are *not* a fifth producer comparison -- `producer_alignment` stays the four answers
+    A2.1 froze, and merging a belonging check into a producer check would let a record from the
+    wrong run answer a question about the right one. This is the question the release gate has to
+    ask before it is allowed to read any comparison: a conforming record from another commit,
+    another run, or another job is not evidence about *this* release. F-33's history is why that
+    is spelled out in fields rather than assumed from a file being in a directory.
+
+    A caller that claims a source revision (`--revision`) is a caller making a checkable
+    statement, so the record has to be able to place it; the observation path, which claims
+    nothing about a release, is not measured against an obligation it never took on.
+    """
+    env = environ if environ is not None else os.environ
+    revision = getattr(args, "revision", None)
+    run_id = runner.get("github_run_id")
+    fields = {
+        # What the build was told it was building, against what the runner says it checked out.
+        "source_revision": _pair(revision, runner.get("github_sha")),
+        # Presence, not agreement: a record with no run id cannot be shown to belong to this
+        # publication, and `relation: None` keeps that an UNKNOWN rather than a pass.
+        "run_id_recorded": {"declared": "the record names the run that built it",
+                            "read_back": run_id,
+                            "relation": "present" if run_id else None,
+                            "status": "READ" if run_id else "ERROR"},
+        # `--job` is which job's YAML the recorder read as `configured.workflow`; GITHUB_JOB is
+        # which job the runner says it is. A record written by some other job would agree with
+        # itself and still describe the wrong build.
+        "job": _pair(getattr(args, "job", None), env.get("GITHUB_JOB")),
+    }
+    required: tuple[str, ...] = ()
+    if revision:
+        # Only a record that claims a revision owes the gate a matching one. `run_id_recorded`
+        # asks for it too, because "same commit, different run" is precisely how a set could be
+        # assembled from whichever records looked good -- the failure A2.1's one-round rule
+        # refuses, applied per record so a single-image record cannot pass it either.
+        required = ("source_revision", "run_id_recorded", "job")
+    verdict = _status_of(fields, required) if required else "NOT_CLAIMED"
+    return {
+        "image": getattr(args, "image", None),
+        "mode": args.mode,
+        "source_revision": revision,
+        "workflow": getattr(args, "workflow", None),
+        "job": getattr(args, "job", None),
+        "run_id": runner.get("github_run_id"),
+        "run_attempt": env.get("GITHUB_RUN_ATTEMPT"),
+        "runner_reports": {key: runner.get(key) for key in ("github_sha", "github_run_id")
+                           if runner.get(key)},
+        "checks": fields,
+        "required": list(required),
+        "verdict": verdict,
+        "note": ("belonging, not producer identity: `source_revision` is what the build was told "
+                 "it was building and `runner_reports.github_sha` is what the runner says it "
+                 "checked out; a record whose two disagree describes a build of something else"),
+    }
+
+
+def argv_flag(argv: list[str], name: str) -> str | None:
+    """The value of `--name value` or `--name=value`, first occurrence, from a recorded argv."""
+    tokens = [str(part) for part in argv]
+    for index, token in enumerate(tokens):
+        if token == name and index + 1 < len(tokens):
+            return tokens[index + 1]
+        if token.startswith(name + "="):
+            return token.split("=", 1)[1]
+    return None
+
+
+def build_path_facts(argv: list[str], bases: dict, oci_tar: str | None) -> dict:
+    """What kind of build the recorded argv actually was, derived rather than declared.
+
+    The release path and its CI rehearsal differ in three ways that have to be *visible* in the
+    evidence instead of being assumed identical: whether bytes were pushed, whether attestations
+    were requested, and how a layered base image reached the builder. Nothing here asks the caller
+    to describe itself -- each value is read out of the argv the build wrote down before running,
+    so a job that said "publish" while running `--provenance=false --output type=oci` would be
+    contradicted by its own record.
+    """
+    flags = [str(part) for part in argv]
+    pushes = "--push" in flags
+    loads = any(flag == "--load" or flag.startswith("--load=") for flag in flags)
+    output = argv_flag(flags, "--output")
+    builder = argv_flag(flags, "--builder")
+    bindings = sorted({str(base.get("binding")) for base in (bases or {}).get("bases", [])
+                       if base.get("binding")})
+    if not bindings:
+        handoff = "no_base_resolved"
+    elif "registry_reference" in bindings:
+        handoff = "registry_digest" if any("@sha256:" in str(base.get("ref", ""))
+                                           for base in bases.get("bases", [])) else "registry_tag"
+    elif "same_round_oci_layout" in bindings:
+        handoff = "same_round_oci_layout"
+    else:
+        handoff = "+".join(bindings)
+    if output and "type=oci" in output:
+        destination = "oci-archive"
+    elif pushes:
+        destination = "registry-push"
+    elif loads:
+        destination = "docker-store-load"
+    else:
+        destination = None
+    return {
+        "publishes": pushes,
+        "attestations": {"provenance": "--provenance=true" in flags,
+                         "sbom": "--sbom=true" in flags},
+        "output": output,
+        "destination": destination,
+        "builder_named": builder,
+        "base_handoff": handoff,
+        "oci_archive_present": bool(oci_tar) and Path(oci_tar or "").exists(),
+        "source": "derived from the build's own recorded argv",
+        "note": ("the release path pushes and binds a layered base to a digest it published; the "
+                 "CI rehearsal pushes nothing and binds the same base out of this round's OCI "
+                 "archive. Both are legitimate; neither is allowed to look like the other"),
+    }
+
+
 def configured_values(lock: dict, buildkit_entry: str, buildx_entry: str = "buildx") -> dict:
     """What this repository declares, kept apart from what ran.
 
@@ -1023,17 +1158,19 @@ def configured_workflow_values(path: str | None, job_name: str | None,
         key, sep, value = token.partition("=")
         if sep and key.strip() == "image":
             image_ref = value.strip()
-    # The observation job names its builder, its driver and its BuildKit reference once, in
-    # its `env:` block, and passes `$CAP_OBSERVE_*` to `docker buildx create`. Reading them
-    # from the file keeps `configured.workflow` a claim about the YAML: a builder name the
-    # recorder was *told* on argv is not something the workflow declared, and a comparison
-    # against it would be the recorder agreeing with its own argument.
+    # A job names its builder, its driver, its BuildKit reference, its pin file and its install
+    # path once, in its own `env:` block, and hands those literals to the install mechanism.
+    # Reading them out of the file keeps `configured.workflow` a claim about the YAML: a builder
+    # name the recorder was *told* on argv is not something the workflow declared, and a
+    # comparison against it would be the recorder agreeing with its own argument. Two prefixes,
+    # because which path a job belongs to is a fact worth keeping in the name: `CAP_OBSERVE_` is
+    # Batch 3A/A2.1's non-publishing job, `CAP_RELEASE_` is a job that builds release images.
     declared_env: dict[str, str] = {}
     expressions: dict[str, str] = {}
 
     def collect(source: dict) -> None:
         for key, value in (source or {}).items():
-            if not str(key).startswith("CAP_OBSERVE_"):
+            if not str(key).startswith(PRODUCER_DECLARATION_PREFIXES):
                 continue
             if not isinstance(value, str):
                 continue
@@ -1048,9 +1185,25 @@ def configured_workflow_values(path: str | None, job_name: str | None,
     collect(job.get("env"))  # step-level declarations win: they are the more specific claim
     for candidate in job.get("steps", []):
         collect(candidate.get("env"))
-    builder = declared_env.get("CAP_OBSERVE_BUILDER") or builder_name
-    driver = declared_env.get("CAP_OBSERVE_DRIVER")
-    buildkit = declared_env.get("CAP_OBSERVE_BUILDKIT") or image_ref
+
+    ambiguous: list[str] = []
+
+    def declared_value(suffix: str) -> str | None:
+        """The one value this job declares for `<PREFIX>_<suffix>`, or none if it names two."""
+        found = {text for key, text in declared_env.items() if key.endswith("_" + suffix)}
+        if not found:
+            return None
+        if len(found) > 1:
+            # Two prefixes in one job disagreeing is not something to break silently: the field
+            # goes absent, which makes the comparisons that need it UNKNOWN, and the reason is
+            # recorded beside it.
+            ambiguous.append(suffix)
+            return None
+        return next(iter(found))
+
+    builder = declared_value("BUILDER") or builder_name
+    driver = declared_value("DRIVER")
+    buildkit = declared_value("BUILDKIT") or image_ref
     declared = {"buildx_version": step.get("buildx-version"),
                 "builder_name": builder, "driver": driver,
                 "buildkit_image": buildkit,
@@ -1058,10 +1211,14 @@ def configured_workflow_values(path: str | None, job_name: str | None,
                 # A2.1's two new claims, read out of the same env: block as the builder name.
                 # The path is a literal because a producer identity assembled from
                 # `${{ runner.temp }}` is a claim about the runner, not about the repository.
-                "controlled_buildx_path": declared_env.get("CAP_OBSERVE_BUILDX_PATH"),
-                "controlled_pin_file": declared_env.get("CAP_OBSERVE_BUILDX_PIN"),
+                "controlled_buildx_path": declared_value("BUILDX_PATH"),
+                "controlled_pin_file": declared_value("BUILDX_PIN"),
                 "declared_env_keys": sorted(declared_env),
+                "declared_prefixes": sorted({prefix for prefix in PRODUCER_DECLARATION_PREFIXES
+                                             for key in declared_env if key.startswith(prefix)}),
                 "source": path, "job": job_name}
+    if ambiguous:
+        declared["ambiguous_suffixes"] = sorted(ambiguous)
     if expressions:
         declared["expressions"] = expressions
     if buildkit:
@@ -1472,9 +1629,11 @@ CONTRACT_REQUIRED = (
     "configured.workflow.controlled_buildx_path",
 )
 
-#: Contract keys only the observation path promises. The release build path declares none of
-#: this yet -- A2.2 switches it -- so requiring it there would fail every existing record for
-#: a change that has not been made.
+#: Contract keys exempt for a build that claims no controlled producer: a `--local-docker` build
+#: through the daemon's own BuildKit, or a build with no `--controlled-pin`. A2.2 switched the
+#: release path onto the pinned executable, so what is left in here is a *kind of build*, not a
+#: kind of caller -- and the list can only get shorter (the freeze on it is
+#: `test_a2_2_narrows_the_build_mode_exemptions_rather_than_widening_them`).
 OBSERVE_ONLY_PREFIXES = ("configured.workflow", "configured.controlled", "observed.builder",
                          "observed.controlled_buildx", "observed.build_invocation",
                          "configured.lock.buildx_source")
@@ -1489,32 +1648,37 @@ def _dig(payload: dict, dotted: str):
     return node
 
 
-def contract_gaps(payload: dict, observe_mode: bool) -> list[str]:
+def contract_gaps(payload: dict, strict: bool) -> list[str]:
     """Fields the *observation contract* promises and this record does not carry.
 
-    Deliberately blind to whether the values agree: a disagreement is a measurement and
-    must be recorded, not failed on (Batch 3A does not block anything on it). A missing
-    or unreadable field, though, is a broken instrument, and the observation job's whole
-    value is that the instrument is trustworthy.
+    Deliberately blind to whether the values agree: a disagreement is a measurement and must be
+    recorded, not failed on (nothing in this batch blocks on a measurement inside the recorder --
+    blocking is the release gate's job). A missing or unreadable field, though, is a broken
+    instrument, and the value of the observation is that the instrument is trustworthy.
+
+    `strict` is no longer the same thing as "observe mode". A2.2 gives the publishing release path
+    a controlled executable, a named builder and a recorded invocation, so a record that *claims*
+    one owes the reads that claim rests on; the exemption below is left to builds that claim
+    nothing, which is a narrower set of callers than a mode name used to imply.
     """
     gaps = []
-    promised = (CONTRACT_REQUIRED if observe_mode else
+    promised = (CONTRACT_REQUIRED if strict else
                 tuple(k for k in CONTRACT_REQUIRED if not k.startswith(OBSERVE_ONLY_PREFIXES)))
     for dotted in promised:
         value = _dig(payload, dotted)
         if value in (None, "", [], {}):
             gaps.append(dotted)
     builder = payload.get("observed", {}).get("builder", {})
-    if observe_mode and builder.get("status") == "ERROR":
+    if strict and builder.get("status") == "ERROR":
         gaps.append("observed.builder.error")
     # A layer the daemon or the registry refused to answer is a broken instrument; a layer
     # that answered "there is nothing here" is a measurement. Only the first is a gap, or the
     # docker driver's stated absence would fail the job it correctly describes.
-    if observe_mode and builder.get("ok") and (builder.get("repo_digests_read") or {}) \
+    if strict and builder.get("ok") and (builder.get("repo_digests_read") or {}) \
             .get("status") == "ERROR":
         gaps.append("observed.builder.repo_digests_read")
     child = (payload.get("pinned_index_resolution") or {}).get("platform_child") or {}
-    if observe_mode and child.get("status") == "ERROR":
+    if strict and child.get("status") == "ERROR":
         gaps.append("pinned_index_resolution.platform_child")
     # The same rule one layer up. A controlled executable that hashes differently from the pin
     # is a finding the evidence must carry; one that could not be read or hashed at all, or a
@@ -1522,14 +1686,24 @@ def contract_gaps(payload: dict, observe_mode: bool) -> list[str]:
     # `NOT_PROVIDED` is included there because after A2.1 the observation job always has a pin
     # to pass -- an absent one is a step that stopped running, not a mode of working.
     controlled = (payload.get("observed") or {}).get("controlled_buildx") or {}
-    if observe_mode and controlled.get("status") in ("ERROR", "NOT_PROVIDED"):
+    if strict and controlled.get("status") in ("ERROR", "NOT_PROVIDED"):
         gaps.append("observed.controlled_buildx.status")
-    if observe_mode and (controlled.get("integrity") or {}).get("status") in ("ERROR",
-                                                                             "NOT_PROVIDED"):
+    if strict and (controlled.get("integrity") or {}).get("status") in ("ERROR",
+                                                                        "NOT_PROVIDED"):
         gaps.append("observed.controlled_buildx.integrity.status")
-    if observe_mode and (payload.get("observed") or {}).get("build_invocation", {}) \
+    if strict and (payload.get("observed") or {}).get("build_invocation", {}) \
             .get("status") in ("ERROR", "NOT_PROVIDED"):
         gaps.append("observed.build_invocation.status")
+    # A record that names a source revision is a record that claims to belong to a build, so the
+    # belonging has to be *readable*: which commit the runner says it checked out, which run this
+    # is, and which job wrote the file. A revision that disagrees with the runner is not a gap --
+    # it is a MISMATCH, and the gate refuses publication on it. A revision that cannot be compared
+    # because the run identity is missing is a broken instrument, and it is reported one field at
+    # a time so an operator is not sent to hunt for which of the three is absent.
+    identity = payload.get("identity") or {}
+    for name in identity.get("required") or []:
+        if (identity.get("checks") or {}).get(name, {}).get("relation") is None:
+            gaps.append(f"identity.{name}")
     return gaps
 
 
@@ -1692,6 +1866,9 @@ def main(argv: list[str] | None = None, run: CommandRunner | None = None,
     parser.add_argument("--controlled-pin", default=None,
                         help="the JSON pinning the buildx executable this build must run under")
     parser.add_argument("--image", default=None, help="which image this record is about")
+    parser.add_argument("--revision", default=None,
+                        help="the source revision the build says it built, checked against what "
+                             "the runner reports and recorded as this record's identity")
     parser.add_argument("--build-command", default=None,
                         help="a JSON file the build step wrote, carrying the argv it used")
     parser.add_argument("--build-arg", action="append", default=[], dest="build_args",
@@ -1725,15 +1902,21 @@ def main(argv: list[str] | None = None, run: CommandRunner | None = None,
     # hash and version-check against.
     declared_path = (configured["workflow"].get("controlled_buildx_path")
                      if configured["workflow"].get("ok") else None)
+    # Gated on what the caller named, not on which mode it ran in: until A2.2 only the observation
+    # job passed `--builder`, so keying these reads off the mode described the tool's callers
+    # instead of its inputs. A release build that names a builder now gets the same independent
+    # read-back, and a `--local-docker` build that names none still says so rather than failing.
     observed = observe(runner, docker_cli_build=args.docker_cli_build,
-                       builder_name=args.builder if args.mode == "observe" else None,
-                       environ=env, controlled_pin=configured["controlled"],
+                       builder_name=args.builder, environ=env,
+                       controlled_pin=configured["controlled"],
                        build_command_file=args.build_command,
                        controlled_path=declared_path)
     pin = (resolve_pinned_ref(runner, configured["lock"]["buildkit_image"],
                               (observed.get("builder") or {}).get("image_platform"),
                               buildx_prefix(observed.get("controlled_buildx")))
-           if args.mode == "observe" else {"ok": False, "status": "NOT_APPLICABLE"})
+           if args.builder else {"ok": False, "status": "NOT_APPLICABLE",
+                                 "reason": ("no builder was named, so there is no container "
+                                            "builder whose running BuildKit can be read")})
     comparison = compare(configured, observed, pin)
     f39 = oci_layout_facts(args.oci_tar)
     # The build's own argv is the authority on what it was given. A flag repeated on the
@@ -1769,6 +1952,9 @@ def main(argv: list[str] | None = None, run: CommandRunner | None = None,
         "pinned_index_resolution": pin,
         "comparison": comparison,
         "producer_alignment": producer_alignment(comparison),
+        "identity": build_identity(args, env, runner_identity(env)),
+        "build_path": build_path_facts(
+            (observed.get("build_invocation") or {}).get("argv") or [], bases, args.oci_tar),
         "f39_measurement": {**f39, "builds_compared": 1,
                             "measurement_status": "PARTIAL -- one build measured; attributing a "
                                                   "digest difference needs two independent builds "
@@ -1785,7 +1971,12 @@ def main(argv: list[str] | None = None, run: CommandRunner | None = None,
                if not payload["observed"][key].get("ok")]
     if missing:
         payload["incomplete"] = missing
-    gaps = contract_gaps(payload, observe_mode=args.mode == "observe")
+    # The contract an *instrument* promises, not the verdict it reached: a record that names a
+    # controlled executable is claiming a producer, so it owes every read that claim rests on --
+    # in either mode. `--self-check` still exits non-zero only on a broken read, never on an
+    # unwelcome measurement.
+    strict = args.mode == "observe" or bool(args.controlled_pin)
+    gaps = contract_gaps(payload, strict=strict)
     if gaps:
         payload["contract_gaps"] = gaps
     with open(args.out, "w", encoding="utf-8", newline="\n") as handle:

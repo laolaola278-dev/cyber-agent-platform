@@ -266,12 +266,18 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
 
 def recorded(tmp_path: Path, run, *extra: str, environ=None,
              build_argv: list[str] | None = None, build_exit: int = 0,
-             image: str = "cap-backend", dockerfile: str | None = None) -> tuple[int, dict]:
+             image: str = "cap-backend", dockerfile: str | None = None,
+             observe: bool = True, revision: str | None = None) -> tuple[int, dict]:
     """Run the recorder's observation path over a stubbed machine and read the record back.
 
     The build-command file is written here rather than assumed: A2.1's claim that the pinned
     executable built the image is only as good as the record of what was invoked, so every test
     passes through the same artifact the CI job will write.
+
+    `observe=False` asks the same machine the question A2.2's release path asks it -- default
+    mode, no `--mode observe` -- because from Stage 2 the publishing build names the same builder,
+    the same pin and the same workflow file, and its record has to satisfy the same contract.
+    `revision` is the claim `build_release_image.sh` passes, and the identity checks hang off it.
     """
     out = tmp_path / "producer-evidence.json"
     command = tmp_path / "build-command.json"
@@ -279,8 +285,13 @@ def recorded(tmp_path: Path, run, *extra: str, environ=None,
         CONTROLLED, "build", "--builder", BUILDER, "--file", "backend/Dockerfile", "backend"]
     command.write_text(json.dumps({"image": image, "argv": build_list, "exit": build_exit}),
                        "utf-8")
-    argv = ["--out", str(out), "--lock", str(LOCK_PATH), *OBSERVE_ARGS,
+    args = OBSERVE_ARGS if observe else [
+        "--builder", BUILDER, "--workflow", str(CI_PATH), "--job", OBSERVATION_JOB,
+        "--controlled-pin", str(PIN_PATH)]
+    argv = ["--out", str(out), "--lock", str(LOCK_PATH), *args,
             "--image", image, "--build-command", str(command)]
+    if revision:
+        argv += ["--revision", revision]
     if dockerfile:
         argv += ["--dockerfile", dockerfile]
     argv += list(extra)
@@ -1217,30 +1228,77 @@ def test_the_browser_image_is_bound_to_this_rounds_base_without_a_registry() -> 
         "no registry and no host store: the docker-container builder cannot see either")
 
 
-def test_the_release_build_path_is_still_not_switched() -> None:
-    """Batch 3A approves Observation Step 1 only, so this is a fence, not a wish.
+def _code_lines(text: str) -> list[str]:
+    """The lines that could execute something, with comments removed.
 
-    If Step 2 is approved later, this test failing is the intended signal that the decision
-    was made -- it is not a blocker to work round. It reads the release path's own text
-    because "we did not change the release build" is the kind of sentence that has to be
-    re-checked rather than remembered.
+    A script that documents what it used to call is not a script that calls it: `docker buildx`
+    appears in this one's header precisely to say it no longer appears in its command lines.
+    """
+    return [line for line in text.splitlines() if not line.strip().startswith("#")]
+
+
+def test_the_release_build_path_now_runs_the_controlled_producer() -> None:
+    """A2.1's fence said "not yet"; A2.2 is the approval that said it, so this is its successor.
+
+    The fence did its job -- it failed when the decision was taken, on purpose, rather than
+    letting the change slip through. What carries over is the shape of the claim, now pointed at
+    the publishing path: the build command names the installed executable and an explicit builder,
+    nothing reaches the runner's CLI plugin, and the job that builds is the job that records.
+
+    What is *not* here is any assertion that a mismatch is tolerated: a release record that
+    disagrees is refused by `release-image-completeness` (A2.2 Stage 5), which is the half F-47
+    was filed over.
     """
     release = (PROJECT_ROOT / ".github/workflows/release.yml").read_text("utf-8")
     script = (PROJECT_ROOT / "scripts/release/build_release_image.sh").read_text("utf-8")
-    assert "--builder " not in release, "release.yml now selects a builder: Step 2 happened"
-    assert "--builder " not in script, "the build script now selects a builder: Step 2 happened"
-    assert OBSERVATION_JOB not in release, "the release graph does not depend on the observation"
-    assert "record_build_producer.py" in script, "the release evidence still carries a producer"
-    for marker in ("--out \"$PRODUCER_FILE\"", "--lock deployment/third-party-images.json"):
+    ci = CI_PATH.read_text("utf-8")
+    ci_rehearsal = ci.split("  release-image-builds:")[1].split("  producer-observation:")[0]
+    # The release jobs name their producer in their own env: block and install it the same way.
+    for literal in ("CAP_RELEASE_BUILDER", "CAP_RELEASE_DRIVER", "CAP_RELEASE_BUILDKIT",
+                    "CAP_RELEASE_BUILDX_PIN", "CAP_RELEASE_BUILDX_PATH"):
+        assert release.count(f"{literal}:") >= 2, (
+            f"{literal} is declared in fewer than the two release image jobs")
+        assert f"{literal}:" in ci_rehearsal, (
+            f"{literal} vanished from the CI rehearsal of the release build")
+    assert release.count("install_controlled_buildx.py") >= 2, (
+        "a release image job installs its producer some other way")
+    for job in ("release-images", "release-sandbox-browser"):
+        block = release.split(f"  {job}:")[1].split("\n  release-")[0]
+        assert '--path "$CAP_RELEASE_BUILDX_PATH"' in block, job
+        assert '--builder "$CAP_RELEASE_BUILDER"' in block, job
+        assert not any("docker buildx" in line for line in _code_lines(block)), job
+        assert not any("--local-docker" in line for line in _code_lines(block)), job
+    # The script runs the executable it was given and never falls back to the plugin. Its header
+    # says what it *used* to call, so the claim is about command lines, not about the word.
+    assert not any("docker buildx" in line for line in _code_lines(script)), (
+        "the release build went back to the CLI plugin dispatch")
+    assert '"$BUILDX" build --builder "$BUILDER"' in script, (
+        "the release build command is no longer `<controlled path> build --builder <name>`")
+    assert "record_and_run" in script and "BUILD_COMMAND_FILE" in script, (
+        "the build stopped writing down the argv it was about to run")
+    assert "record_build_producer.py" in script, "the release evidence lost its producer"
+    for marker in ('--out "$PRODUCER_FILE"', "--lock deployment/third-party-images.json",
+                   '--builder "$BUILDER"', '--controlled-pin "$PRODUCER_PIN"',
+                   '--workflow "$WORKFLOW"', '--job "$JOB"', "--revision \"$REVISION\"",
+                   "--self-check"):
         assert marker in script, f"the release recorder lost its argument {marker!r}"
+    # The sidecars stay where the completeness gate will not mistake them for images.
+    assert 'PRODUCER_DIR="$OUT_PARENT/producer"' in script, (
+        "producer records moved back into the directory the gate globs")
+    # And the build job stays the authority: release.yml asks for nothing it could reconstruct.
+    assert "record_build_producer.py" not in release, (
+        "release.yml now performs the producer read itself -- the build job is the authority "
+        "that runs the commands and records them")
 
 
-def test_build_mode_still_carries_the_legacy_shape_and_no_obligation(tmp_path: Path) -> None:
-    """The release path calls the recorder with `--out` and `--lock`, and nothing else.
+def test_a_build_that_claims_no_controlled_producer_keeps_the_legacy_shape(tmp_path: Path) -> None:
+    """A `--local-docker` developer build calls the recorder with `--out` and `--lock`.
 
-    Batch 3A's additions must be additive: in build mode there is no named builder and no
-    workflow read, so those fields are recorded as absent and the observation contract does
-    not claim them.
+    Batch 3A's additions stay additive: with no named builder and no pin there is nothing to read
+    back, so those fields are recorded as absent and the contract does not claim them. After A2.2
+    that is the *docker-driver* shape, not the release shape: the publishing path names a producer
+    now, and `test_a_release_build_record_satisfies_the_whole_contract` holds it to the same
+    contract the observation path has always had.
     """
     out = tmp_path / "producer.json"
     code = recorder.main(["--out", str(out), "--lock", str(LOCK_PATH)],
@@ -1256,10 +1314,117 @@ def test_build_mode_still_carries_the_legacy_shape_and_no_obligation(tmp_path: P
     assert payload["configured"]["buildx_version"] == BUILDX["version"], (
         "the flat keys build_release_image.sh's evidence already carries stay put")
     assert payload["observed"]["controlled_buildx"]["status"] == "NOT_PROVIDED", (
-        "the release path names no controlled executable yet -- A2.2 gives it one")
+        "a build with no pin names no controlled executable, and says so as a stated absence")
     assert not [gap for gap in payload.get("contract_gaps", [])
                 if gap.startswith(("observed.controlled_buildx", "observed.build_invocation",
                                    "configured.controlled"))], payload.get("contract_gaps")
+
+
+#: What the runner reports for a build of the revision the script claimed.
+RUNNER_ENV = {"HOME": HOME, "RUNNER_ENVIRONMENT": "GitHub-ACTIONS", "ImageOS": "ubuntu2404",
+              "GITHUB_SHA": "0123456789abcdef0123456789abcdef01234567",
+              "GITHUB_RUN_ID": "35900000001", "GITHUB_JOB": OBSERVATION_JOB,
+              "GITHUB_RUN_ATTEMPT": "1"}
+CLAIMED_REVISION = "0123456789abcdef0123456789abcdef01234567"
+BACKEND_DOCKERFILE = str(PROJECT_ROOT / "backend/Dockerfile")
+
+
+def test_a_release_build_record_satisfies_the_whole_contract(tmp_path: Path) -> None:
+    """A2.2 Stage 4: the publishing path's record is held to exactly the observation contract.
+
+    The same stubbed machine, the same builder and pin -- but `--mode build`, because the release
+    script is the caller. Everything A2.1 made readable has to be readable here too, including the
+    registry read of the pinned BuildKit reference, which used to be gated on the *mode* and is now
+    gated on whether a builder was named.
+    """
+    _, payload = recorded(tmp_path, observe_run(), observe=False,
+                          dockerfile=BACKEND_DOCKERFILE, revision=CLAIMED_REVISION,
+                          environ=dict(RUNNER_ENV))
+    assert payload["mode"] == "build"
+    assert payload["observed"]["controlled_buildx"]["status"] == "READ"
+    assert payload["observed"]["build_invocation"]["status"] == "READ"
+    assert payload["observed"]["build_invocation"]["argv0"] == CONTROLLED
+    assert payload["pinned_index_resolution"]["status"] == "READ", (
+        "the release record must resolve the pinned BuildKit reference for itself")
+    assert payload["pinned_index_resolution"]["platform_child"]["status"] == "READ"
+    assert statuses(payload) == {name: "CONFORMING" for name in statuses(payload)}
+    assert payload["producer_alignment"]["verdict"] == "CONFORMING"
+    assert not payload.get("contract_gaps"), payload.get("contract_gaps")
+    assert payload["configured"]["workflow"]["builder_name"] == BUILDER
+
+
+def test_a_release_build_record_knows_which_run_it_belongs_to(tmp_path: Path) -> None:
+    """Stage 4's binding: the revision, the run id and the job, each read from the runner."""
+    _, payload = recorded(tmp_path, observe_run(), observe=False, revision=CLAIMED_REVISION,
+                          environ=dict(RUNNER_ENV))
+    identity = payload["identity"]
+    assert identity["verdict"] == "CONFORMING", identity["checks"]
+    assert identity["source_revision"] == CLAIMED_REVISION
+    assert identity["run_id"] == "35900000001"
+    assert identity["job"] == OBSERVATION_JOB
+    assert identity["runner_reports"]["github_sha"] == CLAIMED_REVISION
+    assert identity["required"] == ["source_revision", "run_id_recorded", "job"]
+    assert identity["checks"]["source_revision"]["relation"] == "equal"
+
+
+def test_a_record_of_a_different_commit_is_a_mismatch_not_a_gap(tmp_path: Path) -> None:
+    """The wrong-SHA case, kept separate from the unreadable one.
+
+    A record built at one commit and labelled with another is a *measurement* that disagrees: the
+    instrument worked, and what it found blocks publication. A record that cannot say which run it
+    belongs to is a broken instrument. Stage 6 forbids the two arriving at the gate under the same
+    word, and that separation starts in this field.
+    """
+    _, payload = recorded(tmp_path, observe_run(), observe=False, revision="f" * 40,
+                          environ=dict(RUNNER_ENV))
+    identity = payload["identity"]
+    assert identity["verdict"] == "MISMATCH", identity["checks"]
+    assert identity["checks"]["source_revision"]["relation"] == "different"
+    assert not payload.get("contract_gaps"), payload.get("contract_gaps")
+
+
+def test_a_revision_claimed_without_a_run_identity_is_a_broken_instrument(tmp_path: Path) -> None:
+    """No run id, no belonging: a gap, so the build job itself goes red.
+
+    Without `GITHUB_RUN_ID` a record could name the right commit and still have come from another
+    run -- which is how a set gets assembled from whichever records looked good. The recorder
+    reports a missing read instead of scoring a comparison it cannot make.
+    """
+    env = {key: value for key, value in RUNNER_ENV.items() if key != "GITHUB_RUN_ID"}
+    _, payload = recorded(tmp_path, observe_run(), observe=False, revision=CLAIMED_REVISION,
+                          environ=env)
+    gaps = payload.get("contract_gaps") or []
+    assert "identity.run_id_recorded" in gaps, gaps
+    assert payload["identity"]["verdict"] == "UNKNOWN", payload["identity"]["checks"]
+
+
+def test_a_release_record_states_which_kind_of_build_it_was(tmp_path: Path) -> None:
+    """The divergence a reader has to see: published bytes, or rehearsed ones.
+
+    None of it is declared by the caller. The shape is read out of the build's own recorded argv,
+    so a job that described itself as a publish while running `--load` would be contradicted by its
+    own record.
+    """
+    _, published = recorded(tmp_path, observe_run(), observe=False, dockerfile=BACKEND_DOCKERFILE,
+                            build_argv=[CONTROLLED, "build", "--builder", BUILDER,
+                                        "--provenance=true", "--sbom=true", "--push",
+                                        "--tag", "ghcr.io/o/cap-backend:1.0.6-rc1",
+                                        "--file", "backend/Dockerfile", "backend"])
+    dry_dir = tmp_path / "dry"
+    dry_dir.mkdir()
+    _, rehearsed = recorded(dry_dir, observe_run(), observe=False, dockerfile=BACKEND_DOCKERFILE,
+                            build_argv=[CONTROLLED, "build", "--builder", BUILDER,
+                                        "--provenance=false", "--sbom=false", "--load",
+                                        "--tag", "cap-backend:1.0.6-rc1",
+                                        "--file", "backend/Dockerfile", "backend"])
+    assert published["build_path"]["publishes"] is True
+    assert published["build_path"]["destination"] == "registry-push"
+    assert published["build_path"]["attestations"] == {"provenance": True, "sbom": True}
+    assert rehearsed["build_path"]["publishes"] is False
+    assert rehearsed["build_path"]["destination"] == "docker-store-load"
+    assert rehearsed["build_path"]["attestations"] == {"provenance": False, "sbom": False}
+    assert rehearsed["build_path"]["builder_named"] == BUILDER
+    assert rehearsed["build_path"]["base_handoff"] == "registry_digest", rehearsed["build_path"]
 
 
 # -- A2.1: the six producer controls Batch 3A's seven do not reach -------------------------

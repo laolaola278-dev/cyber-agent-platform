@@ -134,8 +134,11 @@ def test_every_frozen_comparison_is_still_answered_separately(conforming: dict) 
         assert isinstance(block["fields"], dict) and block["fields"], name
     alignment = conforming["producer_alignment"]
     assert not isinstance(alignment, bool), "the alignment became one boolean"
-    assert set(alignment["components"]) == set(COMPARISON_NAMES), alignment["components"]
-    assert alignment["components"] == {name: "CONFORMING" for name in COMPARISON_NAMES}
+    # Superset, not equality: the frozen claim is that none of A2.1's four answers may be dropped
+    # or merged, which equality would overstate by also forbidding a fifth named comparison.
+    assert set(COMPARISON_NAMES) <= set(alignment["components"]), alignment["components"]
+    for name in COMPARISON_NAMES:
+        assert alignment["components"][name] == "CONFORMING", name
     assert alignment["verdict"] == "CONFORMING"
 
 
@@ -275,7 +278,7 @@ def test_the_frozen_set_acceptance_is_what_the_scorer_applies(scored_five: dict)
     assert len(scored_five["rounds"]) == 1, "the frozen 'one round' rule did not survive"
     for image in rules["expected_images"]:
         row = scored_five["images"][image]
-        assert set(row["comparisons"]) == set(COMPARISON_NAMES), row["comparisons"]
+        assert set(COMPARISON_NAMES) <= set(row["comparisons"]), row["comparisons"]
         assert row["status"] == "CONFORMING"
         assert row["build_exit"] == 0
         assert row["contract_gaps"] == []

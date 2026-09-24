@@ -333,20 +333,30 @@ def test_every_release_image_is_built_with_version_revision_and_attestations() -
     assert "--push" in script and "--load" in script, (
         "the script must distinguish the publish build from the dry build"
     )
-    # CI's dry build cannot use buildx for the browser image: a buildx container
-    # builder does not see the host docker store, so its local base would have to
-    # come from a registry that does not exist yet. That is what --local-docker is
-    # for -- and the evidence must say which driver produced it, or a dry build
-    # could be read as an attested release artifact.
-    assert "--local-docker" in script, "the dry-build driver switch is gone"
+    # BATCH 3 A2.2 replaced the reason this job once used the docker driver. A `docker-container`
+    # builder cannot see the host docker store, so the browser image used to be built by `docker
+    # build` -- which made it the one release-shaped build whose producer was the runner. Now the
+    # base reaches it as this round's OCI archive, addressed by the digest read out of that
+    # archive, and every cell builds under the pinned executable.
+    assert "--local-docker" in script, (
+        "the docker-driver switch is gone: `--local-docker` is the one build mode that says its"
+        " BuildKit is the daemon's, and a record that cannot say so is a record that guesses"
+    )
     assert '"attestations": {' in script and "CAP_EVIDENCE_BUILD_ARGS" in script, (
         "attestations must be recorded from the flags the build actually passed"
     )
     ci_build_scripts = ci_job_scripts("release-image-builds")
     assert ci_build_scripts, "ci.yml defines no release-image-builds steps"
-    assert any("--local-docker" in s for s in ci_build_scripts), (
-        "CI's image builds no longer name their driver"
-    )
+    assert any(all(flag in s for flag in ('--buildx "$CAP_RELEASE_BUILDX_PATH"',
+                                           '--builder "$CAP_RELEASE_BUILDER"'))
+               for s in ci_build_scripts), (
+        "CI's release rehearsal no longer names the producer it builds with")
+    assert not [s for s in ci_build_scripts if "--local-docker" in s], (
+        "`--local-docker` is a developer's docker-driver build, not the release rehearsal")
+    assert any("oci-layout://" in s and "SANDBOX_HTTP_BASE" in s for s in ci_build_scripts), (
+        "the browser cell's base has to reach the builder by digest, out of this round's archive")
+    assert any("refused" in s and "oci_image_digest.py" in s for s in ci_build_scripts), (
+        "an unreadable base digest must stop the build, not pass silently")
     assert not [s for s in ci_build_scripts if "--push" in s], (
         "CI must not push release images -- --push belongs to release.yml"
     )

@@ -657,6 +657,17 @@ jobs:
   release-images:
     needs: [validate-tag, verify-certification]
     runs-on: ubuntu-latest
+    env:
+      # BATCH 3 A2.2: the producer these images are built by, named in this file rather than
+      # inherited from whatever the runner has. The recorder reads these five literals back out of
+      # the YAML as `configured.workflow`, so the comparison is against a declaration in the
+      # repository and not against an argument the build passed to itself. A `${{ … }}` value
+      # would not count, which is why the install path is spelled out.
+      CAP_RELEASE_BUILDER: cap-release-producer
+      CAP_RELEASE_DRIVER: docker-container
+      CAP_RELEASE_BUILDKIT: moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      CAP_RELEASE_BUILDX_PIN: scripts/release/controlled_buildx.json
+      CAP_RELEASE_BUILDX_PATH: /tmp/cap-controlled-buildx/buildx
     strategy:
       # A partial image set is refused downstream either way, and the operator
       # needs to know which of the five could not be produced.
@@ -677,10 +688,32 @@ jobs:
             role: egress-proxy
     steps:
       - uses: actions/checkout@v6
+      # The same action ref, buildx version and BuildKit reference A2.1's observation job runs:
+      # what it *declares* is one of the authorities `lock_vs_workflow` compares, and deleting it
+      # would remove a required field from the record rather than weaken the producer. The build
+      # below no longer goes through whatever it installs.
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
         with:
           buildx-version: v0.37.1
           driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      - name: Install the controlled buildx and create the named producer
+        run: |
+          set -euo pipefail
+          # One mechanism for every job that builds a CAP release image (A2.2 Stage 1): it refuses
+          # a docker CLI plugin target before downloading, verifies the bytes against the pin that
+          # ships and stops there on a mismatch, asks the installed binary which version and commit
+          # it is, checks the BuildKit reference against deployment/third-party-images.json, and
+          # only then creates `$CAP_RELEASE_BUILDER` with that executable. Its facts file travels
+          # under producer/ so the completeness gate, which reads the *.json beside it, never
+          # mistakes an install record for an image record.
+          python3 scripts/release/install_controlled_buildx.py \
+            --pin "$CAP_RELEASE_BUILDX_PIN" \
+            --path "$CAP_RELEASE_BUILDX_PATH" \
+            --builder "$CAP_RELEASE_BUILDER" \
+            --driver "$CAP_RELEASE_DRIVER" \
+            --buildkit "$CAP_RELEASE_BUILDKIT" \
+            --lock deployment/third-party-images.json \
+            --facts outputs/release-images/producer/buildx-install.json
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3.7.0
         with:
           registry: ghcr.io
@@ -694,11 +727,15 @@ jobs:
           DOCKERFILE: ${{ matrix.dockerfile }}
           CONTEXT: ${{ matrix.context }}
           ROLE: ${{ matrix.role }}
+          WORKFLOW_FILE: .github/workflows/release.yml
+          WORKFLOW_JOB: release-images
         run: |
           set -euo pipefail
           args=(--name "$IMAGE" --dockerfile "$DOCKERFILE"
                 --registry "ghcr.io/$OWNER" --version "$VERSION"
                 --revision "$GITHUB_SHA"
+                --buildx "$CAP_RELEASE_BUILDX_PATH" --builder "$CAP_RELEASE_BUILDER"
+                --workflow "$WORKFLOW_FILE" --job "$WORKFLOW_JOB"
                 --out "outputs/release-images/$IMAGE.json" --push)
           if [[ -n "$ROLE" ]]; then
             args+=(--role "$ROLE")
@@ -716,12 +753,31 @@ jobs:
   release-sandbox-browser:
     needs: [validate-tag, verify-certification, release-images]
     runs-on: ubuntu-latest
+    env:
+      # This job declares its own producer literals because it reads its own job block: two jobs
+      # sharing one declaration would mean a record about a builder this job never configured.
+      CAP_RELEASE_BUILDER: cap-release-producer
+      CAP_RELEASE_DRIVER: docker-container
+      CAP_RELEASE_BUILDKIT: moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      CAP_RELEASE_BUILDX_PIN: scripts/release/controlled_buildx.json
+      CAP_RELEASE_BUILDX_PATH: /tmp/cap-controlled-buildx/buildx
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
         with:
           buildx-version: v0.37.1
           driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+      - name: Install the controlled buildx and create the named producer
+        run: |
+          set -euo pipefail
+          python3 scripts/release/install_controlled_buildx.py \
+            --pin "$CAP_RELEASE_BUILDX_PIN" \
+            --path "$CAP_RELEASE_BUILDX_PATH" \
+            --builder "$CAP_RELEASE_BUILDER" \
+            --driver "$CAP_RELEASE_DRIVER" \
+            --buildkit "$CAP_RELEASE_BUILDKIT" \
+            --lock deployment/third-party-images.json \
+            --facts outputs/release-images/producer/buildx-install.json
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3.7.0
         with:
           registry: ghcr.io
@@ -735,11 +791,20 @@ jobs:
         env:
           VERSION: ${{ needs.validate-tag.outputs.version }}
           OWNER: ${{ github.repository_owner }}
+          WORKFLOW_FILE: .github/workflows/release.yml
+          WORKFLOW_JOB: release-sandbox-browser
         run: |
           set -euo pipefail
           # The base is the digest this release published, not a tag: the browser
           # image then states which bytes it extends, and a later rebuild of
           # cap-sandbox-http cannot silently change what shipped.
+          #
+          # A2.2 Stage 3 keeps that hand-off exactly as it was. The observation and CI dry paths
+          # bind the same base out of an OCI archive because nothing is pushed there; the
+          # publishing path's real dependency is the registry digest it just wrote, and the A2.1
+          # local-layout trick does not become the release's hand-off. Which of the two a record
+          # used is read back out of the build's own argv (`base_images[].binding`), so the
+          # divergence is stated by evidence rather than by a comment here.
           BASE_DIGEST="$(python3 -c 'import json;print(json.load(open("outputs/release-images/cap-sandbox-http.json"))["index_digest"])')"
           test -n "$BASE_DIGEST"
           bash scripts/release/build_release_image.sh \
@@ -747,6 +812,8 @@ jobs:
             --dockerfile backend/docker/sandbox-browser/Dockerfile \
             --registry "ghcr.io/$OWNER" --version "$VERSION" --revision "$GITHUB_SHA" \
             --role browser \
+            --buildx "$CAP_RELEASE_BUILDX_PATH" --builder "$CAP_RELEASE_BUILDER" \
+            --workflow "$WORKFLOW_FILE" --job "$WORKFLOW_JOB" \
             --build-arg "SANDBOX_HTTP_BASE=ghcr.io/$OWNER/cap-sandbox-http@${BASE_DIGEST}" \
             --out outputs/release-images/cap-sandbox-browser.json --push
       - uses: actions/upload-artifact@v4
