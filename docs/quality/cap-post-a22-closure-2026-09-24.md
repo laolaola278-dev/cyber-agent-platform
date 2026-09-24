@@ -322,7 +322,10 @@ will use -- exactly the refusal §H measured. But they do not all survive: `CI` 
 `cancel-in-progress: true` by design and the second with **zero jobs**, one second after the next push
 landed while an older round still held the `refs/heads/main` group. The line the measurement drew is
 in-flight versus waiting, not old versus new: the round that was actually running at `87d86b3` passed
-through two later pushes untouched and completed (`35992258108`, success at `12:15:55Z`). So a commit
+through two later pushes untouched and completed (`35992258108`, success at `12:15:55Z`), and the
+reading then survived a prospective test: pushing `2f90450` displaced the round `a6d2bc9` had left
+waiting (`35998117484`, `cancelled` two seconds later, again with zero jobs) while leaving that
+commit's already-running Linux and K8s rounds alone. So a commit
 can carry Linux and K8s evidence and no CI or GA round at all -- and four certification workflow
 comments say that a push "queues behind" a run in flight, which is true of a run that has started and
 not of one still waiting. Filed as **F-54**, with §J item 2's check that the run at a sha actually

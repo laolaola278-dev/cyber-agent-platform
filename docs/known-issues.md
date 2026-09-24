@@ -925,10 +925,14 @@ listed so that an import name is not mistaken for a working capability.
     the Linux, K8s and GA rounds at `5f550c4` were still `in_progress` after the `a6d2bc9` push landed
     -- none of them cancelled, which is the design working. Waiting: `35995454389` never started (zero
     jobs) and was marked `cancelled` one second after a newer push entered the group while an older
-    round still held it. That a group keeps only its newest waiter is the inference those facts
-    support, not a platform statement -- but either reading leaves the same defect, which is the
-    sentence: it is load-bearing, because it is why a releaser assumes a commit they pushed has a
-    round waiting.
+    round still held it. The reading was then tested prospectively, and it held: the next push
+    (`2f90450`) displaced the round the *previous* push had left waiting
+    (`35998117484`, `cancelled` at `12:21:43Z`, two seconds after `2f90450` landed, again with zero
+    jobs), while that commit's already-running Linux (`35998117487`) and K8s (`35998117450`) rounds
+    were untouched and its CI (`35998117512`) was cancelled mid-job, which is `ci.yml` behaving as
+    configured. A group keeps its newest waiter; a run that has started is not its problem. The defect
+    is therefore the sentence, and the sentence is load-bearing, because it is why a releaser assumes a
+    commit they pushed has a round waiting.
 
     Why this is not a publication bug: an absent round is *evidence absence*, and the gate refuses on
     absence -- the same `MISSING` / `verify-certification` path F-33 and F-42 established, and §H of
