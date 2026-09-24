@@ -1302,6 +1302,46 @@ def test_the_release_build_path_now_runs_the_controlled_producer() -> None:
         "that runs the commands and records them")
 
 
+def test_the_published_browser_still_extends_the_digest_this_release_pushed() -> None:
+    """A2.2 Stage 3: the OCI-layout hand-off stays on the observation side of the fence.
+
+    The publishing path's real dependency is the registry digest it just wrote, so the fifth image
+    states which bytes it extends and a later rebuild of `cap-sandbox-http` cannot quietly change
+    what shipped. A2.1 solved the same problem in a non-publishing job with a local OCI layout --
+    nothing was pushed there, so a digest an operator could pull did not exist yet -- and A2.2 was
+    explicit that the trick does not become the release's hand-off.
+
+    `release-image-completeness` already refuses a published image layered on a same-round layout
+    (`build_path.base_handoff`, and `test_the_oci_layout_hand_off_is_refused_for_a_published_image`
+    proves it), so the property is enforced at publication. This check is the cheaper half of that
+    pair: it fails at review time, naming the job, instead of failing a release that has already
+    pushed four images.
+    """
+    release = (PROJECT_ROOT / ".github/workflows/release.yml").read_text("utf-8")
+    browser = release.split("  release-sandbox-browser:")[1].split("\n  release-image-security:")[0]
+    code = "\n".join(_code_lines(browser))
+    # The base digest comes from the record of the image this release published, not from a tag
+    # and not from an archive unpacked beside it.
+    assert 'outputs/release-images/cap-sandbox-http.json' in code, (
+        "the browser's base is no longer read from the published HTTP sandbox's own record")
+    assert '["index_digest"]' in code, (
+        "the base is read as a field of that record rather than pinned to a tag")
+    expected_arg = '--build-arg "SANDBOX_HTTP_BASE=ghcr.io/$OWNER/cap-sandbox-http@${BASE_DIGEST}"'
+    assert expected_arg in code, (
+        "the browser is no longer layered on the digest this release published")
+    assert "--push" in code, "a release build that pushes nothing publishes nothing"
+    for escaped in ("--oci-out", "--named-context", "oci-layout://"):
+        assert escaped not in code, (
+            f"{escaped} belongs to the observation and CI dry paths; it has reached the "
+            "publishing job")
+    assert "needs: [validate-tag, verify-certification, release-images]" in browser, (
+        "the browser job no longer runs after the job that publishes its base")
+    assert "name: release-image-cap-sandbox-http" in browser, (
+        "the job does not consume the artifact the release-images job uploaded")
+    assert "oci-layout://" not in release, (
+        "the same-round local layout has been written into the publishing workflow")
+
+
 def test_a_build_that_claims_no_controlled_producer_keeps_the_legacy_shape(tmp_path: Path) -> None:
     """A `--local-docker` developer build calls the recorder with `--out` and `--lock`.
 
