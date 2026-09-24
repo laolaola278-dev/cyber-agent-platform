@@ -787,7 +787,7 @@ reconciliation inherits from that candidate rather than re-certifying it.
   awaiting a decision. See `docs/known-issues.md` items 11 and 13 and
   `docs/quality/cap-post-rc-batch-3-design-options-2026-09-23.md`. (This is what that
   round filed; the post-A2.2 entry below records where each of the two stands now.)
-- **Post-A2.2 closure: F-50 reconciled, F-44's status typed, and four items named rather than
+- **Post-A2.2 closure: F-50 reconciled, F-44's status typed, and five items named rather than
   absorbed.** Ten statements that A2.2 had made false were corrected in four tracked files:
   `scripts/release/producer_contract.json`'s `purpose`, its two obligation status strings and the
   stale `F-47` key in `checks_not_run_here`; four places in
@@ -824,7 +824,13 @@ reconciliation inherits from that candidate rather than re-certifying it.
   certification round that is *waiting* is cancelled with zero jobs when a later push enters its ref
   group, so a commit can end up with no CI or GA round at all while four workflow comments promise it
   queued behind -- evidence absence, which the gate refuses rather than passes, and which is filed
-  rather than fixed here because the only correction is prose in `.github/workflows/`.
+  rather than fixed here because the only correction is prose in `.github/workflows/`. **F-55** is
+  what the round's own closing commit turned up: the K8s certification job failed in
+  `Deploy PostgreSQL + MinIO (kind-internal)` -- the second such timeout of MinIO's 120-second
+  `rollout status` budget in 196 runs, the other at `c7dd1f7` on 2026-09-19 -- and the job's failure
+  dump inspects `cap` and `cap-sandbox` but never `cap-infra`, so it reported "No resources found" and
+  left the cause unobserved. No timeout was raised and no gate was relaxed on the strength of a log
+  that cannot see the failing namespace; the entry says what to add first.
   One false negative in the A2.2 report was also corrected: it claimed the published
   `values-release-1.0.6-rc1.yaml` asset names no image digests, from an empty read --
   `/repos/…/releases/assets/{id}` answers 200 with JSON metadata unless the request says

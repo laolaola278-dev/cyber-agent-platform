@@ -231,6 +231,7 @@ certification has never seen in strict mode.
 | F-51 | validation item | **new**, open, closable only by a real release |
 | F-52 | evidence durability | **new**, open, one-line fix with a recertification price |
 | F-54 | workflow wording + a release step | **new**, open -- filed rather than fixed, because the edit is to four workflow files (§M) |
+| F-55 | certification-harness observability | **new**, open -- found by the tip's own K8s round going red before it tested anything (§N) |
 | F-53 | release-cost governance | **new**, open -- see §J item 3 |
 | 24 h soak | planned validation | not run; the 7200 s round is what `dea8c6f` has |
 
@@ -262,6 +263,11 @@ What the next release must actually check, in the order it can check it. Read-on
    nobody can say which producer built the published bytes.
 6. **Re-read the seal afterwards** and confirm nothing moved that this release did not move: the
    audit is `_tmp/closure_sealed_audit.py`, and its checks are §K.
+7. **If the K8s round is red at `Deploy PostgreSQL + MinIO (kind-internal)`, re-run and compare**
+   (F-55). It has timed out there twice in 196 runs with an identical signature (postgres up in ~6 s,
+   minio out at exactly the 120 s `rollout status` budget), and the job's own failure dump never looks
+   at the `cap-infra` namespace where it happens, so the log cannot say why. That is not a product
+   failure, and the fix is not a longer timeout -- see the entry.
 
 ## K. Sealed-release integrity
 
@@ -295,8 +301,9 @@ publication started, no candidate modified, and no certification round re-run fo
 change.
 
 **Open items, none of which this round was authorised to close:** F-49, F-46, F-39, B3, B4 (policy
-and design); F-51, F-52, F-53, F-54 (new, all four requiring a release decision rather than more
-testing). **The one thing a release must do first** is §J item 1: choose the tip and make strict
+and design); F-51, F-52, F-53, F-54 (new, each needing a release decision rather than more testing);
+and F-55 (new, the reverse -- it needs one line of diagnostics before anyone can decide anything about
+it, §N). **The one thing a release must do first** is §J item 1: choose the tip and make strict
 certification true of that commit, because the gate at the current tip refuses, correctly, and will
 keep refusing every tip whose newest GA round came from a push.
 
@@ -336,3 +343,33 @@ unchanged, and no tag was created and no publication started.
 
 Outside this round, deliberately: F-49 is designed and unimplemented; F-51, F-52, F-53 and F-54 each
 need a release decision from the project, not more work in a documentation round.
+
+## N. The closing commit's own round, and the finding it produced
+
+At `94b17c6` -- named because it is closed history, not because it is the tip -- CI
+(`36000276420`) and CAP Linux Certification (`36000276101`) completed **success**, and the K8s
+Certification round (`36000276172`) completed **failure** without reaching a single gate: it died in
+`Deploy PostgreSQL + MinIO (kind-internal)`. The log's last three lines are the whole story of the
+step -- postgres "successfully rolled out" six seconds in, then `Waiting for deployment "minio" rollout
+to finish: 0 of 1 updated replicas are available...`, then `error: timed out waiting for the condition`
+after exactly the 120 s the workflow's own `kubectl -n cap-infra rollout status deployment/minio
+--timeout=120s` allows.
+
+Two things make that a finding rather than a shrug, and they are recorded as **F-55**. The dump the job
+runs after a failure inspects `cap` and `cap-sandbox` and never `cap-infra`, so it printed "No resources
+found" twice and told nothing: **why** MinIO did not become ready is unobserved -- pull latency, probe,
+scheduling, all still possible, and none of them implicated by evidence. And it had happened before, at
+`c7dd1f7` on 2026-09-19 (job `105819996280`), with an identical tail, out of 196 recent runs of that
+workflow -- while every other sampled failure in it died later, at the gates step.
+
+What was **not** done in response, deliberately. No timeout was lengthened (that is weakening a wait
+whose subject is unknown), no gate was relaxed, no certification round was re-run to turn a red green,
+and nothing in `cap-k8s-certification.yml` was edited -- a workflow edit is a new candidate under the
+rule §G states, and F-55 is worth exactly one sentence of diagnostics whenever these files next change
+for a real reason. The failing round is a push round in development mode, so it carries no release
+evidence in either direction (§H is about why that is the case even when such a round is green), and
+§K's sealed release is unmoved.
+
+What it does change: the tip now has one more reason to need its own certification rather than
+inherited certification, and §J gained item 7 -- if a round is red at that step, re-run and compare
+before believing anything about the product.
