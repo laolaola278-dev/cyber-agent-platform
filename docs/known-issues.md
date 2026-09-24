@@ -1028,7 +1028,14 @@ listed so that an import name is not mistaken for a working capability.
     Measured consequence, same signature on two commits ~25 minutes apart: `36000276172` /
     `107639698508` (K8s at `94b17c6`, `Deploy PostgreSQL + MinIO`, F-55) and `36004166031` /
     `107647936310` (K8s at `a8d3fb2`, same step) -- postgres rolls out in seconds and MinIO never
-    becomes ready, which is what a refused pull looks like from a deployment's point of view.
+    becomes ready, which is what a refused pull looks like from a deployment's point of view. The GA
+    round at that same commit failed too (`36004166008` / job `107648282991`, at `Deploy PostgreSQL +
+    MinIO + CAP on Cluster A`, with its `supply-chain` job green), so **three of the four required
+    authorities are observed red on this one dependency**; the fourth, `cap-ga-reliability.yml`, names
+    the same image at its line 170 and has simply not run since. The next commit repeated it (`Linux`
+    at `30fbc31` failed container init in 21 s while its three `postgres-version-matrix` jobs went
+    green and `cap-production-certification` was skipped as it always is on a push) -- the dependency
+    decides the round, not the repository's state.
 
     What depends on it: six image lines across all four certification workflows
     (`cap-linux-certification.yml` ×3, `cap-k8s-certification.yml`, `cap-ga-certification.yml`,

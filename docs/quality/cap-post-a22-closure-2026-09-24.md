@@ -403,8 +403,9 @@ directly rather than inferred (`_tmp/quay_probe.py`): Quay's own `Www-Authentica
 anonymous `repository:minio/minio:pull` token (200), and with that token the manifest GET and the tag
 list both return **401** -- while `coreos/etcd` and `prometheus/prometheus` return **200** through the
 identical flow. The repository is closed to anonymous reads; the registry is working. The change is
-bounded by observation, not guessed: the last run known to have pulled the image successfully is CAP
-Linux Certification `35997104443`, which finished green at `12:19:46Z`, and the first symptom is the
+bounded by observation, not guessed: the last runs known to have pulled the image successfully are both
+at `5f550c4` -- CAP Linux Certification `35997104443`, green at `12:19:46Z`, and K8s Certification
+`35997104420`, green at `12:21:19Z` -- and the first symptom is the
 MinIO wait that started at `12:56:09Z` in `107639698508` and timed out at `12:58:16Z`.
 
 Other sources were probed the same anonymous way (`_tmp/mirror_probe.py`): Docker Hub issues a token and
@@ -418,6 +419,11 @@ the same vendor's images from `2026-09-13` after working until `2026-08-22`. Fil
 service in `docker-compose.yml`, and `scripts/certification/setup.sh` name that digest, so while the
 refusal stands no commit -- including `dea8c6f` -- can produce a fresh release-scoped round, and the
 documented compose deployment cannot be brought up by someone without credentials for that repository.
+That is now observed for three of the four authorities, not reasoned: Linux at its container init, K8s
+twice at its MinIO wait, and the GA round at `a8d3fb2` (`36004166008` / job `107648282991`) at
+`Deploy PostgreSQL + MinIO + CAP on Cluster A` with its `supply-chain` job green -- and the following
+push failed Linux again in 21 seconds while the three `postgres-version-matrix` jobs stayed green, which
+locates the outage precisely in the dependency rather than in anything the repository contains.
 Unaffected: the certified candidate's existing rounds (all five re-read as `success` today), both
 publication authorities' dry-runs at distance 0, and sealed `v1.0.6-rc1` with its five ghcr digests --
 §K's audit ran again after this and still reads **SEALED RELEASE INTACT**.
