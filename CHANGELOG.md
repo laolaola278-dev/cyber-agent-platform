@@ -787,7 +787,7 @@ reconciliation inherits from that candidate rather than re-certifying it.
   awaiting a decision. See `docs/known-issues.md` items 11 and 13 and
   `docs/quality/cap-post-rc-batch-3-design-options-2026-09-23.md`. (This is what that
   round filed; the post-A2.2 entry below records where each of the two stands now.)
-- **Post-A2.2 closure: F-50 reconciled, F-44's status typed, and five items named rather than
+- **Post-A2.2 closure: F-50 reconciled, F-44's status typed, and six items named rather than
   absorbed.** Ten statements that A2.2 had made false were corrected in four tracked files:
   `scripts/release/producer_contract.json`'s `purpose`, its two obligation status strings and the
   stale `F-47` key in `checks_not_run_here`; four places in
@@ -826,11 +826,24 @@ reconciliation inherits from that candidate rather than re-certifying it.
   queued behind -- evidence absence, which the gate refuses rather than passes, and which is filed
   rather than fixed here because the only correction is prose in `.github/workflows/`. **F-55** is
   what the round's own closing commit turned up: the K8s certification job failed in
-  `Deploy PostgreSQL + MinIO (kind-internal)` -- the second such timeout of MinIO's 120-second
-  `rollout status` budget in 196 runs, the other at `c7dd1f7` on 2026-09-19 -- and the job's failure
+  `Deploy PostgreSQL + MinIO (kind-internal)` -- the second of three such timeouts of MinIO's 120-second
+  `rollout status` budget in 196 runs, the earlier one at `c7dd1f7` on 2026-09-19 -- and the job's failure
   dump inspects `cap` and `cap-sandbox` but never `cap-infra`, so it reported "No resources found" and
   left the cause unobserved. No timeout was raised and no gate was relaxed on the strength of a log
-  that cannot see the failing namespace; the entry says what to add first.
+  that cannot see the failing namespace; the entry says what to add first. **F-56 is the blocking one,
+  and F-55's timeout was its symptom**: the digest both workflows pull as their object store --
+  `quay.io/minio/minio@sha256:a1ea29fa…` -- stopped being anonymously readable today between `12:19:46Z`
+  (the last certification run that finished green having pulled it) and `12:58:16Z` (the first MinIO
+  wait that timed out). Quay still issues an anonymous token, and `coreos/etcd` and
+  `prometheus/prometheus` still answer 200 through the same flow, but `minio/minio` answers **401** for
+  both the manifest and the tag list, and the runner says the same in words: `unauthorized: access to
+  the requested resource is not authorized`. That digest is named by all four certification workflows,
+  the default `minio` service in `docker-compose.yml`, `scripts/certification/setup.sh` and
+  `deployment/third-party-images.json`, so no release-scoped round can run at any commit until the
+  project chooses between mirroring the digest, authenticating the pull in CI, or replacing the
+  dependency -- the same vendor's archive that already moved this image off Docker Hub on 2026-09-13,
+  as that lock file's own `previous_ref_status` records. Sealed `v1.0.6-rc1` and the five ghcr digests
+  are unaffected, re-audited after this finding.
   One false negative in the A2.2 report was also corrected: it claimed the published
   `values-release-1.0.6-rc1.yaml` asset names no image digests, from an empty read --
   `/repos/…/releases/assets/{id}` answers 200 with JSON metadata unless the request says

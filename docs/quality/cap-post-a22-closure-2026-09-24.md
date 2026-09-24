@@ -198,8 +198,9 @@ can ride an existing candidate.*
 | 4 | F-47 producer gate | **DONE** | §G/§P, 22 controls |
 | 5 | F-50 reconciliation | **DONE in `6eb2ecc`** | §E above |
 | 6 | version bump + release authorisation | **PENDING, and it is a human decision** | no tag may be created in these stages |
+| 7 | third-party object store is pullable at all | **BLOCKING — found in this round** (F-56) | `quay.io/minio/minio@sha256:a1ea29fa…` answers 401 to an anonymous token; two certification runs red at `a8d3fb2`/`94b17c6` (§O) |
 
-**7. An item that reads like a blocker and is the gate refusing: the tip is not certified.**
+**8. An item that reads like a blocker and is the gate refusing: the tip is not certified.**
 Running `RELEASE_GATE_PY` with `CERT_TAG_SHA=6eb2ecc` at a hypothetical `v1.0.7-rc1`:
 
 ```
@@ -232,7 +233,8 @@ certification has never seen in strict mode.
 | F-52 | evidence durability | **new**, open, one-line fix with a recertification price |
 | F-54 | workflow wording + a release step | **new**, open -- filed rather than fixed, because the edit is to four workflow files (§M) |
 | F-55 | certification-harness observability | **new**, open -- found by the tip's own K8s round going red before it tested anything (§N) |
-| F-53 | release-cost governance | **new**, open -- see §J item 3 |
+| F-56 | third-party dependency availability | **new, BLOCKING** -- the pinned object-store image cannot be pulled anonymously (§O); not remediable in a documentation round, and it stops all four authorities |
+| F-53 | release-cost governance | **new**, open -- see §J item 1 |
 | 24 h soak | planned validation | not run; the 7200 s round is what `dea8c6f` has |
 
 ## J. First-live-release validation checklist
@@ -263,11 +265,12 @@ What the next release must actually check, in the order it can check it. Read-on
    nobody can say which producer built the published bytes.
 6. **Re-read the seal afterwards** and confirm nothing moved that this release did not move: the
    audit is `_tmp/closure_sealed_audit.py`, and its checks are §K.
-7. **If the K8s round is red at `Deploy PostgreSQL + MinIO (kind-internal)`, re-run and compare**
-   (F-55). It has timed out there twice in 196 runs with an identical signature (postgres up in ~6 s,
-   minio out at exactly the 120 s `rollout status` budget), and the job's own failure dump never looks
-   at the `cap-infra` namespace where it happens, so the log cannot say why. That is not a product
-   failure, and the fix is not a longer timeout -- see the entry.
+7. **If the K8s round is red at `Deploy PostgreSQL + MinIO (kind-internal)`, ask whether the image is
+   pullable before asking whether the test is flaky** (F-55, caused by F-56). The job's own dump cannot
+   see the namespace where it happens, so the check is external and cheap: take the registry's
+   `Www-Authenticate` realm, request an anonymous `repository:…:pull` token, and `GET` the pinned
+   manifest with it -- a 401 there is a dependency that has gone private, not a timeout to be raised.
+   Only after that comes re-run-and-compare, and raising the 120 s budget is not a fix in either case.
 
 ## K. Sealed-release integrity
 
@@ -305,7 +308,10 @@ and design); F-51, F-52, F-53, F-54 (new, each needing a release decision rather
 and F-55 (new, the reverse -- it needs one line of diagnostics before anyone can decide anything about
 it, §N). **The one thing a release must do first** is §J item 1: choose the tip and make strict
 certification true of that commit, because the gate at the current tip refuses, correctly, and will
-keep refusing every tip whose newest GA round came from a push.
+keep refusing every tip whose newest GA round came from a push. **And as of this round's last hour,
+that is not even reachable yet**: F-56 has to be resolved first, because the pinned object-store image
+every one of the four authorities pulls is currently refused by its registry (§O) -- so no commit,
+including the certified candidate, can produce a fresh release-scoped round while it stands.
 
 ## M. What the push confirmed, including about itself
 
@@ -372,4 +378,54 @@ evidence in either direction (§H is about why that is the case even when such a
 
 What it does change: the tip now has one more reason to need its own certification rather than
 inherited certification, and §J gained item 7 -- if a round is red at that step, re-run and compare
-before believing anything about the product.
+before believing anything about the product. §O is what happened when that advice was followed: the
+next round failed identically, the cause turned out not to be the step or the budget at all, and
+"unobserved" is where the trail led rather than where it stopped.
+
+## O. What §N's red actually was, and it is not a flake
+
+§N was written believing the K8s timeout was unexplained. It is explained, and the explanation is a
+release blocker, so it is recorded here in the order it was found rather than tidied backwards.
+
+The next push's round repeated the same failure at the same step (`36004166031` / job
+`107647936310`, `a8d3fb2`, 22 minutes after the first), which removed "one-off" from the options. Then
+that commit's **Linux** certification run went red too (`36004166112`), 74 seconds after it started,
+at `Initialize containers` -- a step that runs before any repository code -- and its log says the thing
+the K8s job could not:
+
+```
+/usr/bin/docker pull quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+Error response from daemon: unauthorized: access to the requested resource is not authorized
+```
+
+The same digest both workflows had been pulling successfully an hour earlier, so this was tested
+directly rather than inferred (`_tmp/quay_probe.py`): Quay's own `Www-Authenticate` realm issues an
+anonymous `repository:minio/minio:pull` token (200), and with that token the manifest GET and the tag
+list both return **401** -- while `coreos/etcd` and `prometheus/prometheus` return **200** through the
+identical flow. The repository is closed to anonymous reads; the registry is working. The change is
+bounded by observation, not guessed: the last run known to have pulled the image successfully is CAP
+Linux Certification `35997104443`, which finished green at `12:19:46Z`, and the first symptom is the
+MinIO wait that started at `12:56:09Z` in `107639698508` and timed out at `12:58:16Z`.
+
+Other sources were probed the same anonymous way (`_tmp/mirror_probe.py`): Docker Hub issues a token and
+then refuses this digest for both `library/minio` and `minio/minio`; `public.ecr.aws` refuses; `ghcr.io`
+has no such namespace; `mirror.gcr.io` would not complete the token exchange from this network and is
+therefore unresolved, not excluded. And `deployment/third-party-images.json` already records this
+dependency moving once for the same reason -- its `previous_ref_status` documents Docker Hub refusing
+the same vendor's images from `2026-09-13` after working until `2026-08-22`. Filed as **F-56**.
+
+**Consequence.** Six image references across all four certification workflows, the default `minio`
+service in `docker-compose.yml`, and `scripts/certification/setup.sh` name that digest, so while the
+refusal stands no commit -- including `dea8c6f` -- can produce a fresh release-scoped round, and the
+documented compose deployment cannot be brought up by someone without credentials for that repository.
+Unaffected: the certified candidate's existing rounds (all five re-read as `success` today), both
+publication authorities' dry-runs at distance 0, and sealed `v1.0.6-rc1` with its five ghcr digests --
+§K's audit ran again after this and still reads **SEALED RELEASE INTACT**.
+
+**Deliberately not done.** No certification round was re-dispatched to wait the outage out; no
+credentials were invented, requested or stored; the 120 s budget was not lengthened; and no mirror was
+pushed, because copying a third-party image into the project's own registry namespace is an unauthorised
+write to an external system and a source change -- which is exactly the decision F-56 leaves to the
+project: mirror-by-digest-and-re-point, supply pull credentials for CI only, or treat the object store
+as a dependency to replace. The first option has to solve obtaining the bytes at all, which may itself
+need a credentialed pull while the vendor still serves them.

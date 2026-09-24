@@ -970,9 +970,10 @@ listed so that an import name is not mistaken for a working capability.
     157:  kubectl -n cap-infra rollout status deployment/minio --timeout=120s
     ```
 
-    That wait has timed out on `minio` twice in the last 196 runs of this workflow -- job
-    `105819996280` (run `35414380874`, `c7dd1f7`, `2026-09-19T02:07:26Z`) and job `107639698508` (run
-    `36000276172`, `94b17c6`, `2026-09-24T12:58:16Z`) -- and both logs end the same way: postgres
+    That wait has timed out on `minio` three times in the last 196 runs of this workflow -- job
+    `105819996280` (run `35414380874`, `c7dd1f7`, `2026-09-19T02:07:26Z`), job `107639698508` (run
+    `36000276172`, `94b17c6`, `2026-09-24T12:58:16Z`) and job `107647936310` (run `36004166031`,
+    `a8d3fb2`, 22 minutes later at `13:20:07Z`) -- and all three logs end the same way: postgres
     "successfully rolled out" about six seconds after being created, then `Waiting for deployment
     "minio" rollout to finish: 0 of 1 updated replicas are available...` for exactly 120 seconds, then
     `error: timed out waiting for the condition`. The same block was sampled across the other
@@ -987,6 +988,12 @@ listed so that an import name is not mistaken for a working capability.
     or unschedulable. The pinned digest and the registry are therefore *not* implicated by this
     evidence, and are not exonerated by it either.
 
+    **Correction, same day.** The cause was found afterwards, but *outside* this job: an independent
+    registry probe and `cap-linux-certification.yml`'s container-initialisation error both name the
+    refused pull, and the finding is **F-56**. That does not retire this entry -- the gap it describes
+    is why a same-registry failure in two workflows took a hand-built probe to explain rather than one
+    line of the log the runner already had.
+
     Why it is worth an entry: `cap-k8s-certification.yml`'s `k8s-certification` job is one of the four
     authorities `release.yml` reads, so a round that dies in infrastructure at tag time blocks
     publication with a log that cannot say why -- and the natural response, raising the timeout, would
@@ -996,8 +1003,70 @@ listed so that an import name is not mistaken for a working capability.
     `describe pod`, `get events -n cap-infra`, and the container's own logs), which is a workflow edit
     and so rides the next batch that touches these files under the same cost rule F-50 and F-54 record.
     Then, with the cause visible, decide whether 120 s is the right budget or whether the image needs a
-    pre-pull. Until then the release procedure should treat a red at this step as **re-run and compare**
+    pre-pull -- a question the same day answered in a third way: neither, the pull is refused outright
+    (**F-56**). Until then the release procedure should treat a red at this step as **re-run and compare**
     (§J item 7), not as a product failure and not as a timeout to be increased.
+
+23. **The pinned MinIO image is no longer pullable anonymously, and every certification authority
+    needs it (F-56) — BLOCKING, third-party availability.** Found by following F-55's red rather than
+    explaining it away. The runner's own words, from `cap-linux-certification.yml`'s `Initialize
+    containers` step at `a8d3fb2` (job `107647936396`, run `36004166112`, `13:13:26Z`):
+
+    ```
+    /usr/bin/docker pull quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+    Error response from daemon: unauthorized: access to the requested resource is not authorized
+    ```
+
+    retried three times and then failing the job. Independently, from this box at `13:17Z` (`_tmp/quay_probe.py`):
+    Quay's own `Www-Authenticate` realm issues an anonymous token for `repository:minio/minio:pull`
+    (200), and with *that* token both `manifests/sha256:a1ea29fa…` and `tags/list` answer **401** with
+    `access to the requested resource is not authorized` -- while `coreos/etcd` and
+    `prometheus/prometheus` return **200** through the identical flow. So this is the `minio`
+    repository being closed to anonymous pulls, not Quay refusing anonymous pulls in general, and not a
+    missing digest: the repository itself is no longer readable without credentials.
+
+    Measured consequence, same signature on two commits ~25 minutes apart: `36000276172` /
+    `107639698508` (K8s at `94b17c6`, `Deploy PostgreSQL + MinIO`, F-55) and `36004166031` /
+    `107647936310` (K8s at `a8d3fb2`, same step) -- postgres rolls out in seconds and MinIO never
+    becomes ready, which is what a refused pull looks like from a deployment's point of view.
+
+    What depends on it: six image lines across all four certification workflows
+    (`cap-linux-certification.yml` ×3, `cap-k8s-certification.yml`, `cap-ga-certification.yml`,
+    `cap-ga-reliability.yml`), the **default** `minio` service in `docker-compose.yml:101` (no
+    `profiles:` guard, so it is part of the documented compose path an operator follows), the local
+    certification bootstrap `scripts/certification/setup.sh:52`, and the lock file
+    `deployment/third-party-images.json:32` with its registry-resolution evidence artifact. Every
+    required release authority is therefore unable to produce evidence while this stands. What is *not*
+    affected: sealed `v1.0.6-rc1` and the CAP images on ghcr, re-verified today (§K of
+    `docs/quality/cap-post-a22-closure-2026-09-24.md`), because none of them embeds MinIO.
+
+    Other sources tried, anonymously, from here (`_tmp/mirror_probe.py`): Docker Hub token is issued
+    but `library/minio` and `minio/minio` both answer **401** for this digest; `public.ecr.aws` answers
+    **401**; `ghcr.io` has no `minio/minio` namespace (token request refused, 403);
+    `mirror.gcr.io` would not complete the anonymous token exchange from this network, so it is
+    **unresolved rather than excluded**.
+
+    This has a precedent recorded in the repository's own lock file: `previous_ref_status` for
+    `docker.io/minio/minio:RELEASE.2025-04-22T22-12-26Z` reads "Unusable. Pulled successfully from
+    GitHub runners as late as 2026-08-22 … then every certification job from 2026-09-13 on failed at
+    container initialisation with 'pull access denied … may require docker login'". The dependency has
+    already moved once because the vendor archived the open-source build; today it moved again for the
+    same reason, one registry further along the chain.
+
+    Options, none of which is a gate relaxation and none of which is authorised here:
+
+    1. **Mirror the exact digest into the project's own ghcr namespace** and re-point the six workflow
+       lines, the compose service, `setup.sh` and the lock file at it. The mirror must be verified by
+       **digest equality** -- `sha256:a1ea29fa…` on ghcr must be the same manifest, not a rebuild --
+       and `test_third_party_image_lock.py` plus the registry-evidence generator updated to name the
+       new source. Blocked on the step above: someone has to obtain the bytes first, which may need a
+       credentialed Quay pull or a vendor-supplied archive.
+    2. **Supply credentials** for a private/quay-authenticated pull (a secret, not a source change).
+       Fixes CI, leaves the operator-facing compose path broken for anyone without those credentials.
+    3. **Change the object-store dependency** -- a product decision with a migration, not a fix.
+
+    What must not happen is treating this as flakiness: F-55's timeout is a symptom, and lengthening it
+    converts an unavailable dependency into a 120-second wait followed by the same red.
 
 ## Live verification against a real PostgreSQL server
 
