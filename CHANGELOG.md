@@ -787,7 +787,7 @@ reconciliation inherits from that candidate rather than re-certifying it.
   awaiting a decision. See `docs/known-issues.md` items 11 and 13 and
   `docs/quality/cap-post-rc-batch-3-design-options-2026-09-23.md`. (This is what that
   round filed; the post-A2.2 entry below records where each of the two stands now.)
-- **Post-A2.2 closure: F-50 reconciled, F-44's status typed, and two items named rather than
+- **Post-A2.2 closure: F-50 reconciled, F-44's status typed, and four items named rather than
   absorbed.** Ten statements that A2.2 had made false were corrected in four tracked files:
   `scripts/release/producer_contract.json`'s `purpose`, its two obligation status strings and the
   stale `F-47` key in `checks_not_run_here`; four places in
@@ -816,6 +816,15 @@ reconciliation inherits from that candidate rather than re-certifying it.
   workflow artifact -- measured at 89 days to expiry, with no `retention-days` set anywhere -- while
   the immutable Release assets carry the chart, the digest-naming values file, `CHANGELOG.md`, the
   notes and `known-issues.md`. What an operator installs stays knowable; who built it does not.
+  **F-53** is the measured fact that the repository tip is not publish-ready: running the publication
+  gate with a hypothetical tag at a docs tip returns four refusals, all of them the newest
+  push-triggered GA round being read as `mode='development'` and `full_ga_certified=False` -- the gate
+  declining, correctly, to go looking for an older favourable round, and the price being one ~70-minute
+  strict round at whichever commit gets tagged. **F-54** was caught by this round's own pushes: a
+  certification round that is *waiting* is cancelled with zero jobs when a later push enters its ref
+  group, so a commit can end up with no CI or GA round at all while four workflow comments promise it
+  queued behind -- evidence absence, which the gate refuses rather than passes, and which is filed
+  rather than fixed here because the only correction is prose in `.github/workflows/`.
   One false negative in the A2.2 report was also corrected: it claimed the published
   `values-release-1.0.6-rc1.yaml` asset names no image digests, from an empty read --
   `/repos/…/releases/assets/{id}` answers 200 with JSON metadata unless the request says

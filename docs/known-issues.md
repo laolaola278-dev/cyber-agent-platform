@@ -905,6 +905,50 @@ listed so that an import name is not mistaken for a working capability.
     explicitly **not** an invitation to soften F-33, and any fix must leave the four refusals above
     firing exactly as they did.
 
+21. **A queued certification round is cancelled without running, and four workflow comments say it
+    will not (F-54) — OPEN, wording plus a release-operations step.** Measured during this closure's
+    own pushes. `4ceac00` was pushed at `11:51:09Z`; its GA round `35995454389` entered the
+    `ga-…-refs/heads/main` group while `35992258108` (the round `87d86b3` started at `11:18:31Z`,
+    whose `ga-certification` job was still running) still held it. At `12:07:37Z` -- one second after
+    the next push landed -- `35995454389` was reported **`cancelled` with zero jobs**: it never
+    started, so nothing ran and nothing was overwritten. `4ceac00` therefore has Linux
+    (`35995454155`) and K8s (`35995454225`) both `success`, and no CI and no GA round at all. (CI's
+    own `cancelled` is by design: `ci.yml` sets `cancel-in-progress: true`, which the certification
+    workflows explain on its behalf -- "`ci.yml` keeps cancel-in-progress because a superseded
+    unit-test run has no evidence value".)
+
+    What the files claim: `cap-ga-certification.yml`, `cap-linux-certification.yml`,
+    `cap-k8s-certification.yml` and `cap-ga-reliability.yml` each carry the sentence *"A push during a
+    certification run queues behind it instead"* beside `cancel-in-progress: false`. Measured, that is
+    true of the **newest** queued push and false of any push queued behind another one. The facts are
+    the ones above: the round never started (zero jobs), and it was marked `cancelled` one second
+    after a newer push entered the same group while an older round still held it. That the group keeps
+    only the newest waiter is the inference those facts support, not a platform statement -- but
+    either reading of the mechanism leaves the same defect, which is the sentence: it is load-bearing,
+    because it is why a releaser assumes a commit they pushed has a round waiting.
+
+    Why this is not a publication bug: an absent round is *evidence absence*, and the gate refuses on
+    absence -- the same `MISSING` / `verify-certification` path F-33 and F-42 established, and §H of
+    `docs/quality/cap-post-a22-closure-2026-09-24.md` measured. Nothing here can turn a displaced
+    round into a green. Why it still costs something: if the displaced commit is the one someone
+    meant to tag, they learn at tag time rather than now, and the run list shows a `cancelled` row
+    that reads like an abandoned rerun.
+
+    What is **not** exposed: a tag's own round. Every certification group keys on `github.ref` --
+    `ga-${{ github.workflow }}-${{ github.ref }}`,
+    `k8s-${{ github.workflow }}-${{ github.ref }}`, `cap-cert-${{ github.ref }}`,
+    `ga-reliability-${{ github.ref }}` -- so
+    `refs/tags/v1.0.7-rc1` is a different group from `refs/heads/main` and a push to `main` cannot
+    displace it. Read from the files, and deliberately not confirmed by observing a tag round -- no
+    tag was created.
+
+    What closes it: (a) the four comments corrected to say a waiting run can be replaced, and (b) a
+    line in the release procedure -- before tagging, confirm each of the four workflows has a run at
+    that sha that **started**, not merely one that is not red. (a) is an edit to `.github/workflows/`,
+    so under F-49's own rule it should ride the next batch that changes those files for a real reason
+    rather than spend a recertification on wording; that is the same cost judgement F-50 records, and
+    it is why this entry was filed instead of fixed in a documentation round.
+
 ## Live verification against a real PostgreSQL server
 
 The post-1.0.5 delivery audit ran the shipped application -- not the test

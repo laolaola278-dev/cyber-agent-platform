@@ -230,6 +230,7 @@ certification has never seen in strict mode.
 | B3 / B4 | design approved? no | untouched |
 | F-51 | validation item | **new**, open, closable only by a real release |
 | F-52 | evidence durability | **new**, open, one-line fix with a recertification price |
+| F-54 | workflow wording + a release step | **new**, open -- filed rather than fixed, because the edit is to four workflow files (§M) |
 | F-53 | release-cost governance | **new**, open -- see §J item 3 |
 | 24 h soak | planned validation | not run; the 7200 s round is what `dea8c6f` has |
 
@@ -244,7 +245,10 @@ What the next release must actually check, in the order it can check it. Read-on
 2. **Confirm the required job sets, not the workflow colours.** For a tag at commit *X*, each of the
    four workflows needs a run at *X* or an inheritable ancestor whose jobs match `REQUIRED` in
    `release.yml` -- notably `cap-production-certification`, which only exists in a
-   `layer: release` dispatch or a tag run.
+   `layer: release` dispatch or a tag run. And the run must have **started**: F-54 measured a queued
+   certification round being reported `cancelled` with zero jobs when a later push entered the same
+   ref group, which is how a commit can end up with no evidence at all while its run list still looks
+   like an abandoned rerun rather than a missing round.
 3. **Watch the install step in a job that pushes.** `release.yml`'s two image jobs install the pinned
    executable and then authenticate and push -- the first time that combination runs anywhere. Read
    `outputs/release-images/producer/buildx-install.json`: `status=INSTALLED`, all nine
@@ -291,7 +295,7 @@ publication started, no candidate modified, and no certification round re-run fo
 change.
 
 **Open items, none of which this round was authorised to close:** F-49, F-46, F-39, B3, B4 (policy
-and design); F-51, F-52, F-53 (new, all three requiring a release decision rather than more
+and design); F-51, F-52, F-53, F-54 (new, all four requiring a release decision rather than more
 testing). **The one thing a release must do first** is §J item 1: choose the tip and make strict
 certification true of that commit, because the gate at the current tip refuses, correctly, and will
 keep refusing every tip whose newest GA round came from a push.
@@ -310,10 +314,20 @@ workflows, and writing "CI is green at <this tip>" would make the report stale t
 committed -- a document cannot certify its own head, which is the same error F-42 was about from the
 other side. Check the run list for the tip rather than trusting a line like this one.
 
-The pushes also re-demonstrated **F-53** simply by happening: each one triggered a
-development-mode GA round at the tip, and the newest of those is now the green `cap-ga-certification.yml`
-run the certification gate will read for any tag there -- exactly the refusal §H measured. §J item 1
-stands unchanged. No tag was created and no publication was started.
+The pushes also re-demonstrated **F-53** simply by happening, and one of them demonstrated something
+nobody had written down. Each push adds a development-mode GA round to the tip's ancestry, and
+whichever of those is the newest green one when a tag is read is the authority the certification gate
+will use -- exactly the refusal §H measured. But they do not all survive: `CI` and the GA round at
+`4ceac00` (`35995454184`, `35995454389`) both ended `cancelled`, the first because `ci.yml` sets
+`cancel-in-progress: true` by design and the second with **zero jobs**, one second after the next push
+landed while an older round still held the `refs/heads/main` group. So a commit can carry Linux and
+K8s evidence and no CI or GA round at all -- and four certification workflow comments say that a push
+"queues behind" a run in flight, which is true of the newest pusher and not of the one already
+waiting. Filed as **F-54**, with §J item 2's check that the run at a sha actually *started*; **not
+fixed here**, because the only correction is prose in `.github/workflows/`, and that is the price
+F-50's reasoning says not to pay in a documentation round. Nothing in the gate is softened by any of
+this: an absent round is absence, and absence is refused. §J item 1 stands unchanged, and no tag was
+created and no publication started.
 
-Outside this round, deliberately: F-49 is designed and unimplemented; F-51, F-52 and F-53 each need a
-release decision from the project, not more work in a documentation round.
+Outside this round, deliberately: F-49 is designed and unimplemented; F-51, F-52, F-53 and F-54 each
+need a release decision from the project, not more work in a documentation round.
