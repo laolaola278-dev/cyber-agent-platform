@@ -177,9 +177,12 @@ measurements instead:
 **Decision: no new candidate is owed, and no certification round was re-run.** Every measured
 surface a certification round produces evidence about -- workflow semantics, contract requirements,
 recorder logic, gate decisions -- is byte-identical across this commit; the residue is prose and the
-test that pins prose. The same `INHERITED` / exit 0 answer comes back cumulatively across both
-closure commits above the candidate (`dea8c6f..HEAD`), which is another way of saying this line
-carries no information about the decision. What this does *not* claim: that `INHERITED` proves a
+test that pins prose. The cumulative answer across everything above the candidate was re-measured at
+each commit of this round and never changed: still `INHERITED` / exit 0, with `docs` the only category
+any later commit added to the list quoted above (which is the set as of `6eb2ecc`). That re-run is
+reported for completeness, not as the reason -- an `INHERITED` line that grows by documentation
+commits is exactly the answer that carries no information about the decision. What this does *not*
+claim: that `INHERITED` proves a
 release commit safe in general -- it did not distinguish A2.2 from a comment fix, which is F-49
 standing. The rule being applied is therefore stated for the next reader: *an edit to a
 `certification_generator` path needs the four measurements above, not an `INHERITED` line, before it
