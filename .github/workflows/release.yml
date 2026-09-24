@@ -948,6 +948,17 @@ jobs:
           import sys
 
           VERSION = os.environ["VERSION"]
+          OWNER = os.environ["OWNER"]
+          #: The commit the tag points at. Every producer record has to say it built *this*, because
+          #: "a record exists" and "a record of this release was built" are different claims, and
+          #: F-33's history is what makes assuming the first one unsafe.
+          CANDIDATE = os.environ["GITHUB_SHA"]
+          RUN_ID = os.environ.get("GITHUB_RUN_ID")
+          #: The two jobs allowed to build a release image. A record from the CI rehearsal or the
+          #: observation job describes a different relationship to the pins -- nothing pushed, a
+          #: base handed over locally -- and reading one as release evidence is the substitution
+          #: A2.2 Stage 3 refuses to make.
+          RELEASE_IMAGE_JOBS = ("release-images", "release-sandbox-browser")
           #: The five images the production chart can run. Their names are derived
           #: from the chart itself by test_release_image_completeness.py in CI; this
           #: list is what the published artifacts are checked against, so a matrix
@@ -969,22 +980,159 @@ jobs:
               "base_refs",
               "source_revision",
           )
+          # A2.2 Stage 5: what this gate requires of a producer record is read from the frozen
+          # contract rather than restated here. The same file is held against the recorder by
+          # `test_producer_contract_freeze.py`, so the list that blocks a release and the list the
+          # project promised cannot drift apart without one of the two suites saying so.
+          try:
+              CONTRACT = json.loads(
+                  pathlib.Path("scripts/release/producer_contract.json").read_text("utf-8"))
+          except (OSError, ValueError) as error:
+              print("PUBLICATION BLOCKED -- the producer contract is unreadable, so this gate does "
+                    f"not know what it requires: {type(error).__name__}: {error}", file=sys.stderr)
+              sys.exit(1)
+          PRODUCER_CONTRACT = CONTRACT["inherited_from_a2_1"]["producer"]
+          COMPARISON_NAMES = tuple(
+              PRODUCER_CONTRACT["comparisons"]["producer_alignment"]["components"])
+          RECORD_FIELDS = tuple(CONTRACT["a2_2_obligations"]["evidence_fields"])
+          CONTRACT_IMAGES = tuple(PRODUCER_CONTRACT["set_acceptance"]["expected_images"])
+          if set(CONTRACT_IMAGES) != set(EXPECTED):
+              print("PUBLICATION BLOCKED -- the producer contract and this gate disagree about the "
+                    f"image set: {sorted(set(CONTRACT_IMAGES) ^ set(EXPECTED))}", file=sys.stderr)
+              sys.exit(1)
+          #: Six words, all blocking, none interchangeable (Stage 6), ordered by how much each one
+          #: explains: a missing record makes every other symptom meaningless, an unreadable
+          #: instrument explains a comparison that could not be scored, and a mismatch is the only
+          #: one that says the machine disagreed with the repository. Collapsing them into a bare
+          #: `false` is what this list exists to prevent.
+          STATE_ORDER = ("CONFORMING", "UNKNOWN", "MISMATCH", "ERROR", "AMBIGUOUS", "MISSING")
+
+          def worse(left: str, right: str) -> str:
+              return left if STATE_ORDER.index(left) >= STATE_ORDER.index(right) else right
+
+          def dig(payload, dotted: str):
+              node = payload
+              for part in dotted.split("."):
+                  if not isinstance(node, dict) or part not in node:
+                      return None
+                  node = node[part]
+              return node
+
+          failures: list[str] = []
+          producer_verdicts: dict[str, dict] = {}
+
+          def producer_state(name: str, record: dict) -> tuple[str, list[str]]:
+              """What this image's producer evidence says, in one of the six words.
+
+              Each check below is a different failure with a different remedy, so the reasons
+              accumulate and the state is the worst of them. None of them short-circuits into a
+              bare `False`: an operator reading a refusal has to be able to tell a build that used
+              the wrong executable from a record that was never uploaded.
+              """
+              producer = record.get("producer")
+              if not isinstance(producer, dict) or not producer:
+                  return "MISSING", [f"{name}: the build job recorded no producer evidence at all"]
+              if producer.get("recorded") is False:
+                  return "MISSING", [
+                      f"{name}: the build says its producer was never recorded (recorder exit "
+                      f"{record.get('producer_record_exit')})"]
+              state = "CONFORMING"
+              reasons: list[str] = []
+
+              def add(word: str, reason: str) -> None:
+                  nonlocal state
+                  state = worse(state, word)
+                  reasons.append(f"{name}: {reason}")
+
+              gaps = producer.get("contract_gaps") or []
+              if gaps:
+                  add("ERROR", "the producer instrument did not complete: " + ", ".join(gaps))
+              absent = [field for field in RECORD_FIELDS if not dig(producer, field)]
+              if absent:
+                  add("ERROR", "the record does not carry " + ", ".join(absent))
+              comparison = producer.get("comparison") or {}
+              for field in COMPARISON_NAMES:
+                  status = (comparison.get(field) or {}).get("status")
+                  if status == "MISMATCH":
+                      add("MISMATCH", f"{field} disagrees with what this repository pins")
+                  elif status != "CONFORMING":
+                      add("UNKNOWN", f"{field} was not answered (recorded {status!r})")
+              alignment = (producer.get("producer_alignment") or {}).get("verdict")
+              if alignment == "MISMATCH":
+                  add("MISMATCH", "producer_alignment disagrees")
+              elif alignment != "CONFORMING":
+                  add("UNKNOWN",
+                      f"producer_alignment could not be decided (recorded {alignment!r})")
+              identity = producer.get("identity") or {}
+              checks = identity.get("checks") or {}
+              if not identity or not checks:
+                  add("ERROR", "the record does not say which run, commit or job built it")
+              else:
+                  if identity.get("source_revision") != CANDIDATE:
+                      add("MISMATCH", f"source revision {identity.get('source_revision')!r} is "
+                                      f"not the tagged commit {CANDIDATE!r}")
+                  if checks.get("source_revision", {}).get("relation") == "different":
+                      add("MISMATCH", "the build claims one commit and the runner reported another")
+                  if not identity.get("run_id"):
+                      add("ERROR", "no run id was recorded, so nothing ties this record to a run")
+                  elif identity.get("run_id") != RUN_ID:
+                      add("MISMATCH", f"run {identity.get('run_id')!r} is not this run {RUN_ID!r}")
+                  if identity.get("job") not in RELEASE_IMAGE_JOBS:
+                      add("MISMATCH", f"job {identity.get('job')!r} is not one of "
+                                      f"{list(RELEASE_IMAGE_JOBS)} -- a rehearsal record is not "
+                                      "release evidence")
+                  if identity.get("verdict") == "UNKNOWN":
+                      add("ERROR", "the record cannot place itself in a run")
+              build_path = producer.get("build_path") or {}
+              if build_path.get("publishes") is not True:
+                  add("MISMATCH", "its own recorded build arguments pushed nothing, so these bytes "
+                                  "are not what the registry is being asked to publish")
+              if "same_round_oci_layout" in str(build_path.get("base_handoff") or ""):
+                  add("MISMATCH", "a published image was layered on a same-round local layout "
+                                  "instead of the digest this release published (Stage 3)")
+              invocation = (producer.get("observed") or {}).get("build_invocation") or {}
+              if invocation.get("build_exit") != 0:
+                  add("ERROR", f"the recorded build exited {invocation.get('build_exit')!r}")
+              bases = (producer.get("base_images") or {}).get("bases") or []
+              if not bases:
+                  add("ERROR", "no base image was resolved from the Dockerfile and the build argv")
+              elif any(base.get("status") != "READ" for base in bases):
+                  add("MISMATCH", "a base image is not bound by digest: " + "; ".join(
+                      str(base.get("ref") or base.get("status"))
+                      for base in bases if base.get("status") != "READ"))
+              return state, reasons
 
           records: dict[str, dict] = {}
+          record_count: dict[str, int] = {}
           for path in sorted(pathlib.Path("release-image-evidence").glob("*.json")):
               data = json.loads(path.read_text("utf-8"))
-              records[data.get("image") or path.stem] = data
+              if {"comparison", "mode", "base_images"} <= set(data):
+                  # A standalone producer record uploaded where image records are read. Batch 2
+                  # wrote its sidecar beside the evidence, and this glob would then have keyed it
+                  # as an image named `cap-backend.json.producer` -- a refusal whose reason had
+                  # nothing to do with the images (F-48). A2.2 moved the sidecars under producer/;
+                  # the arrangement is still refused here rather than silently ignored.
+                  failures.append(f"AMBIGUOUS: {path.name} is a producer record sitting in the "
+                                  "image-record directory")
+                  continue
+              name = data.get("image") or path.stem
+              record_count[name] = record_count.get(name, 0) + 1
+              previous = records.get(name)
+              if previous is not None and previous != data:
+                  failures.append(f"AMBIGUOUS: {name} has {record_count[name]} records that do not "
+                                  "agree; one image cannot be two builds")
+                  continue
+              records[name] = data
 
           scans: dict[str, dict] = {}
           for path in sorted(pathlib.Path("release-image-security").glob("*.json")):
               data = json.loads(path.read_text("utf-8"))
               scans[data.get("image") or path.stem] = data
 
-          failures: list[str] = []
           for name in sorted(EXPECTED):
               record = records.get(name)
               if record is None:
-                  failures.append(f"{name}: no build evidence uploaded at all")
+                  failures.append(f"MISSING: {name}: no build evidence uploaded at all")
                   continue
               if record.get("tag") != VERSION:
                   failures.append(f"{name}: tagged {record.get('tag')!r}, expected {VERSION!r}")
@@ -993,15 +1141,32 @@ jobs:
               for field in REQUIRED_FIELDS:
                   if not record.get(field):
                       failures.append(f"{name}: evidence is missing {field}")
+              if record.get("source_revision") and record["source_revision"] != CANDIDATE:
+                  failures.append(f"MISMATCH: {name}: built at {record['source_revision']!r}, "
+                                  f"which is not the tagged commit {CANDIDATE!r}")
               for kind in ("sbom", "provenance"):
                   if not (record.get("attestations") or {}).get(kind):
                       failures.append(f"{name}: no {kind} attestation")
+              # A2.2 Stage 5: the producer of these bytes, read from the record the build job
+              # embedded. This is the reader F-47 was filed over -- before it, every producer field
+              # in the evidence was observed by nobody.
+              state, reasons = producer_state(name, record)
+              embedded = record.get("producer")
+              embedded = embedded if isinstance(embedded, dict) else {}
+              producer_verdicts[name] = {
+                  "state": state,
+                  "reasons": reasons,
+                  "alignment": (embedded.get("producer_alignment") or {}).get("verdict"),
+                  "build_path": embedded.get("build_path"),
+              }
+              if state != "CONFORMING":
+                  failures.extend(f"{state}: {reason}" for reason in reasons)
               # The scan of the published ref, not of a CI build of the same
               # source: §25 lists trivy beside the digests and the attestations,
               # and a release that cannot show the scan of what an operator pulls
               # is not auditable after the fact.
               scan = scans.get(name)
-              expected_ref = f"ghcr.io/{os.environ['OWNER']}/{name}:{VERSION}"
+              expected_ref = f"ghcr.io/{OWNER}/{name}:{VERSION}"
               if scan is None:
                   failures.append(f"{name}: no Trivy scan record for the published image")
               else:
@@ -1019,9 +1184,17 @@ jobs:
           if unexpected:
               failures.append(f"evidence for images the release does not declare: {unexpected}")
 
+          def by_word(word: str) -> list[str]:
+              return sorted(name for name, verdict in producer_verdicts.items()
+                            if verdict["state"] == word)
+
           payload = {
               "version": VERSION,
               "commit": os.environ.get("GITHUB_SHA"),
+              "run_id": RUN_ID,
+              "producer_contract": CONTRACT["contract"],
+              "producer_verdicts": producer_verdicts,
+              "producer_summary": {word: by_word(word) for word in STATE_ORDER[1:]},
               "images": {EXPECTED[k]: records[k] for k in sorted(EXPECTED) if k in records},
               "failures": failures,
               "verdict": "PASS" if not failures else "FAIL",
@@ -1031,12 +1204,17 @@ jobs:
           (out / f"release-images-{VERSION}.json").write_text(
               json.dumps(payload, indent=2) + "\n", "utf-8"
           )
+          verdict_line = ", ".join(f"{name}={verdict['state']}"
+                                   for name, verdict in sorted(producer_verdicts.items()))
           if failures:
-              print("PUBLICATION BLOCKED -- release image set incomplete:", file=sys.stderr)
+              print("PUBLICATION BLOCKED -- the release image set is incomplete, or its producer "
+                    "does not agree with what this repository pins:", file=sys.stderr)
               for reason in failures:
                   print(f"  * {reason}", file=sys.stderr)
+              print(f"producer verdicts: {verdict_line}", file=sys.stderr)
               sys.exit(1)
           print(f"release image set complete: {', '.join(sorted(EXPECTED))}")
+          print(f"producer authority: {verdict_line}")
           ARTIFACT_GATE_PY
       - name: Render the digest-pinned values file
         run: |

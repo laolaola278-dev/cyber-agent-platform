@@ -691,6 +691,66 @@ RENDER_STEP = "Render the digest-pinned values file"
 COMPLETENESS_HEREDOC = ("ARTIFACT_GATE_PY", )
 RENDER_HEREDOC = ("VALUES_PY", )
 
+# -- A2.2 Stage 5: the producer evidence the gate now reads ------------------------------
+#
+# The records below are not hand-written sketches of what a producer record looks like. They come
+# from `record_build_producer.py` itself, run against the stub machine from the A2.1 fixture and
+# pointed at `release.yml`'s own `release-images` job -- so if a literal in that job changes, or
+# the recorder stops emitting a field the contract lists, the fixtures change with them and the
+# gate's tests stop describing a record nobody produces.
+import copy  # noqa: E402
+import tempfile  # noqa: E402
+
+from tests.test_producer_observation_contract import (  # noqa: E402
+    CONTROLLED,
+    observe_run,
+    recorded,
+)
+
+GATE_SHA = "a" * 40
+GATE_RUN_ID = "35900000001"
+GATE_BUILDER = "cap-release-producer"
+#: Which job built a release image. Not called GATE_JOB: this module already uses that name for
+#: the completeness job, and a collision there would have the recorder read the wrong job block.
+RELEASE_BUILD_JOB = "release-images"
+GATE_ENV = {"HOME": "/home/runner", "RUNNER_ENVIRONMENT": "GitHub-ACTIONS",
+            "ImageOS": "ubuntu2404", "GITHUB_SHA": GATE_SHA, "GITHUB_RUN_ID": GATE_RUN_ID,
+            "GITHUB_JOB": RELEASE_BUILD_JOB}
+BROWSER_BASE = "ghcr.io/o/cap-sandbox-http@sha256:" + "ab" * 32
+#: Each shipped image, its Dockerfile, and the base flags its release build was given. The
+#: browser is layered on the digest *this release published* -- the Stage 3 hand-off.
+RELEASE_BUILDS = {
+    "cap-backend": (str(PROJECT_ROOT / "backend/Dockerfile"), []),
+    "cap-frontend": (str(PROJECT_ROOT / "frontend/Dockerfile"), []),
+    "cap-sandbox-http": (str(PROJECT_ROOT / "backend/docker/sandbox-http/Dockerfile"), []),
+    "cap-sandbox-browser": (str(PROJECT_ROOT / "backend/docker/sandbox-browser/Dockerfile"),
+                            ["--build-arg", f"SANDBOX_HTTP_BASE={BROWSER_BASE}"]),
+    "cap-egress-proxy": (str(PROJECT_ROOT / "backend/docker/egress-proxy/Dockerfile"), []),
+}
+_PRODUCER_CACHE: dict[str, dict] = {}
+_PRODUCER_DIR = Path(tempfile.mkdtemp(prefix="cap-gate-producer-"))
+
+
+def conforming_producer(image: str, **run_overrides: object) -> dict:
+    """A real release-shaped producer record for one image, generated once and copied."""
+    if image not in _PRODUCER_CACHE:
+        dockerfile, flags = RELEASE_BUILDS[image]
+        where = _PRODUCER_DIR / image
+        where.mkdir(parents=True, exist_ok=True)
+        argv = [CONTROLLED, "build", "--builder", GATE_BUILDER, "--provenance=true",
+                "--sbom=true", "--push", "--tag", f"ghcr.io/o/{image}:9.9.9-rc1", *flags,
+                "--file", dockerfile, "context"]
+        code, payload = recorded(
+            where, observe_run(builder=GATE_BUILDER, **run_overrides),
+            observe=False, image=image, dockerfile=dockerfile, build_argv=argv,
+            revision=GATE_SHA, environ=dict(GATE_ENV), workflow=str(RELEASE_YML),
+            job=RELEASE_BUILD_JOB, builder=GATE_BUILDER)
+        assert code == 0, payload.get("contract_gaps")
+        assert payload["producer_alignment"]["verdict"] == "CONFORMING", \
+            payload["comparison"]["workflow_vs_observed"]["fields"]
+        _PRODUCER_CACHE[image] = payload
+    return copy.deepcopy(_PRODUCER_CACHE[image])
+
 
 def _release_gate_body(
     step_name: str, heredoc: str, job: str = "release-image-completeness"
@@ -712,8 +772,15 @@ def _record(name: str, version: str = "9.9.9-rc1", **overrides: object) -> dict:
         "dockerfile_sha256": "c" * 64,
         "context_sha256": "d" * 64,
         "base_refs": ["python:3.13.12-slim-bookworm@sha256:" + "f" * 64],
-        "source_revision": "e" * 40,
+        "source_revision": GATE_SHA,
         "attestations": {"sbom": True, "provenance": True},
+        # A2.2: the build job's producer record, embedded where the gate reads it. A record
+        # without this field is refused as MISSING, so every "everything else is fine" fixture
+        # has to carry one -- and it is the recorder's own output, not a sketch of it. An image the
+        # release does not declare has no build of its own, so it borrows one: the gate refuses it
+        # for the name, not for a producer it never had.
+        "producer": conforming_producer(name if name in RELEASE_BUILDS else "cap-backend"),
+        "producer_record_exit": 0,
     }
     record.update(overrides)
     return record
@@ -761,10 +828,28 @@ def _exec_release_gate(
     records: list[dict],
     version: str = "9.9.9-rc1",
     scans: list[dict] | None = None,
+    sha: str = GATE_SHA,
+    run_id: str | None = GATE_RUN_ID,
+    contract_text: str | None = None,
 ) -> tuple[int, dict | None]:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("VERSION", version)
     monkeypatch.setenv("OWNER", "o")
+    monkeypatch.setenv("GITHUB_SHA", sha)
+    if run_id:
+        monkeypatch.setenv("GITHUB_RUN_ID", run_id)
+    # The gate reads its requirements from the contract file in the checkout, so the checkout has
+    # to have it. A missing one is a gate that does not know what it enforces, and it refuses.
+    contract = tmp_path / "scripts" / "release" / "producer_contract.json"
+    contract.parent.mkdir(parents=True, exist_ok=True)
+    if contract_text is None:
+        contract.write_text(
+            (PROJECT_ROOT / "scripts/release/producer_contract.json").read_text("utf-8"),
+            encoding="utf-8")
+    elif contract_text:
+        contract.write_text(contract_text, encoding="utf-8")
+    else:
+        contract.unlink(missing_ok=True)
     _write_records(tmp_path, records, version)
     _write_scans(tmp_path, scans if scans is not None else [
         _scan_record(record["image"], version) for record in records

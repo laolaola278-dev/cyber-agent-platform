@@ -1059,15 +1059,10 @@ def build_path_facts(argv: list[str], bases: dict, oci_tar: str | None) -> dict:
     builder = argv_flag(flags, "--builder")
     bindings = sorted({str(base.get("binding")) for base in (bases or {}).get("bases", [])
                        if base.get("binding")})
-    if not bindings:
-        handoff = "no_base_resolved"
-    elif "registry_reference" in bindings:
-        handoff = "registry_digest" if any("@sha256:" in str(base.get("ref", ""))
-                                           for base in bases.get("bases", [])) else "registry_tag"
-    elif "same_round_oci_layout" in bindings:
-        handoff = "same_round_oci_layout"
-    else:
-        handoff = "+".join(bindings)
+    # The set of ways this build's bases arrived, not one label for them: an image layered both on
+    # a registry reference and on a same-round local layout has to show both, or the stronger
+    # binding would hide the weaker one from the reader that exists to refuse it.
+    handoff = "+".join(bindings) if bindings else "no_base_resolved"
     if output and "type=oci" in output:
         destination = "oci-archive"
     elif pushes:

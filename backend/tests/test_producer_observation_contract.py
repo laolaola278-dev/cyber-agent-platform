@@ -148,7 +148,8 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
                 child_read_fails: bool = False, controlled_exists: bool = True,
                 controlled_version: str | None = None, controlled_commit: str | None = None,
                 controlled_sha: str | None = None, controlled_path: str | None = None,
-                controlled_reports_path: str | None = None):
+                controlled_reports_path: str | None = None,
+                builder: str | None = None):
     """A runner that answers every command the observation path issues.
 
     Answers are keyed by the exact argv, which makes the fixture a regression guard on the
@@ -164,15 +165,22 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
     recorder asks the builder and the registry through it, so those argv keys exist under the
     controlled prefix -- and the runner's own plugin can still disagree with everything, which
     is the F-44 state the record has to keep showing.
+
+    `builder` names the builder this machine has, which A2.2 needs because the release jobs
+    declare their own: a record of a release build is read against `release.yml`'s builder name,
+    and answering for the observation job's instead would be a fixture agreeing with the wrong
+    file. Left unset it is the A2.1 builder, and every existing test keeps its meaning.
     """
+    builder = builder or BUILDER
+    container = f"buildx_buildkit_{builder}"
     controlled_path = controlled_path or CONTROLLED
     repo_digests = [f"moby/buildkit@{CHILD}"] if repo_digests is None else repo_digests
     child_config = CONFIG_ID if child_config is None else child_config
     plugins = {ACTION_PLUGIN: BUILDX["version"], SYSTEM_PLUGIN: version} if plugins is None \
         else plugins
     rows = container_rows if container_rows is not None else [
-        "\t".join(("abc123def456", CONTAINER, BUILDKIT["image_ref"], "running"))]
-    listed = rows[0].split("\t")[1] if rows else CONTAINER
+        "\t".join(("abc123def456", container, BUILDKIT["image_ref"], "running"))]
+    listed = rows[0].split("\t")[1] if rows else container
     # Which prefix the instrument will use: the controlled binary once it answers, `docker
     # buildx` otherwise. Mirroring the recorder's own rule here is what lets a test assert that
     # a *missing* pinned executable degrades the reads instead of faking them.
@@ -182,13 +190,14 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
         ("docker", "buildx", "version"): (0, version_line(path, version), ""),
         (*bx, "ls"): (0, "\n".join((
             "NAME/NODE  DRIVER/ENDPOINT    STATUS   BUILDKIT  PLATFORMS",
-            f"{BUILDER}*  {driver}  running  v0.33.0   linux/amd64",
+            f"{builder}*  {driver}  running  v0.33.0   linux/amd64",
             "default    docker                        ")), ""),
-        (*bx, "inspect", f"--builder={BUILDER}"): (
+        (*bx, "inspect", f"--builder={builder}"): (
             0 if builder_exists else 1,
             (inspect_output if inspect_output is not None
-             else inspect_text(driver, inspect_image, worker)) if builder_exists else "",
-            "" if builder_exists else f'ERROR: no builder "{BUILDER}" found'),
+             else inspect_text(driver, inspect_image, worker, name=builder)) if builder_exists
+            else "",
+            "" if builder_exists else f'ERROR: no builder "{builder}" found'),
         ("docker", "ps", "-a", "--filter", "name=buildx_buildkit_", "--format", PS_FORMAT): (
             0, "\n".join(rows), ""),
         ("docker", "inspect", "--format", "{{.Config.Image}}\t{{.Image}}", listed): (
@@ -242,7 +251,7 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
         for key in list(answers):
             if key[0] == "docker":
                 answers[key] = (1, "", complaint)
-            elif key[0] == controlled_path and key[1:] == ("inspect", f"--builder={BUILDER}"):
+            elif key[0] == controlled_path and key[1:] == ("inspect", f"--builder={builder}"):
                 answers[key] = (1, "", complaint)
     for plugin_path_value in ALL_PLUGINS:
         if plugin_path_value in plugins:
@@ -267,7 +276,9 @@ def observe_run(version: str = BUILDX["version"], path: str = SYSTEM_PLUGIN,
 def recorded(tmp_path: Path, run, *extra: str, environ=None,
              build_argv: list[str] | None = None, build_exit: int = 0,
              image: str = "cap-backend", dockerfile: str | None = None,
-             observe: bool = True, revision: str | None = None) -> tuple[int, dict]:
+             observe: bool = True, revision: str | None = None,
+             builder: str = BUILDER, workflow: str | None = None,
+             job: str | None = None) -> tuple[int, dict]:
     """Run the recorder's observation path over a stubbed machine and read the record back.
 
     The build-command file is written here rather than assumed: A2.1's claim that the pinned
@@ -282,12 +293,12 @@ def recorded(tmp_path: Path, run, *extra: str, environ=None,
     out = tmp_path / "producer-evidence.json"
     command = tmp_path / "build-command.json"
     build_list = build_argv if build_argv is not None else [
-        CONTROLLED, "build", "--builder", BUILDER, "--file", "backend/Dockerfile", "backend"]
+        CONTROLLED, "build", "--builder", builder, "--file", "backend/Dockerfile", "backend"]
     command.write_text(json.dumps({"image": image, "argv": build_list, "exit": build_exit}),
                        "utf-8")
     args = OBSERVE_ARGS if observe else [
-        "--builder", BUILDER, "--workflow", str(CI_PATH), "--job", OBSERVATION_JOB,
-        "--controlled-pin", str(PIN_PATH)]
+        "--builder", builder, "--workflow", str(workflow or CI_PATH),
+        "--job", job or OBSERVATION_JOB, "--controlled-pin", str(PIN_PATH)]
     argv = ["--out", str(out), "--lock", str(LOCK_PATH), *args,
             "--image", image, "--build-command", str(command)]
     if revision:
@@ -1424,7 +1435,7 @@ def test_a_release_record_states_which_kind_of_build_it_was(tmp_path: Path) -> N
     assert rehearsed["build_path"]["destination"] == "docker-store-load"
     assert rehearsed["build_path"]["attestations"] == {"provenance": False, "sbom": False}
     assert rehearsed["build_path"]["builder_named"] == BUILDER
-    assert rehearsed["build_path"]["base_handoff"] == "registry_digest", rehearsed["build_path"]
+    assert rehearsed["build_path"]["base_handoff"] == "registry_reference", rehearsed["build_path"]
 
 
 # -- A2.1: the six producer controls Batch 3A's seven do not reach -------------------------
