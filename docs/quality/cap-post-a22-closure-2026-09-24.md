@@ -295,17 +295,22 @@ keep refusing every tip whose newest GA round came from a push.
 
 ## M. What the push confirmed, including about itself
 
-The four closure commits (`ea1fb02`, `6eb2ecc`, `8be2962`, `87d86b3`) are pushed. CI at the resulting
-tip is **success with every job green** -- run `35992258088` -- which is the Linux authority for the
-reconciliation's edits to `scripts/release/` and `.github/workflows/ci.yml` (the retargeted freeze
-test, ruff's line rules, the recorder). CAP Linux Certification `35992258152` and K8s
-`35992258188` are both success at the same commit.
+Every commit pushed above the certified candidate is documentation plus the F-50 wording
+reconciliation, and each one goes through the same Linux gate. The concrete verified instance: CI run
+`35992258088` at `87d86b3` -- **success, every job green** -- which is the Linux authority for the
+edits to `scripts/release/` and `.github/workflows/ci.yml` (the retargeted freeze test, ruff's line
+rules, the recorder), with CAP Linux Certification `35992258152` and K8s `35992258188` success at the
+same commit.
 
-The push also re-demonstrated **F-53** simply by happening: it triggered another
-development-mode GA round at the tip (`35992258108`), which is now the newest green
-`cap-ga-certification.yml` run anywhere in the ancestry. So the certification gate will read *that*
-for a tag at the tip and refuse it, exactly as §H measured, and §J item 1 stands unchanged. No tag was
-created and no publication was started.
+**The commit carrying this sentence is deliberately not claimed here.** It triggers the same
+workflows, and writing "CI is green at <this tip>" would make the report stale the instant it was
+committed -- a document cannot certify its own head, which is the same error F-42 was about from the
+other side. Check the run list for the tip rather than trusting a line like this one.
+
+The pushes also re-demonstrated **F-53** simply by happening: each one triggered a
+development-mode GA round at the tip, and the newest of those is now the green `cap-ga-certification.yml`
+run the certification gate will read for any tag there -- exactly the refusal §H measured. §J item 1
+stands unchanged. No tag was created and no publication was started.
 
 Outside this round, deliberately: F-49 is designed and unimplemented; F-51, F-52 and F-53 each need a
 release decision from the project, not more work in a documentation round.
