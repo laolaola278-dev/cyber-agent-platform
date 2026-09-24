@@ -23,7 +23,7 @@ is written down.
 | frozen | 2026-09-24 05:38 UTC, against the eight Stage-10 conditions (`_tmp/a22_freeze.txt`) |
 | certified by | CI `35958562520` · release-layer Linux `35967302293` · K8s `35958562591` · reliability soak `35960848879` (7200 s) · final-strict GA `35971523354` |
 | strict GA verdict | `mode: final-strict`, `full_ga_certified: true`, 40/40 gates, `skipped: 0`, artifact `10797614781` |
-| commits above it | `ea1fb02` (A2.2 report + register), `6eb2ecc` (this round's reconciliation) |
+| commits above it | the A2.2 report and its register entry, this round's F-50 reconciliation, and the closure report plus its follow-up wording commits -- `git log --oneline dea8c6f..HEAD` is authoritative, this row deliberately does not count them |
 | modified by this round | **no** -- the candidate is immutable; everything here lands on top of it |
 
 ## B. F-44 — exact disposition
@@ -135,7 +135,7 @@ exists and every release-path artifact is listed.
 
 | axis | Option A: path list in the classifier | Option B: semantic manifest |
 | ---- | ------------------------------------- | --------------------------- |
-| false positives (harmless edits blocked) | High on whole files: this round's comment edits in two listed files would be flagged, and there is no way to say "line 667 of this file is prose" | Lower: a role can carry a `prose_only_paths`/`comment_only` qualifier, and `release.yml`'s `run:` blocks can be listed per-step. Still file-granular unless it grows line ranges |
+| false positives (harmless edits blocked) | High on whole files: this round's comment edits in three listed files (`producer_contract.json`, `record_build_producer.py`, `ci.yml`) would be flagged, and there is no way to say "line 667 of this file is prose" | Lower: a role can carry a `prose_only_paths`/`comment_only` qualifier, and `release.yml`'s `run:` blocks can be listed per-step. Still file-granular unless it grows line ranges |
 | maintenance burden | Moderate and *silent*: the list lives in classifier code, so adding a release script without touching the classifier yields an unflagged gap -- the exact failure mode being fixed | Higher up front, lower over time: a new artifact appears in a data file whose completeness a test can enforce (`every scripts/release/* referenced by a release job is declared`) |
 | testability | Needs a new test file asserting the classifier's verdict per path; weak on "did you forget to add the new script" | Directly testable two ways: manifest entries resolve, and the set of artifacts the release jobs actually invoke is a subset of the manifest -- which is a check that *can* fail on omission |
 | catching new release scripts | Only if someone remembers | Measurably: parse the workflows for `python3 scripts/release/…` and `bash scripts/release/…`, and refuse an undeclared one. That is the property F-49 is really about |

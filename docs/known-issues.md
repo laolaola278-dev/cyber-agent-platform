@@ -930,7 +930,12 @@ listed so that an import name is not mistaken for a working capability.
     (`35998117484`, `cancelled` at `12:21:43Z`, two seconds after `2f90450` landed, again with zero
     jobs), while that commit's already-running Linux (`35998117487`) and K8s (`35998117450`) rounds
     were untouched and its CI (`35998117512`) was cancelled mid-job, which is `ci.yml` behaving as
-    configured. A group keeps its newest waiter; a run that has started is not its problem. The defect
+    configured. The following push (`c9019f8`) made the contrast as sharp as it gets: the three
+    certification rounds `2f90450` had left waiting were all displaced with **zero jobs**
+    (`35998559524`, `35998559648`, `35998559793`, within a second of it), while that commit's CI run --
+    already started, eight jobs already green -- was cancelled part-way through, which is
+    `cancel-in-progress: true` doing exactly what it says. A group keeps its newest waiter; a run that
+    has started is not its problem. The defect
     is therefore the sentence, and the sentence is load-bearing, because it is why a releaser assumes a
     commit they pushed has a round waiting.
 
