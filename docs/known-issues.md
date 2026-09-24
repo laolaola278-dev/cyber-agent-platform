@@ -919,13 +919,16 @@ listed so that an import name is not mistaken for a working capability.
 
     What the files claim: `cap-ga-certification.yml`, `cap-linux-certification.yml`,
     `cap-k8s-certification.yml` and `cap-ga-reliability.yml` each carry the sentence *"A push during a
-    certification run queues behind it instead"* beside `cancel-in-progress: false`. Measured, that is
-    true of the **newest** queued push and false of any push queued behind another one. The facts are
-    the ones above: the round never started (zero jobs), and it was marked `cancelled` one second
-    after a newer push entered the same group while an older round still held it. That the group keeps
-    only the newest waiter is the inference those facts support, not a platform statement -- but
-    either reading of the mechanism leaves the same defect, which is the sentence: it is load-bearing,
-    because it is why a releaser assumes a commit they pushed has a round waiting.
+    certification run queues behind it instead"* beside `cancel-in-progress: false`. Measured, the
+    promise holds for a run that has **already started** and fails for one still **waiting**. In
+    flight, twice over: `35992258108` ran from `11:18:31Z` through two later pushes and completed, and
+    the Linux, K8s and GA rounds at `5f550c4` were still `in_progress` after the `a6d2bc9` push landed
+    -- none of them cancelled, which is the design working. Waiting: `35995454389` never started (zero
+    jobs) and was marked `cancelled` one second after a newer push entered the group while an older
+    round still held it. That a group keeps only its newest waiter is the inference those facts
+    support, not a platform statement -- but either reading leaves the same defect, which is the
+    sentence: it is load-bearing, because it is why a releaser assumes a commit they pushed has a
+    round waiting.
 
     Why this is not a publication bug: an absent round is *evidence absence*, and the gate refuses on
     absence -- the same `MISSING` / `verify-certification` path F-33 and F-42 established, and §H of

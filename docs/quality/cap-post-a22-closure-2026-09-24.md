@@ -320,14 +320,16 @@ whichever of those is the newest green one when a tag is read is the authority t
 will use -- exactly the refusal §H measured. But they do not all survive: `CI` and the GA round at
 `4ceac00` (`35995454184`, `35995454389`) both ended `cancelled`, the first because `ci.yml` sets
 `cancel-in-progress: true` by design and the second with **zero jobs**, one second after the next push
-landed while an older round still held the `refs/heads/main` group. So a commit can carry Linux and
-K8s evidence and no CI or GA round at all -- and four certification workflow comments say that a push
-"queues behind" a run in flight, which is true of the newest pusher and not of the one already
-waiting. Filed as **F-54**, with §J item 2's check that the run at a sha actually *started*; **not
-fixed here**, because the only correction is prose in `.github/workflows/`, and that is the price
-F-50's reasoning says not to pay in a documentation round. Nothing in the gate is softened by any of
-this: an absent round is absence, and absence is refused. §J item 1 stands unchanged, and no tag was
-created and no publication started.
+landed while an older round still held the `refs/heads/main` group. The line the measurement drew is
+in-flight versus waiting, not old versus new: the round that was actually running at `87d86b3` passed
+through two later pushes untouched and completed (`35992258108`, success at `12:15:55Z`). So a commit
+can carry Linux and K8s evidence and no CI or GA round at all -- and four certification workflow
+comments say that a push "queues behind" a run in flight, which is true of a run that has started and
+not of one still waiting. Filed as **F-54**, with §J item 2's check that the run at a sha actually
+*started*; **not fixed here**, because the only correction is prose in `.github/workflows/`, and that
+is the price F-50's reasoning says not to pay in a documentation round. Nothing in the gate is
+softened by any of this: an absent round is absence, and absence is refused. §J item 1 stands
+unchanged, and no tag was created and no publication started.
 
 Outside this round, deliberately: F-49 is designed and unimplemented; F-51, F-52, F-53 and F-54 each
 need a release decision from the project, not more work in a documentation round.
