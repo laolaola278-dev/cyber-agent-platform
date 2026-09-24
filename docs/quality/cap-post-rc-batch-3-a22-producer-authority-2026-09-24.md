@@ -661,15 +661,18 @@ Its three open statements and their measurements:
 | ------------------- | -------------- | ----------- |
 | the release image path builds through `docker buildx` with no `--builder` | `<abs installed path> build --builder <explicit name>` for all five images, in both release jobs and the CI rehearsal | §C, §D, §J.1, §J.3 |
 | a producer mismatch blocks nothing | the completeness gate refuses in six words, all blocking | §G, §H, §P.1 |
-| no *published* image has been produced by the pinned executable | **not closed by this batch, and not closable in this window** | see below |
+| no *published* image has been produced by the pinned executable | **not F-44's criterion** -- it is F-51, and it cannot be observed in this window | see below |
 
-That third row is the one worth reading carefully rather than waving. Publishing requires a tag, and
-`v1.0.6-rc1`'s lifecycle is closed by standing instruction (§R). So the first published image built
-by the pinned producer will be the *next* release this repository cuts -- and what A2.2 changes is
-that this time it cannot be anything else without the release being refused. The claim is therefore
-"the release path is the pinned producer, and the gate enforces it", not "a published image was seen
-to be built by it"; the register entry says exactly that, and §V item 1 tells the next operator how to
-make the stronger claim true.
+That third row needs care, because the honest reading of it *narrows* the closure rather than
+widening it. The entry as filed at `44fb73d` says in terms that F-44 is "**not** a claim about
+published images: the release path … has never executed -- that is F-25's remaining scope", and its
+title is about "a built image". The sentence listing "no published image has been produced by the
+pinned executable" as a thing that keeps F-44 open arrived later, at `d255fdc`. So the closure here
+is **IMPLEMENTATION CLOSED**: what F-44 asked for -- the actual build producer pinned, and the gate
+decision made rather than asserted -- is delivered and measured at the candidate. The live
+tag-triggered observation the later sentence wanted is not deleted by that reading and not absorbed
+into the closure either: it is **F-51**, and the fact that no published asset would let anyone answer
+it nine months later is **F-52**. Both are in the register with what each needs to close.
 
 Findings this batch filed:
 
@@ -703,20 +706,47 @@ credential never leaves the process that holds it.
 | release `v1.0.6-rc1` | `published_at == updated_at == 2026-09-21T02:38:59Z` | never edited |
 | its 5 assets | all created and updated `2026-09-21T02:38:58/59Z`, `download_count` 0 each | none replaced |
 | the five `1.0.6-rc1` images on ghcr | resolve at HTTP 200, and each tag re-read *by digest* returns the same digest | tags intact |
-| digest drift | backend `a733b90c7a84…`, frontend `e1b1889a868c…`, egress-proxy `8ab8c234f278…`, sandbox-http `36bb2f7993ac…`, sandbox-browser `b369618871bd…` -- all five **byte-identical to the Batch 2 record** | no re-pointing |
+| digest drift | backend `a733b90c7a84…`, frontend `e1b1889a868c…`, egress-proxy `8ab8c234f278…`, sandbox-http `36bb2f7993ac…`, sandbox-browser `b369618871bd…` -- each equal to the digest the **published `values-release-1.0.6-rc1.yaml` asset names for it**, and to the Batch 2 record | no re-pointing |
 | promotion | newest non-prerelease, non-draft release is still `v1.0.5` (`v1.0.6-rc1` remains `prerelease=true`) | the RC was never promoted |
 
-Verdict: **SEALED RELEASE INTACT**. The strengthening is the digest-drift row: the previous rounds
-could only prove the tags still resolve, because the published `values-release-1.0.6-rc1.yaml` asset
-names no image digests (re-measured here: 0 digest lines). Comparing against the digests Batch 2
-recorded is what actually proves a tag was not repointed, and the A2.2 audit adds it to the verdict
-so "intact" cannot be reported while a published tag has moved.
+Verdict: **SEALED RELEASE INTACT**, and this round's read is stronger than the earlier ones' in a
+way worth recording. It was previously written here that the published `values-release-1.0.6-rc1.yaml`
+asset "names no image digests" -- that was wrong, and wrong for an instructive reason:
+`/repos/…/releases/assets/{id}` answers **200 with JSON metadata** unless the request says
+`Accept: application/octet-stream`, so the helper fetched no content, read an empty file, and
+reported the absence as a measurement. Asked properly, the asset names all five digests. The audit
+was rebuilt around that fact (`_tmp/closure_sealed_audit.py`): the asset's own bytes are hashed and
+must match the `sha256` GitHub records for it (`bfcb2aa2d02e5d5a…`), each of the five digests the
+asset names is compared against what the `1.0.6-rc1` tag on ghcr resolves to *today*, and each tag is
+re-read by digest. "The published bytes are the bytes the Release says they are" is a different and
+better claim than "the tags still resolve", and it is now the one the verdict rests on. The
+correction is recorded in the errata below rather than edited silently into the table.
 
 Three reads that do **not** work from this box and are therefore not claimed: `git ls-remote
 --tags` (github.com:443 direct is blocked), ghcr's `/v2/<pkg>/referrers/<digest>` (404 for these
 manifests, so the sealed attestations cannot be re-verified from here), and the container-packages
 `/versions` + `/versions/{id}/tags` pair (answers 200 but never lists `1.0.6-rc1`, so "which package
 version owns the tag" is unanswerable this way).
+
+### R.1 Erratum: a negative that was an empty read
+
+This report said, in the paragraph above and in the table's "digest drift" row as first written, that
+the published `values-release-1.0.6-rc1.yaml` asset names no image digests. It names all five.
+
+The mechanism was the read, not the release: `GET /repos/…/releases/assets/{id}` returns **JSON
+metadata with status 200** unless the request says `Accept: application/octet-stream`, so the helper
+found no `Location` header to follow, wrote nothing, and the caller counted `sha256:` occurrences in
+an empty string. A fetch that never fetched was reported as an absence that was measured.
+
+The corrected audit (`_tmp/closure_sealed_audit.py`) asks for content, refuses to answer from
+metadata -- it reports `200-metadata (no bytes fetched)` rather than a digest count -- verifies the
+bytes it gets against the `sha256` GitHub itself records for the asset, and then compares each
+digest the asset names with what the `1.0.6-rc1` tag on ghcr resolves to today.
+
+This is the same failure F-33 and F-42 were filed over, arriving through a helper instead of a job
+colour: an absence that was never looked for. The register lesson applies to the reader as much as to
+the gate -- a tool that cannot distinguish "there is nothing here" from "I did not look" should be
+made unable to answer, and here it now is.
 
 ## S. What this batch deliberately did not do
 
@@ -727,7 +757,8 @@ version owns the tag" is unanswerable this way).
 | F-46 (Linux certification pins the docker-socket disclosure instead of requiring isolation) | OPEN, unchanged | a policy decision about a shipped deployment path; excluded by approval, and Batch 3 §I already reviewed it as policy without changing a gate |
 | F-39 closure | not claimed | excluded by approval; the reproducibility measurement from Batch 1 stands and nothing here re-ran it |
 | release publication / tag creation | **none performed** | no tag was created, moved, deleted or recreated; no image was published; publication was not started automatically. Everything in §P is a dry run of lifted gate code in a temporary directory against a hypothetical version |
-| the next *real* release's build | not observed, and cannot be | the gate is live and tested, but `release.yml` has not run since it became a producer authority, because running it requires a tag this batch may not create (§Q states what that leaves unproven) |
+| the next *real* release's build | not observed, and cannot be | the gate is live and tested, but `release.yml` has not run since it became a producer authority, because running it requires a tag this batch may not create. That observation is **F-51**; the reason no published artifact can answer it later is **F-52** |
+| F-50's reconciliation | closed in the round after this report | ten stale statements in four tracked files, listed in the register with the executed gate-equivalence proof that shows none of them reached a decision |
 
 ## T. Local gates, and where this box's platform hid things
 
@@ -801,27 +832,31 @@ What this batch did **not** do: create, move, delete or recreate any tag; publis
 release; start publication automatically; touch B3, B4, F-46 or F-39; modify `classify_diff.py` or
 F-33's and F-42's tests. `v1.0.6-rc1` is intact and `v1.0.5` is still the stable release (§R).
 
-Findings: **F-44 CLOSED**, **F-47 CLOSED**, **F-48 CLOSED** (found and fixed here), **F-49 OPEN**
-(the classifier's blind spot, unmodified by approval), **F-50 OPEN** (stale producer prose this batch
-left behind).
+Findings: **F-44 IMPLEMENTATION CLOSED**, **F-47 CLOSED**, **F-48 CLOSED** (found and fixed here),
+**F-49 OPEN** (the classifier's blind spot, unmodified by approval), **F-50 OPEN** at the time of
+writing and closed by the reconciliation round that follows this one, and **F-51 / F-52 OPEN** --
+the first-live-publication observation and the fact that release evidence expires before the release
+does. See §Q for why F-44's closure is typed "implementation" and what that does not claim.
 
 Two boundaries stay true and are part of the verdict rather than footnotes to it. First, no
 *published* image has been built by the pinned producer yet: that requires a tag, and the sealed
 release may not be re-run, so the strongest claim available is that the release path now is the
-pinned producer and the gate refuses a release that is not. Second, F-50's eight sentences in three
-tracked files still describe the pre-A2.2 world -- no behaviour depends on them, and they are owed a
-reconciliation at the next candidate.
+pinned producer and the gate refuses a release that is not. Second, the evidence that would let
+anyone answer that question later lives in a workflow artifact with ~90-day measured retention, not
+among the immutable release assets (F-52).
 
 ## V. What a reviewer should check next
 
 In order, with the command that answers it:
 
-1. **Whether the next real release actually blocks.** This batch proved the reader refuses in a
-   dry run; it could not prove it refuses *during a publication*, because that needs a tag. Cut any
-   release from a commit at or after the candidate and read
+1. **Whether the next real release actually blocks -- and to close F-51.** This batch proved the
+   reader refuses in a dry run; it could not prove it refuses *during a publication*, because that
+   needs a tag. Cut any release from a commit at or after the candidate and read
    `outputs/release-images/release-images-<version>.json`'s `producer_verdicts` and
-   `producer_summary` before approving the asset upload. If all five are `CONFORMING`, the claim in
-   §Q holds; if any is not, publication stops, and that is the feature.
+   `producer_summary` before approving the asset upload: five `CONFORMING` is the observation F-51
+   asks for, anything else stops the release, and stopping is the feature. While doing it, save that
+   JSON somewhere durable or land F-52's fix -- the workflow artifact expires in ~90 days, and the
+   published assets do not carry it.
 2. **That the certification rounds behind a release are the *required* jobs, not merely green
    workflows.** §O explains the case this batch nearly recorded wrong: a push-triggered
    `cap-linux-certification.yml` run passes with `cap-production-certification` **skipped**, while

@@ -785,7 +785,45 @@ reconciliation inherits from that candidate rather than re-certifying it.
   isolation on every shipped path. Neither is closed by this round and neither is
   described here as certified by it: they are register entries with their measurements,
   awaiting a decision. See `docs/known-issues.md` items 11 and 13 and
-  `docs/quality/cap-post-rc-batch-3-design-options-2026-09-23.md`.
+  `docs/quality/cap-post-rc-batch-3-design-options-2026-09-23.md`. (This is what that
+  round filed; the post-A2.2 entry below records where each of the two stands now.)
+- **Post-A2.2 closure: F-50 reconciled, F-44's status typed, and two items named rather than
+  absorbed.** Ten statements that A2.2 had made false were corrected in four tracked files:
+  `scripts/release/producer_contract.json`'s `purpose`, its two obligation status strings and the
+  stale `F-47` key in `checks_not_run_here`; four places in
+  `scripts/release/record_build_producer.py` -- the `buildx_prefix()` docstring, the no-pin
+  branch's comment, the `reason` text that branch writes *into a record*, and a comparison-list
+  comment -- each of which still said the release path ran through `docker buildx` and would change
+  "until A2.2"; the `producer-observation` comment in `.github/workflows/ci.yml`, which cited
+  `test_the_release_build_path_is_still_not_switched`, a fence this batch deleted (its successor is
+  `test_the_release_build_path_now_runs_the_controlled_producer`); and
+  `test_producer_contract_freeze.py`, which had pinned the old strings and now pins the new shape
+  instead -- each status must begin `EVIDENCED AT `, name a full 40-hex sha, both must name the
+  *same* sha, and the detailed one must say which artifact enforces the obligation and which item is
+  still owed, so the status cannot be satisfied by free text.
+  "These are only words" was measured rather than asserted: the lifted
+  `release-image-completeness` gate is executed over producer records captured before and after the
+  edits, across three arms -- the release-shaped record as the rehearsal job files it, a no-pin
+  record, and a normalised record that has to **PASS** -- and all three answers are identical,
+  including the passing one. A differential that only ever refused would have proved nothing, which
+  is why that arm is required to pass.
+  **F-44 is IMPLEMENTATION CLOSED**, because the finding as filed at `44fb73d` says in terms that it
+  is "not a claim about published images ... that is F-25's remaining scope" and is titled about "a
+  built image"; the published-image sentence that A2.2's closure list quoted arrived later, at
+  `d255fdc`. Neither reading was used to go greener or to drop the question: the live tag-triggered
+  publication is now **F-51** (pending by authorisation, with what the next release must read to
+  close it), and **F-52** records that a release's producer evidence reaches an operator only as a
+  workflow artifact -- measured at 89 days to expiry, with no `retention-days` set anywhere -- while
+  the immutable Release assets carry the chart, the digest-naming values file, `CHANGELOG.md`, the
+  notes and `known-issues.md`. What an operator installs stays knowable; who built it does not.
+  One false negative in the A2.2 report was also corrected: it claimed the published
+  `values-release-1.0.6-rc1.yaml` asset names no image digests, from an empty read --
+  `/repos/…/releases/assets/{id}` answers 200 with JSON metadata unless the request says
+  `Accept: application/octet-stream`. The asset names all five, and the sealed-release audit now
+  fetches its bytes, verifies them against the `sha256` GitHub records for the asset, and compares
+  each named digest with what the `1.0.6-rc1` tag resolves to on ghcr. The report carries the
+  correction as an erratum (§R.1). No tag was created, no image was published, and no certification
+  round was re-run for any of this.
 
 ## [1.0.5] - 2026-09-07
 

@@ -663,8 +663,9 @@ def buildx_prefix(controlled: dict | None) -> tuple[str, ...]:
     Once a controlled executable has been read back from the machine, the recorder asks the
     builder and the registry through that binary rather than through `docker buildx`: an
     observation that reads a pinned BuildKit container with an unpinned CLI is measuring the
-    runner again. With no controlled path the prefix stays `docker buildx`, which is what the
-    release path still uses -- A2.1 observes, it does not switch anything.
+    runner again. Since A2.2 the release path always supplies that executable, so the fallback
+    below is a `--local-docker` developer build's shape -- kept working because a developer
+    machine with only the CLI plugin installed is still entitled to a record.
     """
     path = (controlled or {}).get("path")
     if path and (controlled or {}).get("status") == "READ":
@@ -718,13 +719,16 @@ def observe_controlled_buildx(run: CommandRunner, pin: dict, declared_path: str 
     path = declared_path or (pin or {}).get("declared_path")
     answer = {"declared_path": path, "pin_source": (pin or {}).get("source")}
     if not (pin or {}).get("ok") and not declared_path:
-        # The release build path passes no pin, because it still builds through `docker buildx`.
-        # That is a stated absence, not a failed read: calling it ERROR would make every existing
-        # release record look like a broken instrument for a change it was never asked to make.
+        # Nothing named a controlled executable, so this is not a release build: since A2.2 the
+        # publishing path passes a pin, a path and a builder, and a record that reaches here is a
+        # `--local-docker` developer build or a call that named no executable at all. That is a
+        # stated absence, not a failed read: calling it ERROR would make every legacy record look
+        # like a broken instrument for a change it was never asked to make.
         return {**answer, "ok": False, "status": "NOT_PROVIDED",
                 "reason": ("no controlled buildx pin was given, so this record describes a build "
-                           "whose executable the repository does not pin -- the release path "
-                           "until A2.2 switches it, the observation job as a defect after A2.1"),
+                           "whose executable the repository does not pin -- a --local-docker "
+                           "developer build, or an invocation that named no controlled executable; "
+                           "a release build since A2.2 always names one"),
                 "integrity": {"status": "NOT_PROVIDED"}}
     if not path:
         return {**answer, "ok": False, "status": "ERROR",
@@ -1508,9 +1512,10 @@ def producer_alignment(comparison: dict) -> dict:
     """
     names = ["lock_vs_workflow", "workflow_vs_observed", "lock_vs_observed"]
     if (comparison.get("controlled_pin_vs_lock") or {}).get("status"):
-        # Only a record that was given a controlled-executable pin can answer for it. In the
-        # release path, which has none until A2.2, leaving it out keeps the verdict about the
-        # authorities that actually exist rather than manufacturing an UNKNOWN.
+        # Only a record that was given a controlled-executable pin can answer for it. A build
+        # with no pin -- a `--local-docker` developer build, since A2.2 every release build has
+        # one -- leaves it out so the verdict is about the authorities that actually exist
+        # rather than manufacturing an UNKNOWN for a question nobody asked.
         names.append("controlled_pin_vs_lock")
     statuses = {name: (comparison.get(name) or {}).get("status") for name in names}
     if MISMATCH in statuses.values():

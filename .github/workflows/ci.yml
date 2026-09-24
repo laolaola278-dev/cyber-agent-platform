@@ -519,12 +519,13 @@ jobs:
   # image, whose base is the HTTP sandbox image of *this round*, bound by that
   # round's own digest out of a local OCI layout, with no registry in the path.
   #
-  # Still observation-only: no push, no login, no image tag, no registry
-  # credential. The release path (`release.yml` -> `build_release_image.sh`)
-  # is untouched until A2.2 is approved, and
-  # `test_the_release_build_path_is_still_not_switched` is the fence that says
-  # so. Installing a pinned executable is not the same as switching the release
-  # onto it, and this job keeps those two facts apart.
+  # Still observation-only in what it *does*: no push, no login, no image tag, no registry
+  # credential. What it measures is no longer private to it -- since A2.2 the publishing path
+  # (`release.yml` -> `build_release_image.sh`) installs and names the same producer through the
+  # same mechanism, and the fence that keeps it that way is
+  # `test_the_release_build_path_now_runs_the_controlled_producer`. Installing a pinned
+  # executable and switching the release onto it remain different facts, and this job is
+  # evidence for the first while the release jobs are evidence for the second.
   #
   # A MISMATCH remains a measurement, not a failure. This job goes red on a
   # build that did not succeed, on a record the instrument could not complete

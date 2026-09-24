@@ -1,9 +1,9 @@
 {
   "contract": "cap-post-rc-batch-3-producer-contract",
-  "purpose": "One file that states what the producer of a CAP image has to be, and what a record has to say about it. The `inherited_from_a2_1` block is frozen; `a2_2_obligations` is the target the same batch has to reach. Read them as two different claims: one is measured evidence, the other is a promise.",
+  "purpose": "One file that states what the producer of a CAP image has to be, and what a record has to say about it. The `inherited_from_a2_1` block is frozen measured evidence; `a2_2_obligations` is the target A2.2 was approved against, now enforced by `release-image-completeness` and held here so a reader can hold a release record against a stated target instead of against whatever the code happened to grow.",
   "status": {
     "inherited_from_a2_1": "FROZEN -- A2.2 may add to a grow-only list in here, never take anything away. backend/tests/test_producer_contract_freeze.py executes that rule against the recorder's own output, so 'not weakened' is a check rather than a sentence.",
-    "a2_2_obligations": "OPEN -- recorded here so the reader of a release record can hold it against a stated target instead of against whatever the code happened to grow."
+    "a2_2_obligations": "EVIDENCED AT dea8c6f2f576bec667ee27dc8a9458673ca0982e -- each obligation below is implemented, the reader that makes them binding is `release-image-completeness`, and `test_release_producer_gate.py` proves the reader refuses without them. It stays written here because a release record has to be held against a stated target, and changing one of these obligations means changing this file where a test can see it."
   },
   "frozen_on": "2026-09-24",
   "frozen_by": "BATCH 3 A2.2 Stage 0, before any change to release build behaviour",
@@ -243,7 +243,7 @@
     }
   },
   "a2_2_obligations": {
-    "status": "NOT YET EVIDENCED -- recorded here as the target; a release record satisfies it only when the gate reads it and a test proves the reader refuses without it.",
+    "status": "EVIDENCED AT dea8c6f2f576bec667ee27dc8a9458673ca0982e -- the condition this string used to name as outstanding is met: `release-image-completeness` reads each evidence field below out of a release record, and `test_release_producer_gate.py` proves it refuses when one is absent, unreadable or disagreeing. What has NOT happened is a live tag-triggered publication exercising that reader: `release.yml` runs only on a `v*` tag and `v1.0.6-rc1` is sealed, so the enforcement is proven by executed dry run and by controls, and the shipped-release observation is owed by F-51.",
     "applies_to": "the path that builds what a release publishes, and the CI job that dry-builds the same set",
     "obligations": {
       "one_install_mechanism": "A single script installs the controlled buildx for every path that builds a release image: download, verify the checksum, read the version and commit back, create the named builder, then build. A checksum mismatch fails before the downloaded binary is ever executed, and no path writes to a docker CLI plugin directory.",
@@ -288,7 +288,7 @@
   },
   "checks_not_run_here": {
     "F-44_open_half": "The runner's own `docker buildx` still answers non-deterministically (v0.37.0 at some heads). That stays recorded and unresolved: A2.2 removes the release path's *dependence* on it, which is what F-44's disposition turns on, and does not make the runner's plugin become the pin.",
-    "F-47": "No gate reads any producer field until A2.2 Stage 5 lands and a test proves the reader refuses. This file freezes what that reader must require; it is not itself a reader.",
-    "why_the_difference_matters": "A contract file that nothing consumes is exactly the artifact F-47 was filed over. The freeze here is enforced by tests; the *publication* effect is enforced by the completeness gate, which is a later stage of the same approval."
+    "live_publication_F-51": "The reader is in the gate and tested, but no live tag-triggered publication has exercised it: `release.yml` triggers only on a `v*` tag, and `v1.0.6-rc1` is sealed with its lifecycle closed. What this file and its tests can show is the refusal; what only a release can show is the refusal happening on the way to a published asset. That item is F-51, and it is deliberately not folded into F-44's closure.",
+    "why_the_difference_matters": "A contract file that nothing consumes is exactly the artifact F-47 was filed over. The freeze here is enforced by `test_producer_contract_freeze.py`; the publication effect is enforced by `release-image-completeness`, which reads `a2_2_obligations.evidence_fields` at run time. The two are different artifacts doing different jobs, and neither one is evidence that the other ran."
   }
 }

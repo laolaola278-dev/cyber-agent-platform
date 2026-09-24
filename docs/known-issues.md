@@ -417,7 +417,10 @@ listed so that an import name is not mistaken for a working capability.
     F-33 left behind, now with its cause measured rather than assumed.
 
 11. **The pinned build producer is never demonstrated to be the producer of a built image
-    (F-44) — CLOSED at candidate `dea8c6f`.**
+    (F-44) — IMPLEMENTATION CLOSED at candidate `dea8c6f`.**
+    Closed as *implementation and enforcement*, which is what the finding asked for when it was
+    filed; the distinction and the evidence for it are in the last three paragraphs of this entry,
+    and the observation this window cannot make is **F-51**.
     Measured, not inferred, from CI's own release-image records at candidate `257ba18`
     (run `35761257654`, the five `ci-release-image-cap-*` artifacts plus one buildx-path record
     inside them):
@@ -528,11 +531,25 @@ listed so that an import name is not mistaken for a working capability.
     code rather than in prose: `release.yml` declares the builder name, the driver, the BuildKit
     reference and the buildx path in each image job's own `env:` block, and the gate compares what the
     build recorded against what those files say.
-    What this closure does **not** claim: no *published* image has yet been built by the pinned
-    producer, because publishing requires a tag and `v1.0.6-rc1` is sealed with its lifecycle closed,
-    so `release.yml` has not run since it became a producer authority. That is a property of the
-    window, not a remaining defect -- the first release cut at or after this candidate is the first
-    published image built by the pinned executable, and the gate now refuses the release if it is not.
+    **How the status was decided, and against which text.** F-44's title is about "a built image",
+    and the entry as filed at `44fb73d` said so explicitly: "it is **not** a claim about published
+    images: the release path (`--push`, `docker buildx build`, attestation attached) has never
+    executed -- **that is F-25's remaining scope** -- so what the pin would do to the bytes that
+    operators actually pull is **unobserved**, not proven false." What it did require is in the same
+    entry: that "the actual build producer is pinned", and a decision about whether a mismatch blocks
+    publication -- "which is why it is filed here instead of being enforced by prose." Both are now
+    delivered and measured: the producer is an executable the repository downloads, hashes and names
+    (§C, §D of the A2.2 report, executed on a runner at §J), and the decision is enforced by
+    `release-image-completeness` (§G, §P). `docs/quality/cap-post-rc-batch-3-design-options-2026-09-23.md`
+    §D states Option A's contract as six build-time evidence requirements plus "mismatch ⇒ failure",
+    with no item asking for a shipped release.
+    The one bullet above that is *not* F-44's own criterion is "no published image has been produced
+    by the pinned executable". That sentence entered this entry later, at `d255fdc`, and it is
+    broader than what the finding ever claimed. It is therefore neither folded into the closure nor
+    quietly dropped: the live, tag-triggered observation it asks for is **F-51**, and the durability
+    gap that stops a reader ten months from now from answering it from the published assets is
+    **F-52**. F-44 closing says the release path is the pinned producer and a disagreement blocks the
+    release; it does not say a release has happened, and none has.
     Measurement and controls: `docs/quality/cap-post-rc-batch-3-a22-producer-authority-2026-09-24.md`
     §C, §D, §G, §H and §J; the refusal itself is demonstrated in §P against the candidate's own CI
     records.
@@ -677,7 +694,8 @@ listed so that an import name is not mistaken for a working capability.
     gate's own code lifted verbatim from `release.yml`, run against the candidate's five real CI
     producer records, refusing when one `producer_alignment` is flipped and when a published image is
     layered on a same-round layout -- but never during a live publication, because that needs a tag
-    and `v1.0.6-rc1` is sealed. Evidence:
+    and `v1.0.6-rc1` is sealed. That observation is **F-51**'s, not something this closure absorbs.
+    Evidence:
     `docs/quality/cap-post-rc-batch-3-a22-producer-authority-2026-09-24.md` §G, §H, §I and §P.
 
 15. **A producer sidecar beside the release evidence made the gate invent five images (F-48) —
@@ -750,10 +768,13 @@ listed so that an import name is not mistaken for a working capability.
     `runtime_affecting` as the only blocking dimension. Until then this entry is why an
     `INHERITED` row in a report must be quoted with the question it actually answers.
 
-17. **A2.2 left prose behind that A2.2 made false (F-50) — OPEN, reconciliation owed at the next
-    candidate.** Auditing every tracked file for statements this batch invalidated turned up eight,
-    in three files. Each was written when it was true; the commits that switched the release path
-    made them stale, and the reconciliation pass in those commits did not reach them.
+17. **A2.2 left prose behind that A2.2 made false (F-50) — CLOSED in the post-A2.2 closure
+    round.** Auditing every tracked file for statements this batch invalidated turned up ten,
+    in four files. Each was written when it was true; the commits that switched the release path
+    made them stale, and the reconciliation pass in those commits did not reach them. All ten are
+    corrected here, and "these are only words" was not taken on trust: the publication gate is
+    executed over the producer record from before and after the edits and must answer identically,
+    including on an arm that passes (method named at the end of this entry).
 
     * `scripts/release/producer_contract.json` -- `status.a2_2_obligations` ("**OPEN** -- recorded
       here so the reader of a release record can hold it against a stated target…"),
@@ -782,24 +803,70 @@ listed so that an import name is not mistaken for a working capability.
       `backend/tests/test_producer_observation_contract.py`, which asserts the opposite of the fence
       -- that the publishing command line names the installed executable and an explicit builder.
 
-    Nothing about behaviour or evidence is wrong: every `status` these branches produce
-    (`NOT_PROVIDED` for a build with no pin, `ERROR` for an unreadable one) is unaffected, so no
-    record is misjudged and no gate decides differently. The cause is incomplete reconciliation in
-    this batch, not an unavoidable limitation, and it is recorded here for that reason.
-    What changed the cost is the freeze: while the batch was still moving, editing the three files
-    was free; after `dea8c6f` was certified, any tracked code edit is a new candidate and a fresh
-    round of rounds, and spending a recertification on wording would displace the rounds that need a
-    candidate for real reasons. The contract's two status strings have a second lock:
-    `test_the_freeze_states_what_a2_2_owes_and_says_it_is_not_yet_evidenced` asserts
-    `A2_2["status"].startswith("NOT YET EVIDENCED")` and
-    `CONTRACT["status"]["a2_2_obligations"].upper().startswith("OPEN")`, so they can only be
-    corrected together with that test.
-    What closes it: one commit, at the next batch that freezes a candidate regardless, carrying all
-    eight strings and that test's assertions -- the contract's three, the recorder's four, and
-    `ci.yml`'s comment rewritten to name the fence that exists. Until then read the freeze file's
-    `a2_2_obligations` block as *what was owed*, not as *what is missing*; §B and §G of
-    `docs/quality/cap-post-rc-batch-3-a22-producer-authority-2026-09-24.md` are what was delivered
-    against it.
+    How it was closed. Four surfaces, in one commit above the certified candidate:
+    * `scripts/release/producer_contract.json` -- `purpose`, `status.a2_2_obligations` and
+      `a2_2_obligations.status` now say the obligations are evidenced **at a named commit**, and
+      `checks_not_run_here` loses its stale `F-47` key in favour of `live_publication_F-51`, which
+      is what genuinely remains unrun.
+    * `scripts/release/record_build_producer.py` -- the `buildx_prefix()` docstring, the no-pin
+      branch's comment, the record-side `reason` string, and the comparison-list comment. Each now
+      says what reaches that branch: a `--local-docker` developer build, not a release build.
+    * `.github/workflows/ci.yml` -- the comment names the fence that exists,
+      `test_the_release_build_path_now_runs_the_controlled_producer`.
+    * `backend/tests/test_producer_contract_freeze.py` -- the test that pinned the old strings is
+      retargeted rather than deleted: it still refuses a status that is free text, requiring each
+      string to begin `EVIDENCED AT `, to name a **full 40-hex sha**, for both strings to name the
+      **same** one, and for the detailed one to say which artifact enforces the obligation and which
+      item is still owed. A weaker status sentence now fails here.
+    Then, because "these are only words" is a claim about readers nobody checked: the lifted
+    `ARTIFACT_GATE_PY` is executed over the producer record captured before the edits and the one
+    captured after (`_tmp/f50_payload_diff.py`, `_tmp/f50_gate_equivalence.py`), across three arms --
+    the release-shaped record as the rehearsal job would file it, the no-pin record, and a
+    normalised record that the gate must **PASS**. All three answers are byte-identical across the
+    edit and the passing arm passes on both sides, which is why that arm is required to pass: a
+    comparison that only ever refuses would prove nothing.
+    One more thing the audit surfaced, unrelated to tense: the A2.2 report carries a false negative
+    -- that the published `values-release-1.0.6-rc1.yaml` asset names no image digests, which was an
+    empty read, not a measurement. It names all five. The correction and how the read went wrong are
+    recorded in the report's errata.
+
+18. **No live publication has exercised the producer authority (F-51) — PENDING BY AUTHORISATION,
+    not a defect.** F-44 never claimed this (see its disposition), and F-47's closure says the
+    reader is live in the gate and tested rather than tested in production. What has not happened is
+    one `release.yml` run from start to finish since the publishing path was switched: the workflow
+    triggers only on a `v*` tag, and `v1.0.6-rc1` is sealed with its lifecycle closed, so no tag may
+    be created to make it happen. Two things are therefore unobserved and are named here rather than
+    implied by a green batch: that the install step succeeds in a job that also holds registry
+    credentials and pushes -- the CI rehearsal installs and builds identically but pushes nothing --
+    and that the gate's refusal is reached *on the way to* a publication rather than only in a dry
+    run.
+    What the first release after `dea8c6f` must show, and where to read it: `release.yml`'s
+    `release-image-completeness` job prints `producer verdicts: <image>=<state>` on both paths, and
+    the gate payload `outputs/release-images/release-images-<version>.json` carries
+    `producer_verdicts` and `producer_summary`. Five `CONFORMING` is the observation; anything else
+    and the release stops, which is the point. This item closes by reading that file from a real
+    release; it cannot be closed by more testing, and nothing here should be read as if it had been.
+
+19. **A release's producer evidence expires before the release does (F-52) — OPEN.** Option A's
+    sixth evidence requirement is that the published-image evidence be bound to the producer record
+    "so a reader can tell which builder made the bytes an operator pulls". The binding exists and is
+    correct -- `release-images-<version>.json` embeds each image's producer block alongside its
+    digests -- but it is published only as a **workflow artifact**. Measured at the candidate:
+    artifacts from run `35958562520` carry `expires_at` 89 days after creation, and no workflow in
+    this repository sets `retention-days`. The immutable GitHub Release assets are a different list,
+    read from the sealed release itself: `cap-<v>.tgz`, `values-release-<v>.yaml`, `CHANGELOG.md`,
+    the notes file and `known-issues.md`. The values file names every image digest -- so *what* an
+    operator installs stays knowable forever -- while *who built it* lapses in about three months.
+    So for any release older than the retention window, F-51's question ("which producer built the
+    bytes an operator is pulling?") has no durable published answer, and the gate's own
+    `producer_verdicts` cannot be re-read by someone auditing a year later.
+    The fix is small and is a publication-content decision, so it is filed rather than folded into
+    this round: add the completeness payload to `release-assets` in `release.yml`'s
+    `release-chart` job -- one `cp` of `release-images-<version>.json`, whose producer fields are
+    already frozen and tested -- and extend `test_release_image_completeness.py`'s asset-set
+    assertion so the next chart cannot ship without it. Cost: a release-workflow change, therefore a
+    new candidate and its recertification rounds, which is why it belongs with whichever batch next
+    touches the release graph rather than being the only reason for one.
 
 ## Live verification against a real PostgreSQL server
 

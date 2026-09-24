@@ -22,6 +22,7 @@ Three things these tests deliberately do not do:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -303,10 +304,29 @@ def test_every_enforcement_check_the_freeze_cites_still_exists() -> None:
         assert rule.get("claim"), rule
 
 
-def test_the_freeze_states_what_a2_2_owes_and_says_it_is_not_yet_evidenced() -> None:
-    """The two blocks of the contract mean different things, and a reader has to be able to tell."""
-    assert CONTRACT["status"]["a2_2_obligations"].upper().startswith("OPEN")
-    assert A2_2["status"].startswith("NOT YET EVIDENCED")
+def test_the_freeze_states_what_a2_2_owes_and_where_each_obligation_was_evidenced() -> None:
+    """The two blocks of the contract mean different things, and a reader has to be able to tell.
+
+    Until F-50 this test asserted the opposite -- `OPEN` / `NOT YET EVIDENCED` -- because that was
+    true when it was written. What has to survive the change is the part that makes the status a
+    claim rather than prose: it names a commit, both strings name the *same* commit, each one
+    says which artifact enforces the obligation, and the detailed one names the observation still
+    owed. A status that could be edited to any sentence would test nothing, so the shape is
+    pinned here.
+    """
+    sha_pattern = re.compile(r"^[0-9a-f]{40}$")
+    named: list[str] = []
+    for label, text in (("status.a2_2_obligations", CONTRACT["status"]["a2_2_obligations"]),
+                        ("a2_2_obligations.status", A2_2["status"])):
+        assert text.upper().startswith("EVIDENCED AT "), f"{label} does not state where it was met"
+        candidate = text.split()[2]
+        assert sha_pattern.match(candidate), f"{label} names {candidate!r}, not a full commit sha"
+        assert "release-image-completeness" in text, (
+            f"{label} does not say which artifact enforces the obligation")
+        named.append(candidate)
+    assert named[0] == named[1], "the two status strings claim different candidates"
+    assert "F-51" in A2_2["status"], (
+        "the detailed status hides the live-publication item still owed")
     obligations = A2_2["obligations"]
     for key in ("one_install_mechanism", "build_command", "base_handoff", "evidence", "authority",
                 "reader", "diagnostics"):
