@@ -4,16 +4,17 @@ All notable changes follow Keep a Changelog categories and Semantic Versioning 2
 
 ## [Unreleased]
 
-Work on top of the sealed `1.0.6-rc1` anchor, recorded in three post-rc rounds: the
-delivery audit that produced `1.0.6-rc1`, then hardening batches 1 / 1.1 and batch 2.
+Work on top of the sealed `1.0.6-rc1` anchor, recorded in four post-rc rounds: the
+delivery audit that produced `1.0.6-rc1`, then hardening batches 1 / 1.1, batch 2, and
+batch 3 (stages 3A, A2.1 and A2.2).
 Because published release contents are immutable, none of this can be added to
 `1.0.6-rc1`: under the version policy it needs its own future RC, and no tag is
-created by any entry below. Batch 2's runtime candidate
-`257ba18d8cb6c22d330701b69713544254e4f03a` is certified by its own CI, Linux
-production, K8s, 7200 s reliability and strict-GA rounds -- see
-`docs/quality/cap-post-rc-batch-2-implementation-2026-09-22.md` §J-§S for the run and
-artifact ids. Everything in the entries below that is a docs-only reconciliation
-inherits from that candidate rather than re-certifying it.
+created by any entry below. Batch 3 A2.2's candidate
+`dea8c6f2f576bec667ee27dc8a9458673ca0982e` is certified by its own CI, release-layer
+Linux production, K8s, 7200 s reliability and final-strict GA rounds -- see
+`docs/quality/cap-post-rc-batch-3-a22-producer-authority-2026-09-24.md` §J and §O for
+the run and artifact ids. Everything in the entries below that is a docs-only
+reconciliation inherits from that candidate rather than re-certifying it.
 
 ### Added
 
@@ -371,9 +372,10 @@ inherits from that candidate rather than re-certifying it.
   disagreement. CI's new `producer-observation` job creates a named, non-publishing
   `docker-container` builder, scratch-builds `cap-backend` through it with `--output
   type=oci` (no tag, no login, no `--push`), and uploads the record plus the F-39 measurement
-  fields read from that archive. **Nothing about the release build changed**: `release.yml`
-  and `build_release_image.sh` still name no builder, no gate reads these fields, and a
-  measured mismatch blocks nothing yet -- that is step 2's decision, deferred by approval.
+  fields read from that archive. **Nothing about the release build changed in this round**:
+  `release.yml` and `build_release_image.sh` named no builder, no gate read these fields, and a
+  measured mismatch blocked nothing -- that was step 2's decision, deferred by approval, and the
+  Batch 3 A2.2 entry below is the round that took it.
 - **Producer observation, step 2 stage A2.1: the producer is now an executable this repository
   chooses (Batch 3).** Batch 3A could report that a GitHub runner had executed `v0.37.0` under a
   `v0.37.1` declaration; it could not make the answer stop depending on the runner. A2.1 does
@@ -399,14 +401,77 @@ inherits from that candidate rather than re-certifying it.
   value, so neither layer can answer for the other. `--combine` scores the five records as one
   round and refuses a set with a missing image, a failed build, an unresolved base or a record
   from another run.
-  Step 2's other half is not done here: the release image path still runs `docker buildx` with no
-  `--builder`, a producer mismatch still blocks nothing, no new candidate is frozen, and no
-  release tag exists. **F-44 stays open** for exactly that reason. Two things this round filed
+  Step 2's other half was not done in that round: at `b98eb3b` the release image path still ran
+  `docker buildx` with no `--builder`, a producer mismatch still blocked nothing, no new candidate
+  was frozen, and no release tag existed -- which is why **F-44 was still open** at that point in the
+  history, and why the next entry (A2.2) is the one that closes it. Two things this round filed
   against itself: `deployment/` and the Dockerfiles are off limits to A2.1 by the classifier, so
   the executable pin lives in `scripts/release/` and must agree with the lock rather than extend
   it; and **F-47 is opened** because `build_release_image.sh` asserts that "the release gate below
   refuses a pushed image whose producer was never read" while no gate in `release.yml` reads the
   producer field at all -- recorded evidence is not enforced evidence, which is A2.2's job.
+- **Producer authority, step 2 stage A2.2: the release path builds with the pinned producer, and
+  the publication gate reads it (Batch 3).** A2.1 made the answer stop depending on the runner in a
+  non-publishing job; A2.2 puts the same mechanism under the publishing one, and closes the gap F-47
+  was filed over. `scripts/release/install_controlled_buildx.py` is now the only place the pinned
+  buildx is downloaded, verified and turned into a builder, and it runs in a stated order --
+  `pin, path, download, integrity, install, read-back, declaration, builder, plugin-diagnostic` --
+  where each edge is a refusal: a target inside a docker CLI plugin directory is refused before
+  anything is fetched, a checksum or length mismatch stops before the bytes are ever executed, the
+  installed binary must answer with the pinned version *and* commit before a builder is created, and
+  a builder whose inspected name or driver differs from what was asked is refused rather than
+  adopted. It borrows `load_controlled_pin`, `parse_version_line` and `PLUGIN_DIRS` from the recorder
+  so the tool that installs the producer and the tool that measures it cannot describe two different
+  files, and it still writes its facts -- including `steps_completed` and `failed_step` -- when it
+  refuses. `docker buildx`'s plugin answer is read last and never fails the install, because it is
+  a description of the machine and not the producer.
+  `scripts/release/build_release_image.sh` now runs
+  `<absolute controlled buildx path> build --builder <explicit name>` for all five images, in
+  `release.yml`'s two image jobs and in `ci.yml`'s rehearsal of them alike, and writes the argv it is
+  about to run to disk *before* running it, patching the exit code afterwards, so a build that never
+  returned still leaves a record. An unreadable producer record fails the build. Per image the record
+  carries `identity` (the commit the build was told it was building against what the runner reports,
+  the run id, the job), `observed.build_invocation`, `observed.controlled_buildx` with the hash
+  computed over the file, `pinned_index_resolution` at both digest layers, the four named comparisons
+  and `producer_alignment`, `contract_gaps` from the instrument's own `--self-check`, and
+  `build_path` -- which is *derived from that recorded argv*, so whether these bytes were pushed and
+  how its base was handed over is read out of what ran rather than out of what a configuration file
+  intended. `identity` is deliberately outside `producer_alignment.components`: which commit a build
+  ran at is not a fact about which binary built it.
+  `release-image-completeness` became the reader. Its requirements are read from
+  `scripts/release/producer_contract.json`, the file `test_producer_contract_freeze.py` holds against
+  the recorder's own output, so the list that blocks a release and the list the project promised
+  cannot drift apart silently. It requires a producer record for all five images and refuses in six
+  separate words -- `CONFORMING < UNKNOWN < MISMATCH < ERROR < AMBIGUOUS < MISSING`, ordered by how
+  much each explains, all of them blocking, none collapsed into a boolean -- and it checks
+  *belonging*: the record's commit against the tagged commit, its run against this run, and its job
+  against the two jobs allowed to build a release image, because reading `GITHUB_SHA` alone would
+  accept a record from another workflow run of the same commit and `run_id` alone would accept this
+  run's CI rehearsal.
+  A2.1's local OCI-layout base hand-off stayed where it belongs. A release publishes
+  `cap-sandbox-http`, so the browser's base is the digest that release just wrote, read out of that
+  job's own record; a published image whose recorded hand-off says `same_round_oci_layout` is a
+  MISMATCH, and `test_the_published_browser_still_extends_the_digest_this_release_pushed` refuses the
+  edit at review time instead of after four images have shipped.
+  Measured at candidate `dea8c6f2f576bec667ee27dc8a9458673ca0982e` (CI run `35958562520`, 11/11
+  jobs, 1792 passed): nine ordered install steps with `integrity=equal` and read-back
+  `v0.37.1 0b265a9f62db…`; the observation set `CONFORMING` with no problems and all five images
+  `build_exit=0`; and six release-rehearsal records with four `CONFORMING` comparisons,
+  `producer_alignment CONFORMING`, empty `contract_gaps` and identity bound to that run and that
+  sha -- on runners whose own `docker buildx version` answered `v0.37.1` in three jobs and `v0.37.0`
+  in three, in the same workflow run. Which buildx built a release image has stopped being a question
+  about the machine.
+  Two findings this batch filed against itself. **F-48**: Batch 2 wrote its producer sidecar to
+  `${OUT}.producer.json`, beside the evidence the completeness gate globs, so a release cut from any
+  commit since then would have been refused for five phantom images (`cap-backend.json.producer` and
+  friends) -- never observed only because no release has run since Batch 2. The sidecars now live
+  under `producer/`, and the reader refuses a producer record wherever it lands, naming it. **F-49**:
+  `classify_diff.py` keys `runtime_affecting` to paths, so a change to how released bytes are made
+  classifies `INHERITED`; the classifier is unmodified by approval and the recertification here is
+  policy-driven, which is why "INHERITED" must never be read as permission to inherit certification.
+  Neither A2.2 nor any entry here publishes anything: no tag exists for it, `v1.0.6-rc1` is
+  untouched, and the first *published* image built by the pinned producer can only be the next
+  release this repository cuts.
 
 ### Fixed
 

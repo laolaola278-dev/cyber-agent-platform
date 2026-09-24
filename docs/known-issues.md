@@ -417,7 +417,7 @@ listed so that an import name is not mistaken for a working capability.
     F-33 left behind, now with its cause measured rather than assumed.
 
 11. **The pinned build producer is never demonstrated to be the producer of a built image
-    (F-44) — OPEN.**
+    (F-44) — CLOSED at candidate `dea8c6f`.**
     Measured, not inferred, from CI's own release-image records at candidate `257ba18`
     (run `35761257654`, the five `ci-release-image-cap-*` artifacts plus one buildx-path record
     inside them):
@@ -499,19 +499,43 @@ listed so that an import name is not mistaken for a working capability.
     `CONFORMING`, both digest layers scored, every build exit 0 -- on a runner whose
     `docker buildx version` answered **`v0.37.0`** against the same `v0.37.1` pin. Which buildx
     built an image has stopped being a question about the runner.
-    What keeps F-44 open is the half A2.1 was not approved to do: the release image path still
-    builds through `docker buildx` with no `--builder`, a producer mismatch still blocks nothing,
-    and no *published* image has been produced by the pinned executable. See
-    `docs/quality/cap-post-rc-batch-3-producer-authority-2026-09-23.md` §A–§H for the
-    measurement and §I–§S for the A2.2 work that is deliberately not done; see **F-47** for why
-    "the producer is recorded" must not be read as "the producer is enforced".
-    The decision this waits on -- whether the project requires the published-image build path to
-    *be* the pinned producer, or should instead treat the runner's engine as the intended
-    producer and stop asserting the container -- is worked out with two contracts and their prices
-    in `docs/quality/cap-post-rc-batch-3-design-options-2026-09-23.md` §C-§F. This entry exists
-    so the register does not quietly imply the pin is honoured. Whether a mismatch should block
-    publication is a gate decision the project has not made, which is why it is filed here
-    instead of being enforced by prose.
+    Batch 3 A2.2 (2026-09-24) closed the three things that kept this entry open, and the closure is
+    measured at a candidate rather than argued:
+    * *"the release image path still builds through `docker buildx` with no `--builder`"* --
+      `scripts/release/build_release_image.sh` now runs
+      `<absolute controlled buildx path> build --builder <explicit name>`, for all five images, in
+      `release.yml`'s two image jobs and in `ci.yml`'s rehearsal of them alike, and the pinned
+      executable is installed by one mechanism (`install_controlled_buildx.py`) that refuses a plugin
+      path before it downloads anything and refuses to create a builder until the bytes it installed
+      have answered with the pinned version *and* commit.
+    * *"a producer mismatch still blocks nothing"* -- `release-image-completeness` reads the producer
+      record for all five images and blocks publication on `MISMATCH`, `UNKNOWN`, `ERROR`, `MISSING`,
+      `AMBIGUOUS`, a record from another run, a record whose revision is not the tagged commit, and a
+      record built by a job that is not allowed to build a release image. See **F-47**.
+    * *"no published image has been produced by the pinned executable"* -- measured at candidate
+      `dea8c6f` (CI run `35958562520`): nine ordered install steps with `integrity=equal` and read-back
+      `v0.37.1 0b265a9f62db…`; `producer-set.json` verdict `CONFORMING` with `problems=[]` and every
+      image `build_exit=0`; and six release-rehearsal image records each with four `CONFORMING`
+      comparisons, `producer_alignment CONFORMING`, empty `contract_gaps`, and identity bound to that
+      run and that sha -- on runners whose own `docker buildx version` answered `v0.37.1` in three of
+      them and `v0.37.0` in three. Same workflow run, same commit, different machines, different
+      plugins: the runner's answer is still recorded as `cli_plugin_buildx_version`, and it now scores
+      nothing.
+    The decision this entry was waiting on -- whether the published-image build path must *be* the
+    pinned producer, or should treat the runner's engine as intended and stop asserting the container
+    -- was taken as **Option A** of the two priced in
+    `docs/quality/cap-post-rc-batch-3-design-options-2026-09-23.md` §C-§F, and it is now enforced in
+    code rather than in prose: `release.yml` declares the builder name, the driver, the BuildKit
+    reference and the buildx path in each image job's own `env:` block, and the gate compares what the
+    build recorded against what those files say.
+    What this closure does **not** claim: no *published* image has yet been built by the pinned
+    producer, because publishing requires a tag and `v1.0.6-rc1` is sealed with its lifecycle closed,
+    so `release.yml` has not run since it became a producer authority. That is a property of the
+    window, not a remaining defect -- the first release cut at or after this candidate is the first
+    published image built by the pinned executable, and the gate now refuses the release if it is not.
+    Measurement and controls: `docs/quality/cap-post-rc-batch-3-a22-producer-authority-2026-09-24.md`
+    §C, §D, §G, §H and §J; the refusal itself is demonstrated in §P against the candidate's own CI
+    records.
     Note on provenance of this entry: the values above are read from the candidate's CI
     artifacts; the entry itself is a docs-only reconciliation that the classifier inherits, so
     it is not new certification evidence for any build.
@@ -589,7 +613,8 @@ listed so that an import name is not mistaken for a working capability.
     the two must not be merged into one "certification is soft" complaint.
     Batch 3 §I reviews this as policy and changes no gate.
 
-14. **Release evidence carries a producer block no gate reads (F-47) — OPEN.**
+14. **Release evidence carries a producer block no gate reads (F-47) — CLOSED at candidate
+    `dea8c6f`.**
     Found while wiring Batch 3 A2.1, by looking for the consumer of the record the release
     writes rather than by trusting the sentence above it. `scripts/release/build_release_image.sh`
     states, at the point it writes the field:
@@ -625,18 +650,156 @@ listed so that an import name is not mistaken for a working capability.
     records inside a **non-publishing CI job**, which is an observation instrument, not a gate --
     the distinction A2.1's own acceptance rule depends on.
 
-    What would close it, and the price: A2.2's blocking contract has to be *in* the completeness
-    gate, not beside it -- per image, refuse on `MISMATCH`, `UNKNOWN`, `ERROR` or absent for the
-    required producer fields (controlled executable identity, version, commit/integrity, builder
-    name, driver, running BuildKit digest, pinned-index relation, running-config relation), and
-    prove the five records came from the same run and the same revision as the images they
-    describe, so a conforming record cannot be carried in from a friendlier build. `ERROR`
-    ("could not establish identity") and `MISMATCH` ("established, and it disagrees") stay
-    separate for diagnosis while both block, because they call for different repairs. The cost is
-    certification, not code: switching the release path is producer-affecting by policy even
-    where the classifier reads `INHERITED`, so it needs a new candidate and the full
-    recertification set. Until then this entry is the reason "the producer is recorded" must not
-    be read as "the producer is enforced".
+    What closed it, item by item against what this entry asked for:
+    * *the blocking contract has to be in the completeness gate, not beside it* -- it is in
+      `release-image-completeness`'s own inline gate, and the list of producer fields it requires is
+      read from `scripts/release/producer_contract.json` at run time, so the requirement and the
+      refusal cannot drift apart without a test noticing. The gate refuses the contract file being
+      missing, unparseable, or in disagreement with the gate about the image set.
+    * *refuse on `MISMATCH`, `UNKNOWN`, `ERROR` or absent* -- all four, plus `AMBIGUOUS` (two
+      disagreeing records for one image) and `MISSING` (no record at all), six words that all block
+      and none of which is collapsed into a boolean, ordered by how much each explains and reported
+      per image in `producer_verdicts` and `producer_summary`.
+    * *prove the five records came from the same run and the same revision as the images they
+      describe* -- the record's `source_revision` against the tagged commit, its `run_id` against
+      this run, and its `job` against the two jobs permitted to build a release image. That third
+      check is the one the approval's wording did not require and the code needs: reading the commit
+      alone would accept a record from another workflow run of the same commit, and reading the run
+      alone would accept *this* run's CI rehearsal. A rehearsal record is refused by name.
+    * *four of five is not a pass* -- `EXPECTED` is the five chart images; a missing record is
+      `MISSING`, and the verdict is computed from the failure list, not from a count that tolerates a
+      gap.
+    * *the price is certification, not code* -- paid. `classify_diff.py` still read every commit in
+      this batch `INHERITED` with `runtime_affecting=false` (that blind spot is now **F-49**), so the
+      candidate was recertified on policy: CI, Linux certification, K8s, a 7200 s reliability soak and
+      a final-strict GA round at `dea8c6f`.
+    One limit stays true and is stated rather than glossed: the refusal has been *executed* -- the
+    gate's own code lifted verbatim from `release.yml`, run against the candidate's five real CI
+    producer records, refusing when one `producer_alignment` is flipped and when a published image is
+    layered on a same-round layout -- but never during a live publication, because that needs a tag
+    and `v1.0.6-rc1` is sealed. Evidence:
+    `docs/quality/cap-post-rc-batch-3-a22-producer-authority-2026-09-24.md` §G, §H, §I and §P.
+
+15. **A producer sidecar beside the release evidence made the gate invent five images (F-48) —
+    CLOSED at candidate `dea8c6f`.** Found while wiring A2.2 Stage 4, by looking for the consumer of
+    a file rather than trusting the line that writes it. Batch 2's `build_release_image.sh` wrote its
+    producer record to `${OUT}.producer.json`, i.e. *inside* the directory
+    `release-image-completeness` globs as `release-image-evidence/*.json`, and the recorder was
+    called there without `--image`, so the file carries `"image": null` and the gate keys it by
+    `path.stem`. Running the pre-A2.2 gate body -- lifted verbatim from
+    `git show 9983705:.github/workflows/release.yml` and executed, not paraphrased -- over the
+    records a release would have uploaded answers:
+
+    ```
+    gate exit code: 1 | verdict: FAIL
+      * evidence for images the release does not declare: ['cap-backend.json.producer',
+        'cap-egress-proxy.json.producer', 'cap-frontend.json.producer',
+        'cap-sandbox-browser.json.producer', 'cap-sandbox-http.json.producer']
+    ```
+
+    Five phantom images, and a refusal whose reason had nothing to do with the release's actual
+    state. It never fired for one reason only: no release has run since Batch 2 was written, so the
+    path exists in git history and not in an incident. This is the same class as F-37 (a tracked file
+    pointing its evidence somewhere nobody reads it) arriving from the other direction -- evidence in
+    the right place is not enough if a glob cannot tell it apart from its neighbour.
+    Two halves, both kept. A2.2 moved the sidecars under `producer/`
+    (`PRODUCER_DIR="$OUT_PARENT/producer"`, pinned by
+    `test_the_producer_sidecars_stay_out_of_the_directory_the_gate_globs`), and the reader now
+    *recognises* a standalone producer record wherever it lands and refuses it as itself. Running the
+    current gate over the identical arrangement gives exit 1 as well, but for the true reason and
+    with the real five images keyed correctly:
+
+    ```
+    * AMBIGUOUS: cap-backend.json.producer.json is a producer record sitting in the image-record
+      directory                                                  (x5)
+    * MISSING: cap-backend: the build says its producer was never recorded (recorder exit None)  (x5)
+    images the payload keyed: ['backend', 'egress_proxy', 'frontend', 'sandbox_browser',
+                               'sandbox_http']
+    phantom-image refusals: 0 | refusals that name the producer record: 5
+    ```
+
+    Both measurements are reproducible with `_tmp/measure_f48.py 9983705` and
+    `_tmp/measure_f48_after.py HEAD`; the probes are session scratch, and the values above are their
+    output at the candidate.
+
+16. **The diff classifier cannot see a producer-affecting change (F-49) — OPEN, by decision.**
+    `scripts/release/classify_diff.py` answers one question -- did production *runtime* code change
+    -- and it keys that answer to paths. Everything under `scripts/release/` is
+    `certification_generator` with `runtime_affecting=false`. So the change that decided which
+    executable builds every published CAP image, in `build_release_image.sh` and in
+    `release.yml`'s gate body, classifies as:
+
+    ```
+    inheritance=INHERITED  runtime_affecting=false  release_metadata_only=true  exit=0
+    categories: {certification_generator: 6, ci_workflow: 2, test_harness: 8}
+    ```
+
+    which is true about the application and silent about the release pipeline. The consequence is not
+    hypothetical: read on its own that line authorises inheriting certification for a batch whose
+    entire purpose is to change how certification evidence is produced. The approval anticipated it
+    ("INHERITED is not permission to inherit certification"; "A2.2 is producer-affecting by policy")
+    and the batch therefore recertified in full on policy rather than on the classifier's answer.
+    The classifier is **not** modified here, and that is deliberate rather than an oversight: it is
+    the arbiter in `release.yml`'s inheritance path, its categories are cited by other rounds'
+    evidence, and widening them to cover "how released bytes are made" is a decision about what
+    certification means -- with its own recertification cost -- which this batch was not given.
+    What closing it would take: a category for the release-build path (or a `producer_affecting`
+    flag beside `runtime_affecting`), the rules that map `scripts/release/build_release_image.sh`,
+    `install_controlled_buildx.py`, `record_build_producer.py`, `producer_contract.json`,
+    `controlled_buildx.json` and both workflows to it, and the inheritance tests that currently read
+    `runtime_affecting` as the only blocking dimension. Until then this entry is why an
+    `INHERITED` row in a report must be quoted with the question it actually answers.
+
+17. **A2.2 left prose behind that A2.2 made false (F-50) — OPEN, reconciliation owed at the next
+    candidate.** Auditing every tracked file for statements this batch invalidated turned up eight,
+    in three files. Each was written when it was true; the commits that switched the release path
+    made them stale, and the reconciliation pass in those commits did not reach them.
+
+    * `scripts/release/producer_contract.json` -- `status.a2_2_obligations` ("**OPEN** -- recorded
+      here so the reader of a release record can hold it against a stated target…"),
+      `a2_2_obligations.status` ("**NOT YET EVIDENCED** … a release record satisfies it only when the
+      gate reads it and a test proves the reader refuses without it"), and
+      `checks_not_run_here.F-47` ("No gate reads any producer field **until A2.2 Stage 5 lands** and
+      a test proves the reader refuses"). All three conditions are now met: the gate reads the record
+      and `test_release_producer_gate.py` proves it refuses. The file that defines the producer
+      contract therefore understates the repository it describes.
+    * `scripts/release/record_build_producer.py` -- `buildx_prefix()`'s docstring ("With no
+      controlled path the prefix stays `docker buildx`, which is what the release path **still
+      uses** -- A2.1 observes, it does not switch anything"); the controlled-executable branch's
+      comment ("The release build path passes no pin, because it **still builds through `docker
+      buildx`**"); the `reason` string that branch returns *into the record* ("…the release path
+      **until A2.2 switches it**, the observation job as a defect after A2.1"); and the comparison
+      list's comment ("In the release path, which has none **until A2.2**"). The release path now
+      passes a controlled path, a pin and a named builder; the branch that still yields
+      `docker buildx` / no pin is a `--local-docker` developer build, and the record is the place a
+      reader will meet the wrong sentence.
+    * `.github/workflows/ci.yml` -- the `producer-observation` job's comment: "The release path
+      (`release.yml` -> `build_release_image.sh`) is **untouched until A2.2 is approved**, and
+      `test_the_release_build_path_is_still_not_switched` is the fence that says so." Both halves
+      are wrong now, and the second is worse than stale tense: that test no longer exists anywhere in
+      the repository, so the comment points a reader at a file they cannot find. Its successor is
+      `test_the_release_build_path_now_runs_the_controlled_producer`, in
+      `backend/tests/test_producer_observation_contract.py`, which asserts the opposite of the fence
+      -- that the publishing command line names the installed executable and an explicit builder.
+
+    Nothing about behaviour or evidence is wrong: every `status` these branches produce
+    (`NOT_PROVIDED` for a build with no pin, `ERROR` for an unreadable one) is unaffected, so no
+    record is misjudged and no gate decides differently. The cause is incomplete reconciliation in
+    this batch, not an unavoidable limitation, and it is recorded here for that reason.
+    What changed the cost is the freeze: while the batch was still moving, editing the three files
+    was free; after `dea8c6f` was certified, any tracked code edit is a new candidate and a fresh
+    round of rounds, and spending a recertification on wording would displace the rounds that need a
+    candidate for real reasons. The contract's two status strings have a second lock:
+    `test_the_freeze_states_what_a2_2_owes_and_says_it_is_not_yet_evidenced` asserts
+    `A2_2["status"].startswith("NOT YET EVIDENCED")` and
+    `CONTRACT["status"]["a2_2_obligations"].upper().startswith("OPEN")`, so they can only be
+    corrected together with that test.
+    What closes it: one commit, at the next batch that freezes a candidate regardless, carrying all
+    eight strings and that test's assertions -- the contract's three, the recorder's four, and
+    `ci.yml`'s comment rewritten to name the fence that exists. Until then read the freeze file's
+    `a2_2_obligations` block as *what was owed*, not as *what is missing*; §B and §G of
+    `docs/quality/cap-post-rc-batch-3-a22-producer-authority-2026-09-24.md` are what was delivered
+    against it.
 
 ## Live verification against a real PostgreSQL server
 
