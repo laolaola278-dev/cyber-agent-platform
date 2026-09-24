@@ -852,6 +852,37 @@ reconciliation inherits from that candidate rather than re-certifying it.
   each named digest with what the `1.0.6-rc1` tag resolves to on ghcr. The report carries the
   correction as an erratum (§R.1). No tag was created, no image was published, and no certification
   round was re-run for any of this.
+- **F-56 remediation designed, not implemented: the object store has no public vendor source any
+  more.** `docs/quality/cap-f56-object-store-remediation-design-2026-09-24.md` records one read-only
+  measurement pass per question. Quay's repository API answers 401 `Requires authentication` for
+  `minio/minio` and `minio/mc` while `minio/console` and `minio/warp` in the same namespace answer 200
+  as public, so the repository went **private rather than deleted**; and no anonymously pullable,
+  vendor-supported community image exists anywhere measured -- Docker Hub 401 for tag and digest,
+  `public.ecr.aws/minio/minio` 404 `NAME_UNKNOWN`, `ghcr.io/minio/minio` refused an anonymous token,
+  and neither `mirror.gcr.io` nor AWS's `upstream-mirror` serves the pinned digest. The rebuild route is
+  closed too: at that tag the vendor's `Dockerfile.release` downloaded and minisign-verified the
+  *prebuilt binary* from the now-410 `dl.min.io`, so release images were never compiled from the signed
+  git tag and cannot be rebuilt to the same digest. On our side of the transaction: a public package in
+  this project's own ghcr namespace was pulled anonymously through exactly the handshake
+  `scripts/release/third_party_registry_evidence.py` performs, so a mirror needs no generator change --
+  but the lock schema demands a non-empty `tag` and the generator resolves `{registry}/{repository}:{tag}`
+  before asserting the digest, so **a mirror must publish the tag, not only the digest**; and under the
+  outage the E2 gate already refuses and leaves the tracked artifact untouched rather than writing weak
+  evidence (`--check` → `refused: … answered HTTP 401`). AIStor at `quay.io/minio/aistor/minio` is
+  anonymously pullable (measured 200 with digest arithmetic) but needs a licence key to install and its
+  licence limits redistribution, so it is a product decision rather than a re-pin. Two things were
+  measured rather than asserted about the change itself: a deliberately half-applied migration fails
+  **9** lock-contract tests, including the `image_ref`-composition invariant and the rule that the
+  tracked artifact must measure the new coordinate; and `classify_diff.py` returns
+  `RECERTIFICATION_REQUIRED` / `runtime_affecting=true` for `docker-compose.yml` and
+  `deployment/third-party-images.json`, so any remediation freezes a **new** candidate -- `dea8c6f`'s
+  certification stands as history for the release it certified.
+  **F-56 REMEDIATION DESIGN READY — IMPLEMENTATION REQUIRES APPROVAL.** The two questions that decide
+  mirroring the exact bytes versus replacing the dependency: does any cache still hold
+  `sha256:a1ea29fa…`, and may the project re-host it -- the vendor's trademark policy permits conveying
+  *unchanged* official artifacts and is silent on container images, which is a legal question to answer
+  rather than assume. Nothing was pushed to any registry, no tag created, no certification dispatched,
+  no timeout raised, no credential invented, and sealed `v1.0.6-rc1` re-audited intact.
 
 ## [1.0.5] - 2026-09-07
 

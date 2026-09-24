@@ -1008,7 +1008,7 @@ listed so that an import name is not mistaken for a working capability.
     (§J item 7), not as a product failure and not as a timeout to be increased.
 
 23. **The pinned MinIO image is no longer pullable anonymously, and every certification authority
-    needs it (F-56) — BLOCKING, third-party availability.** Found by following F-55's red rather than
+    needs it (F-56) — BLOCKING, third-party availability; remediation DESIGNED, awaiting approval.** Found by following F-55's red rather than
     explaining it away. The runner's own words, from `cap-linux-certification.yml`'s `Initialize
     containers` step at `a8d3fb2` (job `107647936396`, run `36004166112`, `13:13:26Z`):
 
@@ -1074,6 +1074,37 @@ listed so that an import name is not mistaken for a working capability.
 
     What must not happen is treating this as flakiness: F-55's timeout is a symptom, and lengthening it
     converts an unavailable dependency into a 120-second wait followed by the same red.
+
+    **Design round, same day (`cap-f56-object-store-remediation-design-2026-09-24.md`).** Measured, in
+    one read-only pass each:
+    (a) the repository is **private, not deleted** -- Quay's repository API answers 401
+    `Requires authentication` for `minio/minio` and `minio/mc` while `minio/console` and `minio/warp` in
+    the same namespace answer 200 with `"is_public": true`; 404 would have meant gone.
+    (b) **No anonymously pullable vendor-supported community image exists** anywhere measured: Docker Hub
+    401 for tag and digest, `public.ecr.aws/minio/minio` 404 `NAME_UNKNOWN`, `ghcr.io/minio/minio` refused
+    an anonymous token, `mirror.gcr.io` and AWS's `upstream-mirror` 404 the pinned digest. So the exact
+    bytes are, today, obtainable only from an authenticated pull or from someone's existing cache -- which
+    is question one of two that decides the remediation.
+    (c) **The rebuild path is closed too**: at that tag the vendor's `Dockerfile.release` downloads and
+    minisign-verifies the *prebuilt binary* from `dl.min.io` (now 410), and the plain `Dockerfile`
+    `FROM minio/minio:latest`, so release images were never compiled from the git tag and cannot be
+    rebuilt to the same digest.
+    (d) **The destination works**: a public package in this project's own ghcr namespace was pulled
+    anonymously through exactly the handshake the E2 generator performs
+    (`ghcr.io/laolaola278-dev/cap-backend:1.0.6-rc1` -> 200, digest matching the sealed release's), so a
+    mirror needs no generator change -- but the lock schema requires a non-empty `tag` and
+    `collect_targets` resolves `{registry}/{repository}:{tag}` and asserts the digest afterwards, so **a
+    mirror must publish the tag**, not only the digest.
+    (e) The E2 gate already behaves correctly under the outage: `--check` refuses and leaves the tracked
+    artifact untouched rather than writing weak evidence.
+    (f) AIStor (`quay.io/minio/aistor/minio`) is anonymously pullable -- measured 200 with digest
+    arithmetic -- but requires a licence key to install and its licence limits redistribution, so it is a
+    product/licence decision, not a re-pin.
+    Status: **design ready, implementation requires approval**. The two questions that decide Option B
+    (mirror the exact bytes) versus Option D (replace the dependency) are whether any cache still holds
+    `sha256:a1ea29fa…`, and whether the project may re-host it -- the vendor's trademark policy permits
+    conveying *unchanged* official artifacts and is silent on container images, which is a legal question
+    to answer, not to assume either way.
 
 ## Live verification against a real PostgreSQL server
 
