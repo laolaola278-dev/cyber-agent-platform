@@ -868,6 +868,43 @@ listed so that an import name is not mistaken for a working capability.
     new candidate and its recertification rounds, which is why it belongs with whichever batch next
     touches the release graph rather than being the only reason for one.
 
+20. **Every push to `main` makes the tip uncertified, and nothing tells the releaser what to run
+    (F-53) — OPEN, release-operations.** Measured, not reasoned: after the A2.2 candidate was
+    certified, two documentation commits landed above it, each triggering a **push**-mode GA round.
+    Running `RELEASE_GATE_PY` verbatim with `CERT_TAG_SHA` at the newer tip and a hypothetical
+    `v1.0.7-rc1` returns `verdict: FAIL` with four failures, all from
+    `cap-ga-certification.yml`:
+
+    ```
+    records mode='development', which is not 'final-strict'
+    records full_ga_certified=False, which is not True
+    gate_summary.planned=5, requires 0
+    gate_summary counts 35 of 40 gates passed, so a gate has no PASS behind it
+    ```
+
+    The run it read was `35983433128` (event `push`, `ea1fb02`) -- green, newer than the strict
+    round `35971523354` (`workflow_dispatch`, `dea8c6f`) -- and the gate declined to look past it.
+    That decline is F-33's whole design: *"a rejected artifact does not send the gate looking
+    further back: the newest green release-scoped round is the one this release would be relying
+    on."* **The refusal is correct and must not be relaxed.** Same run, same discipline, visible in
+    two other places: Linux's push-run at `ea1fb02` was passed over as
+    `cap-production-certification: ['skipped']` and the release-layer run two commits back was used
+    instead, while K8s -- an unconditional job -- was accepted one commit back.
+
+    Operational consequence: to tag anything newer than a certified candidate you must produce
+    certification *for that commit* -- a `workflow_dispatch` of `cap-ga-certification.yml` with
+    `ga_strict=true` (about 70 minutes), and of `cap-linux-certification.yml` with `layer=release`
+    if no release-layer round covers it, plus a soak if the reliability run is older than the tip.
+    There is no cheap way around this and none is proposed.
+    What would improve it is a sentence, not a gate: the refusal currently says what is wrong and
+    never says what to run. `verify-certification` knows the tag sha, the required job set and which
+    authority rejected which artifact, so it can print the dispatch that would satisfy it --
+    workflow file, inputs, at the sha being tagged. The alternative, running strict GA on every push,
+    is the cost decision `cap-ga-certification.yml` already records in its own comment (a soak plus
+    40 strict gates per push) and is not recommended here. Filed as a release-operations item; it is
+    explicitly **not** an invitation to soften F-33, and any fix must leave the four refusals above
+    firing exactly as they did.
+
 ## Live verification against a real PostgreSQL server
 
 The post-1.0.5 delivery audit ran the shipped application -- not the test
