@@ -293,7 +293,7 @@ testing). **The one thing a release must do first** is §J item 1: choose the ti
 certification true of that commit, because the gate at the current tip refuses, correctly, and will
 keep refusing every tip whose newest GA round came from a push.
 
-### M. What the push confirmed, including about itself
+## M. What the push confirmed, including about itself
 
 The four closure commits (`ea1fb02`, `6eb2ecc`, `8be2962`, `87d86b3`) are pushed. CI at the resulting
 tip is **success with every job green** -- run `35992258088` -- which is the Linux authority for the
