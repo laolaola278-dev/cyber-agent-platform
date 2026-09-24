@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Name the image inside an OCI archive or layout directory, so a base can be bound without a registry.
 
 Two CAP images are built on top of another CAP image: `cap-sandbox-browser` on

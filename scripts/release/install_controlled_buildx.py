@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Install the one buildx executable a CAP release-equivalent build is allowed to run under.
 
 Batch 3 A2.1 proved this mechanism in a non-publishing job; A2.2 puts the same mechanism under
