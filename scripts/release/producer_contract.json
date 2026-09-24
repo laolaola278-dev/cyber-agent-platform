@@ -1,0 +1,287 @@
+{
+  "contract": "cap-post-rc-batch-3-producer-contract",
+  "purpose": "One file that states what the producer of a CAP image has to be, and what a record has to say about it. The `inherited_from_a2_1` block is frozen; `a2_2_obligations` is the target the same batch has to reach. Read them as two different claims: one is measured evidence, the other is a promise.",
+  "status": {
+    "inherited_from_a2_1": "FROZEN -- A2.2 may add to a grow-only list in here, never take anything away. backend/tests/test_producer_contract_freeze.py executes that rule against the recorder's own output, so 'not weakened' is a check rather than a sentence.",
+    "a2_2_obligations": "OPEN -- recorded here so the reader of a release record can hold it against a stated target instead of against whatever the code happened to grow."
+  },
+  "frozen_on": "2026-09-24",
+  "frozen_by": "BATCH 3 A2.2 Stage 0, before any change to release build behaviour",
+  "inherited_from_a2_1": {
+    "batch": "3 Step 2 stage A2.1",
+    "verdict": "BATCH 3 A2.1 PRODUCER CONFORMING",
+    "verdict_recorded_in": "docs/quality/cap-post-rc-batch-3-producer-authority-2026-09-23.md \u00a7H",
+    "evidence": {
+      "acceptance_head": "b98eb3b",
+      "acceptance_run": "35868200920",
+      "acceptance_artifact": "cap-3a-producer-observation",
+      "full_ci_pass_head": "9983705",
+      "full_ci_pass_run": "35876065468",
+      "set_file": "producer-set.json",
+      "note": "The acceptance head is the one whose artifact carries the five CONFORMING records and authorizes_a2_2; the later docs heads re-ran CI on top of it and reproduced the same verdict."
+    },
+    "producer": {
+      "buildx": {
+        "version": "v0.37.1",
+        "git_commit": "0b265a9f62db554fa9aba6dd19e1bd5704bc7d8a",
+        "sha256": "sha256:9447199cdb435f25880548343c128a4b6650e8891ee598905d8d29d39a8e359b",
+        "pin_file": "scripts/release/controlled_buildx.json",
+        "download_url": "https://github.com/docker/buildx/releases/download/v0.37.1/buildx-v0.37.1.linux-amd64",
+        "asset_id": 557511570,
+        "asset_size_bytes": 65798306,
+        "identity_by": [
+          "the version line the binary prints",
+          "the git commit the same line prints, against the pin",
+          "sha256 of the bytes at the path that ran, against the pin",
+          "the argv the build recorded before running, whose argv[0] is that path"
+        ],
+        "why_four_reads": "A standalone buildx prints no install path -- CI measured that at every A2.1 head -- so no single field identifies the file that executed the build. A replaced release asset passes the version and fails the hash; a job that quietly went back to `docker buildx` passes both and fails the invocation.",
+        "never_invoked_as": ["docker buildx", "docker-buildx through the CLI plugin dispatch"]
+      },
+      "builder": {
+        "driver": "docker-container",
+        "name_must_be_explicit": true,
+        "default_builder_accepted": false,
+        "name_read_back_by": "inspect --builder=<name>, never from the current/default builder",
+        "buildkit_image": "moby/buildkit:v0.33.0",
+        "buildkit_index_digest": "sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3",
+        "buildkit_digest_kind": "manifest-list (multi-arch index), as the lock records it",
+        "a2_1_builder_name": "cap3a-producer-observation",
+        "note": "The driver and the explicit-name rule are the frozen part. The name itself is per-path, because the release path and the observation path must not share one builder and call the agreement evidence."
+      },
+      "authorities": [
+        "configured.lock \u2014 deployment/third-party-images.json",
+        "configured.workflow \u2014 the workflow job's own literals, read out of the YAML file",
+        "configured.controlled \u2014 scripts/release/controlled_buildx.json",
+        "observed.* \u2014 independent read-back of the runner, the CLI, the named builder, its container, and a registry read of the pinned reference"
+      ],
+      "comparisons": {
+        "fields_meaning": "`required` are the answers the verdict is made of; `blocking` may force a MISMATCH without being required; `fields` lists every name the comparison is built from, scored or not, because a rename that keeps the same meaning can preserve a list's length while emptying its content.",
+        "lock_vs_workflow": {
+          "fields": ["buildx_version", "buildkit_repository", "buildkit_digest",
+                     "buildkit_digest_setup_action"],
+          "required": ["buildx_version", "buildkit_digest", "buildkit_digest_setup_action"],
+          "blocking": []
+        },
+        "controlled_pin_vs_lock": {
+          "fields": ["buildx_version", "buildx_source"],
+          "required": ["buildx_version"],
+          "blocking": []
+        },
+        "workflow_vs_observed": {
+          "fields": [
+            "buildx_version",
+            "builder_name",
+            "driver",
+            "controlled_buildx_version",
+            "controlled_buildx_commit",
+            "controlled_buildx_path",
+            "controlled_buildx_integrity",
+            "build_invoked_controlled_executable",
+            "cli_plugin_buildx_version"
+          ],
+          "required": [
+            "buildx_version",
+            "builder_name",
+            "driver",
+            "controlled_buildx_version",
+            "controlled_buildx_commit",
+            "controlled_buildx_integrity",
+            "build_invoked_controlled_executable"
+          ],
+          "blocking": ["controlled_buildx_path"],
+          "scored_buildx_from": "the controlled executable once it answers; the runner's plugin only as a stated fallback",
+          "why_the_path_blocks_without_being_required": "A field that is only sometimes observable cannot be required without making the comparison permanently UNKNOWN, but when it IS observed and contradicts the declaration that is a disagreement, not information."
+        },
+        "lock_vs_observed": {
+          "fields": ["buildx_version", "buildkit_digest", "buildkit_child_config",
+                     "pinned_index_resolution"],
+          "required": ["buildx_version", "buildkit_digest", "buildkit_child_config"],
+          "blocking": []
+        },
+        "producer_alignment": {
+          "components": [
+            "lock_vs_workflow",
+            "workflow_vs_observed",
+            "lock_vs_observed",
+            "controlled_pin_vs_lock"
+          ],
+          "rule": "MISMATCH if any component disagrees, else UNKNOWN if any could not be read, else CONFORMING. Built from the named comparisons; it replaces none of them."
+        }
+      },
+      "digest_layers": {
+        "layers": {
+          "manifest": {
+            "field": "buildkit_digest",
+            "declared_side": "the pinned index digest, and the index's children as the registry names them",
+            "observed_side": "the running image's RepoDigests, read from the image the container reports"
+          },
+          "config": {
+            "field": "buildkit_child_config",
+            "declared_side": "one registry level down: the config.digest of the platform child the running image's own platform selects",
+            "observed_side": "the container's .Image"
+          }
+        },
+        "rule": "No comparison crosses layers. A conforming config digest cannot answer the manifest question, and a manifest answer cannot stand in for the config layer.",
+        "not_required_on_purpose": {
+          "claim": "running image RepoDigests entry == pinned platform child manifest digest",
+          "why_not": "CI measured digest_relation = same_digest at the conforming heads: a daemon that pulled name:tag@<index-digest> records the *index* digest in RepoDigests, not the child's. Requiring equality with the child would call the conforming case a mismatch.",
+          "what_carries_the_claim_instead": "membership of the pinned index's child set, plus config-layer equality",
+          "a2_2_must_not": "promote that equality to a required field to look stricter, nor demote child-set membership or config equality to score one layer against the other"
+        }
+      },
+      "instrument_contract": {
+        "meaning": "Fields a record must carry to be an observation at all. A value being disagreed with is never a gap here; a value the instrument promised and could not read always is.",
+        "required_paths": [
+          "comparison.lock_vs_observed.digest_relation.status",
+          "comparison.lock_vs_workflow.status",
+          "comparison.workflow_vs_observed.status",
+          "configured.controlled.expected_git_commit",
+          "configured.controlled.expected_sha256",
+          "configured.controlled.version",
+          "configured.lock.buildkit_digest",
+          "configured.lock.buildx_version",
+          "configured.workflow.buildx_version",
+          "configured.workflow.controlled_buildx_path",
+          "observed.builder.builder",
+          "observed.builder.driver",
+          "observed.builder.nodes",
+          "observed.build_invocation.argv",
+          "observed.controlled_buildx.commit",
+          "observed.controlled_buildx.integrity.computed",
+          "observed.controlled_buildx.integrity.expected",
+          "observed.controlled_buildx.path_status",
+          "observed.controlled_buildx.version",
+          "observed.docker_cli_plugin.candidates",
+          "observed.docker_cli_plugin.resolves_to",
+          "observed.engine.version",
+          "observed.executing_buildx.resolved_path",
+          "observed.executing_buildx.version"
+        ],
+        "build_mode_exemptions": [
+          "configured.controlled",
+          "configured.lock.buildx_source",
+          "configured.workflow",
+          "observed.builder",
+          "observed.build_invocation",
+          "observed.controlled_buildx"
+        ],
+        "build_mode_exemption_meaning": "Fields the *observation* path promises that the legacy release build path was exempt from, because until A2.2 it declared no workflow pins, no controlled executable, no named builder and no recorded invocation. A2.2 gives that path all four, so this list may only get shorter: a new entry here would be a promise withdrawn, which is the weakening this freeze exists to catch.",
+        "never_gap": "The *values*. `--self-check` exits non-zero on a broken instrument, and a genuine MISMATCH still exits 0, because measuring a disagreement is the job and destroying it is not."
+      },
+      "kept_fact": {
+        "cli_plugin_buildx_version": "Present in workflow_vs_observed.fields with scored=false at every A2.1 head. `docker buildx version` on a hosted runner is non-deterministic (v0.37.0 at two heads, v0.37.1 at others); the field keeps F-44's measurement on the page instead of deleting it to make the record look clean.",
+        "a2_2_must_not": "drop the field, or score it as though the release build went through it"
+      },
+      "set_acceptance": {
+        "expected_images": [
+          "cap-backend",
+          "cap-frontend",
+          "cap-sandbox-http",
+          "cap-sandbox-browser",
+          "cap-egress-proxy"
+        ],
+        "per_image": [
+          "all four named comparisons CONFORMING",
+          "producer_alignment CONFORMING",
+          "the build's recorded exit status 0",
+          "no contract gaps",
+          "every base image bound by digest, and a non-empty base list"
+        ],
+        "for_the_set": [
+          "one round: every record carries the same source revision and run id",
+          "exactly one record per expected image",
+          "no record for an image the set does not declare"
+        ],
+        "refuses": "4/5, an averaged-out set, a set assembled from whichever runs looked good, and a failed build whose producer read perfectly."
+      }
+    },
+    "non_weakening": {
+      "how_to_read": "Each rule names the machine-readable thing it was turned into, because a prohibition that only exists in prose is the kind of claim this project has already had to audit once (F-33's 'the gate reads X' series).",
+      "rules": [
+        {
+          "claim": "A required-field list may grow and never shrink.",
+          "check": "test_a2_2_may_not_shrink_any_required_field_list"
+        },
+        {
+          "claim": "A blocking-field list may grow and never shrink.",
+          "check": "test_a2_2_may_not_shrink_any_blocking_field_list"
+        },
+        {
+          "claim": "A comparison may not be dropped, merged into another, or replaced by one boolean.",
+          "check": "test_every_frozen_comparison_is_still_answered_separately"
+        },
+        {
+          "claim": "The runner's plugin version stays recorded and unscored.",
+          "check": "test_the_runner_plugin_answer_stays_recorded_and_unscored"
+        },
+        {
+          "claim": "The instrument contract may not lose a promised field.",
+          "check": "test_the_instrument_contract_may_grow_but_not_shrink"
+        },
+        {
+          "claim": "Fewer build-mode exemptions, never more.",
+          "check": "test_a2_2_narrows_the_build_mode_exemptions_rather_than_widening_them"
+        },
+        {
+          "claim": "The pinned identity in this file is the identity the repository ships.",
+          "check": "test_the_frozen_identity_is_the_identity_the_repository_ships"
+        },
+        {
+          "claim": "The layering refusal stays a refusal: the two digest layers answer separately.",
+          "check": "test_the_digest_layers_stay_separate_in_the_record"
+        },
+        {
+          "claim": "The frozen acceptance is what the scorer still applies, row by row.",
+          "check": "test_the_frozen_set_acceptance_is_what_the_scorer_applies"
+        },
+        {
+          "claim": "This file's own list of enforcement checks may not point at deleted tests.",
+          "check": "test_every_enforcement_check_the_freeze_cites_still_exists"
+        }
+      ]
+    }
+  },
+  "a2_2_obligations": {
+    "status": "NOT YET EVIDENCED -- recorded here as the target; a release record satisfies it only when the gate reads it and a test proves the reader refuses without it.",
+    "applies_to": "the path that builds what a release publishes, and the CI job that dry-builds the same set",
+    "obligations": {
+      "one_install_mechanism": "A single script installs the controlled buildx for every path that builds a release image: download, verify the checksum, read the version and commit back, create the named builder, then build. A checksum mismatch fails before the downloaded binary is ever executed, and no path writes to a docker CLI plugin directory.",
+      "build_command": "<absolute controlled buildx path> build --builder <explicit name>, for all five images, in the release jobs and in the CI dry jobs alike. `docker buildx build` builds no release image.",
+      "base_handoff": "The published path keeps its real dependency: cap-sandbox-http is pushed, and cap-sandbox-browser binds ghcr.io/<owner>/cap-sandbox-http@<index digest>. The observation-only oci-layout named context does not become the release's hand-off, and the two paths record which hand-off they used.",
+      "evidence": "One producer record per image, written by the job that built it, binding: image name; source revision; run identity; the build invocation it describes; buildx path, version, commit and integrity; builder name and driver; the BuildKit configured index digest, the running RepoDigest and the platform child-config relationship; the named comparisons; producer_alignment.",
+      "authority": "The build job performs the read-back. release.yml does not reconstruct producer identity from configuration files and call the reconstruction evidence.",
+      "reader": "release-image-completeness requires a producer record for all five images and blocks publication on MISMATCH, UNKNOWN, ERROR, MISSING, a record from another run, a record whose source revision is not the candidate, and a duplicate or ambiguous record for one image.",
+      "diagnostics": "MISMATCH, ERROR, MISSING and AMBIGUOUS stay separate words in the output; none of them collapses into a generic false."
+    },
+    "evidence_fields": [
+      "image",
+      "source_revision",
+      "run_id",
+      "job",
+      "build_invocation",
+      "observed.controlled_buildx",
+      "observed.builder",
+      "configured.lock.buildkit_digest",
+      "observed.builder.running_image.digest",
+      "pinned_index_resolution.platform_child",
+      "comparison",
+      "producer_alignment"
+    ],
+    "close_only_after_recertification": ["F-44", "F-47"]
+  },
+  "sealed_release": {
+    "tag": "v1.0.6-rc1",
+    "lifecycle": "CLOSED",
+    "a2_2_rebuilds_it": false,
+    "a2_2_promotes_or_reruns_it": false,
+    "stable_release": "v1.0.5",
+    "what_a2_2_changes_instead": "How a *future* release would be produced. The published images, the tag, the release assets and F-25's evidence run are not material to this batch, and a switched-over build path says nothing about the bytes already published.",
+    "re_read_after_every_push": "Stage 14 of the approval: the sealed release is audited again at the end, because 'nothing moved' has to be measured rather than assumed by whoever made the change."
+  },
+  "checks_not_run_here": {
+    "F-44_open_half": "The runner's own `docker buildx` still answers non-deterministically (v0.37.0 at some heads). That stays recorded and unresolved: A2.2 removes the release path's *dependence* on it, which is what F-44's disposition turns on, and does not make the runner's plugin become the pin.",
+    "F-47": "No gate reads any producer field until A2.2 Stage 5 lands and a test proves the reader refuses. This file freezes what that reader must require; it is not itself a reader.",
+    "why_the_difference_matters": "A contract file that nothing consumes is exactly the artifact F-47 was filed over. The freeze here is enforced by tests; the *publication* effect is enforced by the completeness gate, which is a later stage of the same approval."
+  }
+}
