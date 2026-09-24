@@ -1146,28 +1146,40 @@ def test_the_observation_job_publishes_nothing() -> None:
 
 
 def test_the_observation_job_builds_with_the_controlled_executable_not_the_plugin() -> None:
-    """A2.1's whole point, checked as text: no build in this job goes through `docker buildx`.
+    """A2.1's point, checked as text: no build in this job goes through `docker buildx`.
 
-    The runner's plugin is still *read* -- that is F-44's evidence -- but the five builds and
-    the builder creation all name the installed path, and nothing in the job writes to a
-    plugin directory. A job that installed a pinned binary and then built with `docker buildx`
-    would produce exactly the record A2.1 exists to prevent: a producer that looks pinned.
+    The runner's plugin is still *read* -- that is F-44's evidence -- but the five builds and the
+    builder creation all name the installed path, and nothing in the job writes to a plugin
+    directory. A job that installed a pinned binary and then built with `docker buildx` would
+    produce exactly the record A2.1 exists to prevent: a producer that looks pinned.
+
+    BATCH 3 A2.2 moved the install recipe itself into `scripts/release/install_controlled_buildx.py`
+    so the release jobs run the same mechanism instead of a copy. The assertions that used to live
+    here as greps over job text -- the hash happening before anything is executed, a plugin target
+    refused before a byte is downloaded, the version read gating the builder creation -- are now
+    behavioural tests in `backend/tests/test_controlled_buildx_install.py`, which is a stronger
+    place for them: they exercise the one implementation rather than the shape of one caller. What
+    stays here is the job's side of the bargain, which is which values it hands to that mechanism.
     """
     script = observation_scripts()
     assert "docker buildx build" not in script, (
         "the build must run through the controlled executable, not the CLI plugin")
     assert "docker buildx create" not in script, "the named builder is created by the pinned binary"
-    assert '"$CAP_OBSERVE_BUILDX_PATH" create' in script
-    assert '"$CAP_OBSERVE_BUILDX_PATH" version' in script, (
-        "the installed binary is asked who it is before anything is built with it")
-    assert "sha256sum --check --strict" in script, (
-        "the bytes are verified against the repository's pin before they are executed")
-    assert '*/cli-plugins/*' in script, (
-        "the job must refuse to install into a docker CLI plugin directory")
+    assert "docker buildx version" not in script, (
+        "the runner's plugin is read by the recorder and the installer, not restated here")
+    for argument in ('--pin "$CAP_OBSERVE_BUILDX_PIN"', '--path "$CAP_OBSERVE_BUILDX_PATH"',
+                     '--builder "$CAP_OBSERVE_BUILDER"', '--driver "$CAP_OBSERVE_DRIVER"',
+                     '--buildkit "$CAP_OBSERVE_BUILDKIT"',
+                     "--lock deployment/third-party-images.json"):
+        assert argument in script, f"the job no longer hands the mechanism {argument}"
+    assert 'BX="$CAP_OBSERVE_BUILDX_PATH"' in script, "the builds use the installed path"
+    assert 'COMMON=(--builder "$CAP_OBSERVE_BUILDER"' in script, (
+        "every build names the builder the mechanism created")
     assert "/usr/libexec/docker/cli-plugins" not in script, (
         "the runner's plugin is read by the recorder, never written by the job")
-    install_before_build = script.index("sha256sum --check") < script.index("build \"${COMMON")
-    assert install_before_build, "a build that runs before the hash check verifies nothing"
+    install_call = script.index("install_controlled_buildx.py")
+    assert install_call < script.index('build "${COMMON'), (
+        "a build that runs before the install verifies nothing")
 
 
 def test_the_observation_job_exercises_all_five_images_through_one_producer() -> None:

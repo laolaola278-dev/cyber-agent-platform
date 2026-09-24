@@ -26,9 +26,9 @@
     "verified_by": "sha256sum of the file at install.path, read back by the recorder as observed.controlled_buildx.integrity.computed"
   },
   "install": {
-    "path": "/tmp/cap-a21-controlled-buildx/buildx",
-    "directory": "/tmp/cap-a21-controlled-buildx",
-    "path_is_a_literal_on_purpose": "configured.workflow must be a claim about the repository. A path assembled from ${{ runner.temp }} or $GITHUB_ENV exists only after the runner expands it, so the recorder would be comparing an expression instead of a pin. The job declares this absolute path in its own env: block, and the controlled binary's version line -- which a standalone buildx prints as its own argv[0] -- is read back against it.",
+    "path": "/tmp/cap-controlled-buildx/buildx",
+    "directory": "/tmp/cap-controlled-buildx",
+    "path_is_a_literal_on_purpose": "configured.workflow must be a claim about the repository. A path assembled from ${{ runner.temp }} or $GITHUB_ENV exists only after the runner expands it, so the recorder would be comparing an expression instead of a pin. Each job declares this absolute path in its own env: block, and the installer refuses a target it does not match. Batch 3 A2.1 named the directory for the batch that introduced it; A2.2 renamed it to name the mechanism, because the release jobs install through it too.",
     "never_written_to": [
       "/usr/libexec/docker/cli-plugins/docker-buildx",
       "/usr/local/lib/docker/cli-plugins/docker-buildx",

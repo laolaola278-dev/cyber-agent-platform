@@ -678,6 +678,7 @@ def load_controlled_pin(path: str | None) -> dict:
             "expected_sha256": (doc.get("integrity") or {}).get("expected"),
             "integrity_algorithm": (doc.get("integrity") or {}).get("algorithm"),
             "download_url": (doc.get("source") or {}).get("download_url"),
+            "asset_size_bytes": (doc.get("source") or {}).get("asset_size_bytes"),
             "platform": (doc.get("source") or {}).get("platform"),
             "declared_path": (doc.get("install") or {}).get("path")}
 

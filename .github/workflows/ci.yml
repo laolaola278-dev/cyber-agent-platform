@@ -498,7 +498,7 @@ jobs:
       CAP_OBSERVE_DRIVER: docker-container
       CAP_OBSERVE_BUILDKIT: moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
       CAP_OBSERVE_BUILDX_PIN: scripts/release/controlled_buildx.json
-      CAP_OBSERVE_BUILDX_PATH: /tmp/cap-a21-controlled-buildx/buildx
+      CAP_OBSERVE_BUILDX_PATH: /tmp/cap-controlled-buildx/buildx
     steps:
       - uses: actions/checkout@v6
       # The same action ref, the same buildx version and the same BuildKit
@@ -510,46 +510,35 @@ jobs:
         with:
           buildx-version: v0.37.1
           driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
-      - name: Install the controlled buildx (never into a CLI plugin directory)
+      - name: Install the controlled buildx and create the named builder
         run: |
           set -euo pipefail
-          # Refuse the runner's own plugin paths before writing anything. The
-          # point of A2.1 is that the producer is selected, not that the system
-          # binary is replaced -- overwriting the directory the docker CLI
-          # dispatches from would make this job a mutable machine again and
-          # destroy the very evidence it is supposed to be reading.
-          case "$CAP_OBSERVE_BUILDX_PATH" in
-            */cli-plugins/*|*/docker-buildx)
-              echo "refusing to install into a docker CLI plugin path" >&2
-              exit 1
-              ;;
-          esac
-          URL="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["source"]["download_url"])' "$CAP_OBSERVE_BUILDX_PIN")"
-          EXPECTED="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["integrity"]["expected"].split(":",1)[1])' "$CAP_OBSERVE_BUILDX_PIN")"
-          mkdir -p "$(dirname "$CAP_OBSERVE_BUILDX_PATH")"
-          curl -sSL --fail --retry 3 --max-time 900 -o "$CAP_OBSERVE_BUILDX_PATH" "$URL"
-          # Hashed before it is ever executed, against the digest the repository
-          # carries rather than one fetched from the server that sent the file:
-          # a replaced or truncated release asset has to fail here instead of
-          # becoming a build whose CLI happens to print the right version.
-          echo "$EXPECTED  $CAP_OBSERVE_BUILDX_PATH" | sha256sum --check --strict
-          chmod 0755 "$CAP_OBSERVE_BUILDX_PATH"
-          "$CAP_OBSERVE_BUILDX_PATH" version
-          # What `docker buildx` would have dispatched to on this runner, read
-          # for the record and changing nothing.
-          docker buildx version || echo "the runner's docker buildx did not answer"
-      - name: Create the named, non-publishing observation builder
-        run: |
-          set -euo pipefail
-          "$CAP_OBSERVE_BUILDX_PATH" create --name "$CAP_OBSERVE_BUILDER" \
+          # BATCH 3 A2.2: this is the same mechanism the release jobs use, not a copy of it.
+          # In order, and each one is why the next can be trusted: it refuses a docker CLI
+          # plugin target before downloading anything, hashes the bytes against the pin that
+          # ships and stops there on a mismatch (never executing unverified bytes), installs,
+          # asks the installed binary which version and commit it is, checks the BuildKit
+          # reference it was given against deployment/third-party-images.json, and only then
+          # creates the named builder with that executable. The runner's own `docker buildx`
+          # answer is recorded in the facts file as a diagnostic, which is what F-44 is made
+          # of and why the plugin path is never written to.
+          mkdir -p outputs/producer-observation
+          python3 scripts/release/install_controlled_buildx.py \
+            --pin "$CAP_OBSERVE_BUILDX_PIN" \
+            --path "$CAP_OBSERVE_BUILDX_PATH" \
+            --builder "$CAP_OBSERVE_BUILDER" \
             --driver "$CAP_OBSERVE_DRIVER" \
-            --driver-opt "image=$CAP_OBSERVE_BUILDKIT" --use
-          "$CAP_OBSERVE_BUILDX_PATH" inspect --bootstrap "$CAP_OBSERVE_BUILDER"
+            --buildkit "$CAP_OBSERVE_BUILDKIT" \
+            --lock deployment/third-party-images.json \
+            --facts outputs/producer-observation/buildx-install.json
       - name: Build all five CAP images through that builder (untagged, unpublished)
         run: |
           set -uo pipefail
           OUT=outputs/producer-observation
-          rm -rf "$OUT" && mkdir -p "$OUT"
+          # No `rm -rf "$OUT"`: the install step above already wrote buildx-install.json here, and
+          # a fresh runner has no stale records to clear. Wiping the directory is what made that
+          # evidence disappear between the step that produced it and the artifact that uploads it.
+          mkdir -p "$OUT"
           BX="$CAP_OBSERVE_BUILDX_PATH"
           # Every build writes down the argv it is about to run before running
           # it, then records its exit status into the same file. That is what
@@ -749,10 +738,11 @@ jobs:
         with:
           name: cap-3a-producer-observation
           # The OCI archives stay out (hundreds of MB each, and their digests are
-          # transcribed into the JSON); the records, the argv each build used, the
-          # exit codes, the logs, the buildx metadata files and the set verdict
-          # travel.
+          # transcribed into the JSON); the install facts, the records, the argv each
+          # build used, the exit codes, the logs, the buildx metadata files and the set
+          # verdict travel.
           path: |
+            outputs/producer-observation/buildx-install.json
             outputs/producer-observation/*.producer-evidence.json
             outputs/producer-observation/*.producer-evidence.stdout.json
             outputs/producer-observation/*.build-command.json
