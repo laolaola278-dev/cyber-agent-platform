@@ -1105,6 +1105,47 @@ listed so that an import name is not mistaken for a working capability.
     `sha256:a1ea29fa…`, and whether the project may re-host it -- the vendor's trademark policy permits
     conveying *unchanged* official artifacts and is silent on container images, which is a legal question
     to answer, not to assume either way.
+    The full design (options, migration order, validation matrix, classifier and recertification impact,
+    and the F-52 asset decision) is in
+    `docs/quality/cap-f56-object-store-availability-remediation-design-2026-09-25.md`, which supersedes
+    the 2026-09-24 §A–§P pass; the re-probe on 2026-09-25 found the subject still answering 401 with
+    two known-public controls in the same registry answering 200, so the status is unchanged and
+    `AVAILABILITY RECOVERED TEMPORARILY` was not triggered.
+
+24. **The third-party coordinate contract checks presence, not absence (F-57) — OPEN, contract gap.**
+    Measured, not inferred. In a throwaway worktree outside the repository, writing
+    `docker.io/minio/minio:RELEASE.2025-04-22T22-12-26Z` into `scripts/certification/setup.sh`
+    **beside** its correct line left `test_third_party_image_lock.py` at **30 passed, 0 failed**. Every
+    neighbouring mutation was caught — a mutable compose tag: 6 failures; compose/lock digest
+    disagreement: 4; half migration (user surface moved, certification surfaces did not): 5; lock fields
+    edited without recomposing `image_ref`: 4; a full migration whose evidence artifact was not
+    regenerated: 5; the coordinate added to a workflow the lock does not list: 1 — so this is one
+    specific hole, not general laxness.
+
+    Why: `_drift` asks whether `entry["image_ref"]` appears in a surface, and the derived-site test asks
+    whether a file *names* the coordinate. Neither asks whether a file names something it should not.
+    The one guard that does look for a forbidden reference, `_STALE_PATTERN`, carries two lookbehinds
+    (`(?<!quay\.io/)`, `(?<![\w./-])`) written so the lock's own `previous_ref` can say
+    `docker.io/minio/minio:…` without tripping — which lets a fully-qualified retired reference through
+    any live surface. It catches the bare form only.
+
+    Why it matters now: F-56's remediation **is** an act of retirement, and the migration that moves six
+    surfaces plus the lock to a new coordinate needs the old one to become impossible to leave behind in
+    a comment, a second service, or a copy-pasted block.
+
+    What closes it, with the discipline this repository already applies elsewhere: (1) retirements become
+    **data, not a regex** — a `retired_refs` list in `deployment/third-party-images.json`
+    (`coordinate`, `status`, `retired_on`) with one parameterized guard failing on any retired form,
+    bare, prefixed, pinned or mutable, in any live surface, excluding the lock's own history by field
+    rather than by lookbehind; (2) listed surfaces assert **exclusivity** — the locked `image_ref`
+    present *and* no other reference to that repository path; (3) each new guard is proven by a mutation
+    that must fail (M1a's shape, including the quay coordinate once retired) **and** one that must not
+    (a prose-only edit outside every scanned surface, which passed cleanly at 30/30).
+
+    A harness fact recorded beside it because it invalidates measurements: `_surface_files()` drops any
+    path containing `_tmp`, so a throwaway worktree placed under `_tmp/` loses its own Dockerfiles and
+    fails the derived-unlisted test on an **unmutated baseline**. Controls run in that position mean
+    nothing; run them outside the repository, as these were.
 
 ## Live verification against a real PostgreSQL server
 

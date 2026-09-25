@@ -883,6 +883,32 @@ reconciliation inherits from that candidate rather than re-certifying it.
   *unchanged* official artifacts and is silent on container images, which is a legal question to answer
   rather than assume. Nothing was pushed to any registry, no tag created, no certification dispatched,
   no timeout raised, no credential invented, and sealed `v1.0.6-rc1` re-audited intact.
+- **F-56 design, second pass (Stage 1–13): the source is private rather than gone, the pipeline is
+  healthy, and one contract gap surfaced.** `docs/quality/cap-f56-object-store-availability-remediation-design-2026-09-25.md`
+  supersedes the §A–§P pass of the previous day. A timestamped re-probe (`2026-09-25T02:31:11Z`–`02:31:40Z`)
+  ran the subject against **two known-public controls in the same registry**: `coreos/etcd` and
+  `prometheus/prometheus` each issued an anonymous token, returned 200 for the tag and for the digest,
+  round-tripped byte-identically and reported `"is_public": true`, while `minio/minio` returned **401**
+  on every one of those calls and 401 `Requires authentication` on the repository API where its
+  siblings answer 200 -- so the coordinate is *closed to anonymous reads*, not deleted, and
+  `AVAILABILITY RECOVERED TEMPORARILY` was not triggered. The vendor-side answer is
+  **NO PUBLIC VENDOR-SUPPORTED ANONYMOUS SOURCE FOUND**, recorded per candidate with index digest,
+  `linux/amd64` child digest, platform set, round-trip equality and the image's own labels -- including
+  the one public vendor line, AIStor, whose licence key and redistribution limits make it a product
+  decision rather than a re-pin. Two things previously argued are now measured: the E2 evidence pipeline
+  completes **credential-free end to end** when the coordinate answers (generator exit 0, 13 claims
+  written, no bearer text) and refuses precisely on F-56 otherwise; and the migration controls were
+  walked case by case in a worktree outside the repository, where a baseline and a harmless-prose case
+  both passed 30/30 while mutable-tag, digest-disagreement, half-migration, un-recomposed `image_ref`
+  and stale-evidence mutations failed 6/4/5/4/5 tests respectively -- **but a retired reference written
+  beside a correct one into `scripts/certification/setup.sh` passed clean**, which is filed as
+  **F-57** with the data-driven retirement list and exclusivity assertion that would catch it. F-52's
+  durable-evidence question is answered too: the asset ships as three lines in `release.yml`, an existing
+  guard already fails any staged-but-unattached asset, and because a `release.yml`-only change
+  classifies `ci_workflow`/`INHERITED` while altering what a Release contains, the recommendation is to
+  fold it into the F-56 candidate rather than let it ride. Status:
+  **F-56 REMEDIATION DESIGN READY — IMPLEMENTATION REQUIRES APPROVAL**; nothing implemented, no mirror
+  pushed, no tag, no certification dispatched.
 
 ## [1.0.5] - 2026-09-07
 

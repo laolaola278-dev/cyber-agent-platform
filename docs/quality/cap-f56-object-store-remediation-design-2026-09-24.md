@@ -1,5 +1,15 @@
 # CAP F-56 OBJECT-STORE AVAILABILITY REMEDIATION DESIGN
 
+> **Superseded on 2026-09-25** by
+> [`cap-f56-object-store-availability-remediation-design-2026-09-25.md`](cap-f56-object-store-availability-remediation-design-2026-09-25.md),
+> which runs the fuller Stage 1–13 brief: a re-probe with two known-public controls in the same registry,
+> full per-candidate coordinate records (child digests, platform sets, round trips, image labels), an
+> inventory derived from tracked files rather than written by hand, a measured mutation-control matrix
+> that filed **F-57**, an end-to-end credential-free generator proof, and the F-52 asset decision.
+> What follows stands as a dated record of what was measured on 2026-09-24; nothing in it has been
+> rewritten to match the later pass.
+
+
 Input: `POST-A2.2 CLOSURE COMPLETE`, `NEXT RELEASE STATUS: BLOCKED — F-56`, certified historical
 candidate `dea8c6f2f576bec667ee27dc8a9458673ca0982e`. Date: 2026-09-24.
 
