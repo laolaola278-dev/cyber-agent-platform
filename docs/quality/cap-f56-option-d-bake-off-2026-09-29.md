@@ -317,8 +317,20 @@ Consequences that belong in any future implementation candidate (not applied her
   the suite's `cap-evidence284`/`cap-gc284`/`cap-fi284`/`cap-fence284`/`cap-bench284`, plus the DR
   target), i.e. ≥ ~49 volumes observed. A compose/K8s replacement must set an explicit volume budget
   with headroom; the vendor default makes the second bucket unwritable.
-- `-volume.max=0` is *not* the safe answer here: auto = free disk ÷ 30 GiB volume size ≈ 3 on this
-  host, which is worse than the default. The number must be explicit.
+- `-volume.max=0` is *not* the safe answer here: the master logs `master_server.go:161 Volume Size
+  Limit is 30720 MB`, so auto = free disk ÷ 30 GiB ≈ 3 on a host with this much free — worse than the
+  default. The number must be explicit.
+- **The candidate reports telemetry outward by default.** A fresh start with no configuration options
+  other than data dir and ports logs, verbatim:
+  `collector.go:84 Reporting anonymous cluster statistics to
+  https://telemetry.seaweedfs.com/api/collect every 24h0m0s once 10 GiB are stored, use
+  -telemetry=false to opt out`. For a product whose certification suite includes network-egress
+  isolation and an egress proxy (`test_phase_28_5_linux_network.py`, the `cap-egress-proxy` image,
+  `EGRESS_PROXY_URL` in the Linux workflow), an unrequested outbound call from the evidence store is a
+  deployment requirement to pin down, not a footnote: the implementation candidate must set
+  `-telemetry=false` in compose and in both Kubernetes Deployments, and the isolation round must
+  observe that it does not try. Whether the incumbent's pinned 2025-04 release behaves the same way was
+  **not measured** — it could not be run here (§C).
 - Disk is not the constraint: after 2 844 live files the data directory was 276 MB.
 - The classification of this event is **FAIL_HARNESS_VENDOR_BINDING + a candidate deployment-sizing
   requirement**, *not* FAIL_COMPATIBILITY. Recording it as a candidate failure would have been the
@@ -389,6 +401,7 @@ performance and license posture are weighted but not gates. Applying them to wha
 | weighted — DR tool-path (`mc`) | n/a | PASS (13/13, byte-exact, §I) | NOT MEASURED |
 | weighted — outage/restore behaviour | n/a | PASS (§I) | NOT MEASURED |
 | weighted — performance | no baseline measured | absolute numbers only (§I) | NOT MEASURED |
+| weighted — outbound egress posture | not measured (§C) | **phones home by default** — `telemetry.seaweedfs.com` every 24 h past 10 GiB unless `-telemetry=false` (§J) | NOT MEASURED |
 | weighted — licence posture | AGPL-3.0 | **Apache-2.0** (relaxes, does not tighten) | AGPL-3.0 (unchanged) |
 | weighted — upstream maintenance | archived, no further fixes | active, ~2-week cadence, pushed today | active, pushed 2026-09-28 |
 | **disqualified?** | yes, on availability | no | **cannot be scored** |

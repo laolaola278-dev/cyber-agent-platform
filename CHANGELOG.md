@@ -947,7 +947,11 @@ reconciliation inherits from that candidate rather than re-certifying it.
   the master creates **7 volumes per bucket**, so a replacement needs an explicit budget -- a real
   deployment requirement, not a candidate defect), a 500 that looked like an incompatibility and was
   that same exhaustion, and a `CAP284_HA_N` knob the HA test has never read (`n = 24` since `1ccab56`),
-  which makes three older reports' "100-run HA" claims unenforced by code and is proposed as F-59. The
+  which makes three older reports' "100-run HA" claims unenforced by code and is proposed as F-59. A
+  fourth is operational rather than historical: the candidate **reports anonymous cluster statistics to
+  `telemetry.seaweedfs.com` every 24 h once 10 GiB are stored unless `-telemetry=false`**, logged on a
+  plain start -- an outbound call from the evidence store of a product whose suite certifies egress
+  isolation, so it is a requirement on the implementation candidate and the report says so. The
   vendor coordinate was re-probed read-only at `2026-09-29T06:35:46Z` and still answers 401 against a
   404 control in the same registry: **AVAILABILITY NOT RECOVERED**, and F-56 stays open regardless of a
   future 200. Nothing was mirrored or pushed, no coordinate in `docker-compose.yml` or
