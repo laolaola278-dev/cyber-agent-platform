@@ -909,6 +909,51 @@ reconciliation inherits from that candidate rather than re-certifying it.
   fold it into the F-56 candidate rather than let it ride. Status:
   **F-56 REMEDIATION DESIGN READY — IMPLEMENTATION REQUIRES APPROVAL**; nothing implemented, no mirror
   pushed, no tag, no certification dispatched.
+- **F-56 Phase 1, read-only byte recovery: the pinned OCI graph is partly recoverable and that is not
+  enough.** `docs/quality/cap-f56-byte-recovery-and-source-decision-2026-09-25.md` records the hunt for
+  the exact bytes under `sha256:a1ea29fa…` inside the project's authorized locations only, and its
+  verdict `PARTIAL_GRAPH_ONLY`: three objects are held and proven by digest equality against the pinned
+  root -- the manifest list (969 B), the linux/amd64 child (2 275 B) and that child's config blob
+  (8 559 B, `sha256:9d668e47…`) -- while the arm64 child `54d3d6a0a58f…`, the ppc64le child
+  `106abffd1b57…` and all ten linux/amd64 layer blobs are not obtainable anonymously anywhere, so the
+  decision is **OPTION B EXACT RELOCATION NOT YET FEASIBLE** and no index was manufactured to close the
+  gap. The recovery round landed as a report only and its changelog entry was omitted at the time; it is
+  recorded here rather than back-dated.
+- **F-56 Option D compatibility bake-off: the one candidate this host could execute passed everything
+  put to it, and the bake-off is still inconclusive.**
+  `docs/quality/cap-f56-option-d-bake-off-2026-09-29.md` measures rather than assumes, which is why the
+  verdict is not a selection: this workstation has **no container runtime** (Docker CLI 29.6.1 with no
+  engine; WSL2 reports kernel `5.10.16` needing `wsl --update` while automatic kernel update is disabled
+  by policy; no distributions installed; no podman/nerdctl/containerd/kind), so no OCI image --
+  incumbent or candidate -- was run, and neither the shipped compose service nor either inline
+  Kubernetes Deployment could be exercised. SeaweedFS publishes a Windows build of the same release, so
+  its S3 gateway (verified to the same commit the `4.48` image label names) ran **CAP's own
+  `-m object_store` certification surface unmodified, 19 passed / 0 failed / 0 skipped**, after a
+  scaffolded PostgreSQL 16.10 was brought up to `alembic head` because seven of those tests had been
+  skipping and seven failing on its absence; plus the `mc` DR path from `backup_cluster.sh` and
+  `restore_cluster.sh` (13/13 objects, byte-exact through the store's own digest gate, `Last-Modified`
+  preserved, no `x-amz-meta-*`), an outage drill, credential negative controls
+  (`SignatureDoesNotMatch`, `InvalidAccessKeyId`) and a 1 200-object listing across the page boundary.
+  Garage resolves as an immutable anonymously-pullable coordinate but **could not be executed at all**
+  (linux-only image platforms, no Windows build in the vendor's download index, no GitHub release
+  assets), and there is no MinIO baseline, so the fixed weights cannot rank three products and the
+  verdict is **OPTION D BAKE-OFF INCONCLUSIVE** with the leading candidate named and the unblocking
+  decision written down. Two claims from the design round are corrected by measurement, in the
+  report's own words: **multipart upload is inside the contract** -- the pinned MinIO SDK silently
+  switches to it, so a 20 MiB evidence object is a 4-part upload and the candidate honours it -- and the
+  certification surface has **never tested at the store's own 20 MiB ceiling** (proposed F-58, not
+  filed). Three harness events are named rather than smoothed over: 17 of the first two runs' failures
+  were absent PostgreSQL and an exhausted SeaweedFS volume budget (`-volume.max` defaults to `8` while
+  the master creates **7 volumes per bucket**, so a replacement needs an explicit budget -- a real
+  deployment requirement, not a candidate defect), a 500 that looked like an incompatibility and was
+  that same exhaustion, and a `CAP284_HA_N` knob the HA test has never read (`n = 24` since `1ccab56`),
+  which makes three older reports' "100-run HA" claims unenforced by code and is proposed as F-59. The
+  vendor coordinate was re-probed read-only at `2026-09-29T06:35:46Z` and still answers 401 against a
+  404 control in the same registry: **AVAILABILITY NOT RECOVERED**, and F-56 stays open regardless of a
+  future 200. Nothing was mirrored or pushed, no coordinate in `docker-compose.yml` or
+  `deployment/third-party-images.json` was changed, no candidate was frozen, no certification was
+  dispatched, no tag was created, no credential was invented, the classifier was not touched, and sealed
+  `v1.0.6-rc1` was re-audited read-only at the end of the round: `SEALED RELEASE INTACT`.
 
 ## [1.0.5] - 2026-09-07
 
