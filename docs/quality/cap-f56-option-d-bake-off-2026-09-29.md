@@ -3,11 +3,19 @@
 **Verdict: `OPTION D BAKE-OFF INCONCLUSIVE`**
 
 Measured at commit `7ebc85d` (the `main` tip at execution time), on 2026-09-29 between 05:41Z and
-06:52Z, on this operator workstation. No tracked file other than this report and the `CHANGELOG.md`
+07:00Z, on this operator workstation. No tracked file other than this report and the `CHANGELOG.md`
 entry was touched; `docker-compose.yml`, `deployment/third-party-images.json`, every workflow, every
 test and the classifier are byte-identical to `7ebc85d`. No image was mirrored or pushed, no release
 tag was created, no certification round was dispatched, nothing was published, and no candidate was
 frozen.
+
+The commit that carries this report classifies as
+`python scripts/release/classify_diff.py dea8c6f2f576bec667ee27dc8a9458673ca0982e HEAD` →
+`RESULT: runtime certification INHERITED (release_metadata_only=True)`, `runtime_affecting: false`,
+with both changed files in category `docs` — so these two files owe no re-certification and none was
+requested. The *candidate* discussed in the report would classify differently: a compose + lock +
+workflow migration measures `deployment` / `runtime_affecting=true` / `RECERTIFICATION_REQUIRED`, which
+is why §Q puts a development-mode round, not a docs verdict, in front of any adoption.
 
 The verdict is inconclusive **not because the candidates performed badly** — the one candidate this
 host could execute passed every measurement put to it — but because three of the comparisons the
@@ -248,7 +256,7 @@ configured so that SigV4 credentials are genuinely enforced:
 
 | run | conditions | result |
 |---|---|---|
-| A | PG absent (not yet installed), `-volume.max=8` (vendor default) | **5 passed, 7 failed, 7 skipped** — failures were the 6 orphan-GC tests raising `ConnectionRefusedError` to `127.0.0.1:55432`, skips were `postgres_available()` being False |
+| A | PG absent (not yet installed), `-volume.max=8` (vendor default) | **5 passed, 7 failed, 7 skipped** — six orphan-GC tests raising `ConnectionRefusedError` against `127.0.0.1:55432`, the evidence-fencing test failing behind the same absence and then masking its own cause in teardown (§R.4), and seven skips from `postgres_available()` being False |
 | B | PG 16.10 up, schema at head, `-volume.max=8` still | **9 passed, 10 failed, 0 skipped** — every failure traced to `No writable volumes and no free volumes left` (§J), 630 occurrences in the server log |
 | C | PG up, server restarted with `-volume.max=64` | **19 passed, 0 failed, 0 skipped in 318.81 s** |
 
