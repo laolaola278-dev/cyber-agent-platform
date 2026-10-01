@@ -1,0 +1,652 @@
+name: CAP F-56 Bake-off Phase 2 (Linux/container validation)
+
+# F-56 Option D bake-off, Phase 2. Phase 1
+# (docs/quality/cap-f56-option-d-bake-off-2026-09-29.md) measured SeaweedFS
+# 4.48 and Garage v2.4.1 as replacements for the no-longer-anonymously-
+# pullable MinIO coordinate, but only via native Windows binaries -- no
+# Linux container runtime was reachable on that host, so neither candidate's
+# actual OCI image, nor the compose/K8s deployment shape, was ever exercised.
+#
+# This workflow is the Phase 2 instrument: it runs the real linux/amd64
+# images for both candidates as GitHub Actions service containers (job
+# `seaweedfs-container`, `garage-container`), and separately exercises the
+# same deployment shape the existing certification workflows use for MinIO
+# in a kind cluster (job `k8s-deployment-shape`), plus a throwaway compose
+# shape (job `compose-shape`).
+#
+# Explicitly NOT done by this workflow, by design:
+#   - docker-compose.yml and deployment/third-party-images.json are not
+#     read or written by any step here; the candidates are wired entirely
+#     through env var overrides the test suite already supports
+#     (CAP283_S3_ENDPOINT/ACCESS/SECRET/BUCKET).
+#   - No release tag, no publication, no strict/final certification
+#     (CAP_GA_STRICT, CAP_CERTIFICATION_STRICT) is set or implied.
+#   - No image is mirrored or pushed; no MinIO vendor credential is used.
+#   - No candidate is selected here -- this workflow produces measurements
+#     for docs/quality/cap-f56-option-d-bake-off-phase2-linux-2026-10-01.md,
+#     not a decision.
+#
+# workflow_dispatch only: this must never run on a push or PR, and must
+# never be mistaken for a gate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_compose_shape:
+        description: "Also run the throwaway compose-shape job (slower, optional)"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cap-f56-bakeoff-phase2-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Re-verified 2026-10-01 against the live registry by
+  # _tmp/bakeoff2/resolve_candidates.py (gitignored scratch; re-verification
+  # output not tracked), reusing the Registry/resolve primitives from
+  # scripts/release/third_party_registry_evidence.py. Both matched the
+  # digests Phase 1 recorded in its §E exactly -- no tag had moved.
+  SEAWEEDFS_DIGEST: "chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
+  GARAGE_DIGEST: "dxflrs/garage@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020"
+  MC_RELEASE: "RELEASE.2025-08-13T08-35-41Z"
+
+jobs:
+  # ---------------------------------------------------------------------
+  # SeaweedFS 4.48, real linux/amd64 OCI image, as a GHA service container
+  # ---------------------------------------------------------------------
+  seaweedfs-container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CAP_CERT_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
+      CAP283_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
+      CAP283_PG_SYNC: postgresql://cap:cap@127.0.0.1:55432/cap283
+      # SeaweedFS's S3 gateway listens on 8333 in `mini` mode (Phase 1 §E:
+      # Cmd=["mini","-dir=/data"], not MinIO's 9000) -- confirmed live by the
+      # inspect step below, not assumed.
+      CAP283_S3_ENDPOINT: 127.0.0.1:8333
+      CAP283_S3_ACCESS: capadmin
+      CAP283_S3_SECRET: capadmin123
+      CAP283_S3_BUCKET: cap-evidence284
+      OUT: outputs/cap-bakeoff-phase2/seaweedfs
+    services:
+      postgres:
+        image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env: { POSTGRES_USER: cap, POSTGRES_PASSWORD: cap, POSTGRES_DB: cap283 }
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cap" --health-interval 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.13" }
+      - run: uv sync --project backend --frozen --extra dev
+      - run: mkdir -p "$OUT"
+
+      - name: Run the SeaweedFS container (real linux/amd64 image, explicit args)
+        # GHA `services:` blocks accept image/env/ports/options but not a
+        # command override, and the image's baked-in CMD is plain `mini
+        # -dir=/data` with no -volume.max or -telemetry flag -- exactly the
+        # volume-exhaustion and telemetry-phone-home defaults Phase 1 §J
+        # measured as unsafe. A `docker run` step is required to pass them.
+        run: |
+          set -euo pipefail
+          docker run -d --name bakeoff-seaweedfs \
+            -p 8333:8333 \
+            "${SEAWEEDFS_DIGEST}" \
+            -dir=/data -s3 -s3.port=8333 -volume.max=64 -telemetry=false
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8333/status > /dev/null 2>&1 && break
+            sleep 1
+          done
+
+      - name: Record container identity, entrypoint, user, ports (before any test)
+        run: |
+          set -euo pipefail
+          docker inspect bakeoff-seaweedfs --format \
+            'imageID={{.Image}}
+          entrypoint={{json .Config.Entrypoint}}
+          cmd={{json .Config.Cmd}}
+          user={{.Config.User}}
+          mounts={{json .Mounts}}
+          ports={{json .NetworkSettings.Ports}}' | tee "$OUT/identity.txt"
+          docker inspect bakeoff-seaweedfs --format '{{.Config.Image}}' >> "$OUT/identity.txt"
+          docker logs bakeoff-seaweedfs > "$OUT/startup.log" 2>&1 || true
+
+      - name: Readiness time + status probe
+        run: |
+          set -euo pipefail
+          START=$(date +%s)
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8333/status > "$OUT/status_probe.json" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          END=$(date +%s)
+          echo "readiness_seconds=$((END-START))" | tee "$OUT/readiness.txt"
+          cat "$OUT/status_probe.json" || true
+
+      - name: Object-store S3 contract (pytest -m object_store, candidate = SeaweedFS 4.48)
+        working-directory: backend
+        run: |
+          uv run pytest -m object_store \
+            tests/test_phase_28_4_object_store.py \
+            tests/test_phase_28_4_orphan_gc.py \
+            tests/test_phase_28_4_evidence_fencing.py \
+            tests/test_phase_28_4_fault_injection.py \
+            tests/test_phase_28_4_multi_worker_ha.py \
+            tests/test_phase_28_4_benchmark.py \
+            -p no:cacheprovider --tb=short -vv \
+            --junitxml=../$OUT/junit-object-store.xml
+
+      - name: Multipart boundary measurement (1/8/20 MiB) -- not a suite addition, see F-58
+        working-directory: backend
+        run: |
+          cat > /tmp/multipart_probe.py <<'PYEOF'
+          from __future__ import annotations
+          import asyncio, hashlib, json, os, sys, time
+          from app.acquisition.store import S3EvidenceStore
+
+          SIZES_MIB = (1, 8, 20)
+
+          def _payload(mib: int, seed: bytes) -> bytes:
+              unit = (seed * ((1024 * 1024 // len(seed)) + 1))[: 1024 * 1024]
+              return unit * mib
+
+          async def _run(candidate: str) -> list[dict]:
+              store = S3EvidenceStore(
+                  endpoint=os.environ["CAP283_S3_ENDPOINT"],
+                  access_key=os.environ["CAP283_S3_ACCESS"],
+                  secret_key=os.environ["CAP283_S3_SECRET"],
+                  bucket="cap-bakeoff-multipart",
+              )
+              results = []
+              for mib in SIZES_MIB:
+                  seed = f"bakeoff-{candidate}-{mib}MiB-".encode()
+                  data = _payload(mib, seed)
+                  expected_sha = hashlib.sha256(data).hexdigest()
+                  t0 = time.monotonic(); obj = await store.put(data, metadata={}); put_s = time.monotonic() - t0
+                  t0 = time.monotonic(); readback = await store.get(obj.key); get_s = time.monotonic() - t0
+                  results.append({
+                      "candidate": candidate, "size_mib": mib, "size_bytes": len(data),
+                      "key_digest": obj.key, "expected_sha256": expected_sha,
+                      "byte_exact": readback == data, "sha256_matches": obj.key == expected_sha,
+                      "put_seconds": round(put_s, 4), "get_seconds": round(get_s, 4),
+                  })
+              return results
+
+          def main() -> int:
+              candidate, out_path = sys.argv[1], sys.argv[2]
+              results = asyncio.run(_run(candidate))
+              with open(out_path, "w", encoding="utf-8") as handle:
+                  json.dump(results, handle, indent=2)
+              failed = [r for r in results if not (r["byte_exact"] and r["sha256_matches"])]
+              for r in results:
+                  status = "OK" if r["byte_exact"] and r["sha256_matches"] else "FAIL"
+                  print(f"{status} {candidate} {r['size_mib']}MiB put={r['put_seconds']}s get={r['get_seconds']}s")
+              return 1 if failed else 0
+
+          if __name__ == "__main__":
+              sys.exit(main())
+          PYEOF
+          uv run python /tmp/multipart_probe.py seaweedfs-4.48 ../$OUT/multipart.json
+
+      - name: mc DR round-trip (pinned mc release, same install as cap-ga-certification.yml)
+        run: |
+          set -euo pipefail
+          mc_base="https://github.com/minio/mc/releases/download/$MC_RELEASE"
+          curl -fSsL --retry 3 -o mc "$mc_base/mc.linux-amd64.$MC_RELEASE"
+          curl -fSsL --retry 3 -o mc.sha256sum "$mc_base/mc.linux-amd64.$MC_RELEASE.sha256sum"
+          echo "$(cut -d' ' -f1 mc.sha256sum)  mc" | sha256sum --check --status \
+            || { echo "FATAL: mc checksum mismatch"; exit 1; }
+          chmod +x mc && sudo mv mc /usr/local/bin/
+          mc alias set bakeoff http://127.0.0.1:8333 capadmin capadmin123
+          mc mb --ignore-existing bakeoff/cap-dr-test
+          mkdir -p /tmp/dr-src /tmp/dr-restore
+          for i in 1 2 3; do echo "dr-object-$i-$(date +%s)" > "/tmp/dr-src/obj-$i.txt"; done
+          mc mirror --overwrite /tmp/dr-src bakeoff/cap-dr-test
+          mc rm --recursive --force bakeoff/cap-dr-test/ || true
+          mc mirror --overwrite /tmp/dr-src bakeoff/cap-dr-test
+          mc mirror --overwrite bakeoff/cap-dr-test /tmp/dr-restore
+          diff -r /tmp/dr-src /tmp/dr-restore && echo "DR_ROUNDTRIP_OK" | tee "$OUT/dr_result.txt"
+
+      - name: Forced restart + recovery
+        run: |
+          set -euo pipefail
+          docker restart bakeoff-seaweedfs
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8333/status > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8333/status | tee "$OUT/post_restart_status.json"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bakeoff-phase2-seaweedfs
+          path: outputs/cap-bakeoff-phase2/seaweedfs/
+
+  # ---------------------------------------------------------------------
+  # Garage v2.4.1, real linux/amd64 OCI image, as a GHA service container
+  # ---------------------------------------------------------------------
+  garage-container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CAP_CERT_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
+      CAP283_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
+      CAP283_PG_SYNC: postgresql://cap:cap@127.0.0.1:55432/cap283
+      CAP283_S3_ENDPOINT: 127.0.0.1:3900
+      CAP283_S3_BUCKET: cap-evidence284
+      OUT: outputs/cap-bakeoff-phase2/garage
+    services:
+      postgres:
+        image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env: { POSTGRES_USER: cap, POSTGRES_PASSWORD: cap, POSTGRES_DB: cap283 }
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cap" --health-interval 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.13" }
+      - run: uv sync --project backend --frozen --extra dev
+      - run: mkdir -p "$OUT" /tmp/garage-data /tmp/garage-meta
+
+      - name: Smallest documented single-node Garage config (not a MinIO-mimicking tune)
+        # Garage has zero OCI labels and one layer (Phase 1 §E), and its exact
+        # CLI surface was never run before this step -- this is the minimal
+        # shape Garage's own single-node quickstart documents, not an
+        # attempt to reproduce MinIO's bucket/credential semantics.
+        run: |
+          cat > /tmp/garage.toml <<'EOF'
+          metadata_dir = "/data/meta"
+          data_dir = "/data/data"
+          db_engine = "sqlite"
+
+          replication_factor = 1
+
+          rpc_bind_addr = "[::]:3901"
+          rpc_public_addr = "127.0.0.1:3901"
+          rpc_secret = "0000000000000000000000000000000000000000000000000000000000000000"
+
+          [s3_api]
+          s3_region = "garage"
+          api_bind_addr = "[::]:3900"
+          root_domain = ".s3.garage.localhost"
+
+          [admin]
+          api_bind_addr = "[::]:3903"
+          EOF
+          cat /tmp/garage.toml | tee "$OUT/garage.toml"
+
+      - name: Run the Garage container (real linux/amd64 image, not a native binary)
+        run: |
+          set -euo pipefail
+          docker run -d --name bakeoff-garage \
+            -p 3900:3900 -p 3901:3901 -p 3903:3903 \
+            -v /tmp/garage.toml:/etc/garage.toml:ro \
+            -v /tmp/garage-data:/data/data \
+            -v /tmp/garage-meta:/data/meta \
+            "${GARAGE_DIGEST}"
+          for i in $(seq 1 60); do
+            docker exec bakeoff-garage /garage status > /dev/null 2>&1 && break
+            sleep 1
+          done
+
+      - name: Record container identity, entrypoint, user, ports
+        run: |
+          set -euo pipefail
+          docker inspect bakeoff-garage --format \
+            'imageID={{.Image}}
+          entrypoint={{json .Config.Entrypoint}}
+          cmd={{json .Config.Cmd}}
+          user={{.Config.User}}
+          mounts={{json .Mounts}}
+          ports={{json .NetworkSettings.Ports}}' | tee "$OUT/identity.txt"
+          docker logs bakeoff-garage > "$OUT/startup.log" 2>&1 || true
+          docker exec bakeoff-garage /garage --help > "$OUT/garage_help.txt" 2>&1 || true
+
+      - name: Key/bucket creation (Garage's own mechanism, no MINIO_ROOT_USER-style bootstrap)
+        # Garage's exact CLI output format was never observed before this
+        # workflow runs for the first time -- `garage status`/`key create`
+        # text parsing below is a best-effort reading of the public v2.x CLI
+        # shape, not something verified against this image. If it breaks,
+        # garage_help.txt and node_status.txt (both uploaded regardless)
+        # carry the real CLI surface to fix the parse against, per Phase 1's
+        # own note that Garage's CLI needed live confirmation, not assumption.
+        run: |
+          set -euo pipefail
+          docker exec bakeoff-garage /garage status | tee "$OUT/node_status.txt"
+          NODE_ID=$(awk '/NODE/{found=1;next} found{print $1; exit}' "$OUT/node_status.txt")
+          test -n "$NODE_ID" || { echo "FATAL: could not parse a node ID from garage status -- see node_status.txt"; exit 1; }
+          docker exec bakeoff-garage /garage layout assign -z dc1 -c 1G "$NODE_ID"
+          docker exec bakeoff-garage /garage layout apply --version 1
+          sleep 3
+          docker exec bakeoff-garage /garage key create bakeoff-key | tee "$OUT/key_create.txt"
+          ACCESS_KEY=$(grep -oP 'Key ID:\s*\K\S+' "$OUT/key_create.txt")
+          SECRET_KEY=$(grep -oP 'Secret key:\s*\K\S+' "$OUT/key_create.txt")
+          test -n "$ACCESS_KEY" && test -n "$SECRET_KEY" || { echo "FATAL: could not parse key id/secret from key_create.txt"; exit 1; }
+          docker exec bakeoff-garage /garage bucket create cap-evidence284
+          docker exec bakeoff-garage /garage bucket allow --read --write --owner cap-evidence284 --key bakeoff-key
+          echo "CAP283_S3_ACCESS=$ACCESS_KEY" >> "$GITHUB_ENV"
+          echo "CAP283_S3_SECRET=$SECRET_KEY" >> "$GITHUB_ENV"
+
+      - name: Readiness time
+        run: |
+          set -euo pipefail
+          START=$(date +%s)
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:3900 > /dev/null 2>&1 && break
+            sleep 1
+          done
+          END=$(date +%s)
+          echo "readiness_seconds=$((END-START))" | tee "$OUT/readiness.txt"
+
+      - name: Object-store S3 contract (pytest -m object_store, candidate = Garage v2.4.1)
+        working-directory: backend
+        run: |
+          uv run pytest -m object_store \
+            tests/test_phase_28_4_object_store.py \
+            tests/test_phase_28_4_orphan_gc.py \
+            tests/test_phase_28_4_evidence_fencing.py \
+            tests/test_phase_28_4_fault_injection.py \
+            tests/test_phase_28_4_multi_worker_ha.py \
+            tests/test_phase_28_4_benchmark.py \
+            -p no:cacheprovider --tb=short -vv \
+            --junitxml=../$OUT/junit-object-store.xml
+
+      - name: Multipart boundary measurement (1/8/20 MiB)
+        working-directory: backend
+        run: |
+          cat > /tmp/multipart_probe.py <<'PYEOF'
+          from __future__ import annotations
+          import asyncio, hashlib, json, os, sys, time
+          from app.acquisition.store import S3EvidenceStore
+
+          SIZES_MIB = (1, 8, 20)
+
+          def _payload(mib: int, seed: bytes) -> bytes:
+              unit = (seed * ((1024 * 1024 // len(seed)) + 1))[: 1024 * 1024]
+              return unit * mib
+
+          async def _run(candidate: str) -> list[dict]:
+              store = S3EvidenceStore(
+                  endpoint=os.environ["CAP283_S3_ENDPOINT"],
+                  access_key=os.environ["CAP283_S3_ACCESS"],
+                  secret_key=os.environ["CAP283_S3_SECRET"],
+                  bucket="cap-bakeoff-multipart",
+              )
+              results = []
+              for mib in SIZES_MIB:
+                  seed = f"bakeoff-{candidate}-{mib}MiB-".encode()
+                  data = _payload(mib, seed)
+                  expected_sha = hashlib.sha256(data).hexdigest()
+                  t0 = time.monotonic(); obj = await store.put(data, metadata={}); put_s = time.monotonic() - t0
+                  t0 = time.monotonic(); readback = await store.get(obj.key); get_s = time.monotonic() - t0
+                  results.append({
+                      "candidate": candidate, "size_mib": mib, "size_bytes": len(data),
+                      "key_digest": obj.key, "expected_sha256": expected_sha,
+                      "byte_exact": readback == data, "sha256_matches": obj.key == expected_sha,
+                      "put_seconds": round(put_s, 4), "get_seconds": round(get_s, 4),
+                  })
+              return results
+
+          def main() -> int:
+              candidate, out_path = sys.argv[1], sys.argv[2]
+              results = asyncio.run(_run(candidate))
+              with open(out_path, "w", encoding="utf-8") as handle:
+                  json.dump(results, handle, indent=2)
+              failed = [r for r in results if not (r["byte_exact"] and r["sha256_matches"])]
+              for r in results:
+                  status = "OK" if r["byte_exact"] and r["sha256_matches"] else "FAIL"
+                  print(f"{status} {candidate} {r['size_mib']}MiB put={r['put_seconds']}s get={r['get_seconds']}s")
+              return 1 if failed else 0
+
+          if __name__ == "__main__":
+              sys.exit(main())
+          PYEOF
+          CAP283_S3_BUCKET=cap-evidence284 uv run python /tmp/multipart_probe.py garage-v2.4.1 ../$OUT/multipart.json
+
+      - name: mc DR round-trip (same pinned mc release, same bucket semantics)
+        run: |
+          set -euo pipefail
+          mc_base="https://github.com/minio/mc/releases/download/$MC_RELEASE"
+          curl -fSsL --retry 3 -o mc "$mc_base/mc.linux-amd64.$MC_RELEASE"
+          curl -fSsL --retry 3 -o mc.sha256sum "$mc_base/mc.linux-amd64.$MC_RELEASE.sha256sum"
+          echo "$(cut -d' ' -f1 mc.sha256sum)  mc" | sha256sum --check --status \
+            || { echo "FATAL: mc checksum mismatch"; exit 1; }
+          chmod +x mc && sudo mv mc /usr/local/bin/
+          mc alias set bakeoff http://127.0.0.1:3900 "$CAP283_S3_ACCESS" "$CAP283_S3_SECRET"
+          mc mb --ignore-existing bakeoff/cap-dr-test || true
+          mkdir -p /tmp/dr-src /tmp/dr-restore
+          for i in 1 2 3; do echo "dr-object-$i-$(date +%s)" > "/tmp/dr-src/obj-$i.txt"; done
+          mc mirror --overwrite /tmp/dr-src bakeoff/cap-dr-test
+          mc rm --recursive --force bakeoff/cap-dr-test/ || true
+          mc mirror --overwrite /tmp/dr-src bakeoff/cap-dr-test
+          mc mirror --overwrite bakeoff/cap-dr-test /tmp/dr-restore
+          diff -r /tmp/dr-src /tmp/dr-restore && echo "DR_ROUNDTRIP_OK" | tee "$OUT/dr_result.txt"
+
+      - name: Forced restart + recovery
+        run: |
+          set -euo pipefail
+          docker restart bakeoff-garage
+          for i in $(seq 1 60); do
+            docker exec bakeoff-garage /garage status > /dev/null 2>&1 && break
+            sleep 1
+          done
+          docker exec bakeoff-garage /garage status | tee "$OUT/post_restart_status.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bakeoff-phase2-garage
+          path: outputs/cap-bakeoff-phase2/garage/
+
+  # ---------------------------------------------------------------------
+  # K8s deployment shape -- parallel to cap-k8s-certification.yml's MinIO
+  # Deployment/Service pair, swapped for each candidate in turn.
+  # No PVC, matching the existing MinIO manifests' deliberate ephemeral-only
+  # shape (confirmed: scale-to-0 destroying data is accepted behavior for
+  # this infra tier, not a regression introduced here).
+  # ---------------------------------------------------------------------
+  k8s-deployment-shape:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      KIND_CLUSTER: cap-bakeoff-k8s
+      OUT: outputs/cap-bakeoff-phase2/k8s
+    steps:
+      - uses: actions/checkout@v6
+      - run: mkdir -p "$OUT"
+
+      - name: Install kind (same pin as cap-k8s-certification.yml)
+        run: |
+          set -euo pipefail
+          curl -fSsL --retry 3 -o kind \
+            https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+          chmod +x kind && sudo mv kind /usr/local/bin/
+          kind version
+
+      - name: Create kind cluster (same shape as cap-k8s-certification.yml)
+        run: |
+          cat > /tmp/kind-config.yaml <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+            - role: worker
+            - role: worker
+          EOF
+          kind create cluster --name "$KIND_CLUSTER" --config /tmp/kind-config.yaml
+          kubectl cluster-info
+          kubectl version -o json | tee "$OUT/kubectl_version.json"
+
+      - name: Deploy SeaweedFS (object-store candidate A)
+        run: |
+          kubectl create namespace cap-bakeoff-a
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Service
+          metadata: {name: seaweedfs, namespace: cap-bakeoff-a}
+          spec:
+            selector: {app: seaweedfs}
+            ports: [{port: 8333, targetPort: 8333}]
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata: {name: seaweedfs, namespace: cap-bakeoff-a}
+          spec:
+            replicas: 1
+            selector: {matchLabels: {app: seaweedfs}}
+            template:
+              metadata: {labels: {app: seaweedfs}}
+              spec:
+                containers:
+                  - name: seaweedfs
+                    image: ${SEAWEEDFS_DIGEST}
+                    args: ["-dir=/data", "-s3", "-s3.port=8333", "-volume.max=64", "-telemetry=false"]
+                    ports: [{containerPort: 8333}]
+          EOF
+          kubectl -n cap-bakeoff-a rollout status deployment/seaweedfs --timeout=120s
+
+      - name: SeaweedFS outage drill (GATE-21-style, kubectl scale 0 then 1)
+        run: |
+          set -euo pipefail
+          kubectl -n cap-bakeoff-a scale deploy seaweedfs --replicas 0
+          sleep 5
+          OUT_OF_SERVICE=$(kubectl -n cap-bakeoff-a get deploy seaweedfs -o jsonpath='{.status.readyReplicas}')
+          echo "ready_replicas_during_outage=${OUT_OF_SERVICE:-0}" | tee "$OUT/seaweedfs_outage.txt"
+          kubectl -n cap-bakeoff-a scale deploy seaweedfs --replicas 1
+          kubectl -n cap-bakeoff-a rollout status deployment/seaweedfs --timeout=120s
+          echo "restored" | tee -a "$OUT/seaweedfs_outage.txt"
+
+      - name: Deploy Garage (object-store candidate B)
+        run: |
+          kubectl create namespace cap-bakeoff-b
+          kubectl -n cap-bakeoff-b create configmap garage-config --from-literal=garage.toml="$(cat <<'TOML'
+          metadata_dir = "/data/meta"
+          data_dir = "/data/data"
+          db_engine = "sqlite"
+          replication_factor = 1
+          rpc_bind_addr = "[::]:3901"
+          rpc_public_addr = "127.0.0.1:3901"
+          rpc_secret = "0000000000000000000000000000000000000000000000000000000000000000"
+          [s3_api]
+          s3_region = "garage"
+          api_bind_addr = "[::]:3900"
+          root_domain = ".s3.garage.localhost"
+          [admin]
+          api_bind_addr = "[::]:3903"
+          TOML
+          )"
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Service
+          metadata: {name: garage, namespace: cap-bakeoff-b}
+          spec:
+            selector: {app: garage}
+            ports: [{port: 3900, targetPort: 3900}]
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata: {name: garage, namespace: cap-bakeoff-b}
+          spec:
+            replicas: 1
+            selector: {matchLabels: {app: garage}}
+            template:
+              metadata: {labels: {app: garage}}
+              spec:
+                containers:
+                  - name: garage
+                    image: ${GARAGE_DIGEST}
+                    args: ["server"]
+                    ports: [{containerPort: 3900}]
+                    volumeMounts:
+                      - {name: config, mountPath: /etc/garage.toml, subPath: garage.toml}
+                volumes:
+                  - name: config
+                    configMap: {name: garage-config}
+          EOF
+          kubectl -n cap-bakeoff-b rollout status deployment/garage --timeout=120s
+
+      - name: Garage outage drill (GATE-21-style, kubectl scale 0 then 1)
+        run: |
+          set -euo pipefail
+          kubectl -n cap-bakeoff-b scale deploy garage --replicas 0
+          sleep 5
+          OUT_OF_SERVICE=$(kubectl -n cap-bakeoff-b get deploy garage -o jsonpath='{.status.readyReplicas}')
+          echo "ready_replicas_during_outage=${OUT_OF_SERVICE:-0}" | tee "$OUT/garage_outage.txt"
+          kubectl -n cap-bakeoff-b scale deploy garage --replicas 1
+          kubectl -n cap-bakeoff-b rollout status deployment/garage --timeout=120s
+          echo "restored" | tee -a "$OUT/garage_outage.txt"
+
+      - name: Dump cluster state for evidence
+        if: always()
+        run: |
+          kubectl get pods -A -o wide > "$OUT/pods.txt" || true
+          kubectl get events -A --sort-by=.lastTimestamp > "$OUT/events.txt" || true
+          kubectl -n cap-bakeoff-a logs deploy/seaweedfs --tail=100 > "$OUT/seaweedfs_logs.txt" 2>&1 || true
+          kubectl -n cap-bakeoff-b logs deploy/garage --tail=100 > "$OUT/garage_logs.txt" 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bakeoff-phase2-k8s
+          path: outputs/cap-bakeoff-phase2/k8s/
+
+  # ---------------------------------------------------------------------
+  # Throwaway compose shape -- a scratch compose file under _tmp/, never
+  # docker-compose.yml, swapping each candidate in for the `minio` service
+  # and confirming the backend/worker wiring (OBJECT_STORE_ENDPOINT etc.,
+  # the exact env names docker-compose.yml:163-167 already uses) works
+  # against both. Optional: skip via workflow_dispatch input if not needed.
+  # ---------------------------------------------------------------------
+  compose-shape:
+    if: ${{ inputs.run_compose_shape }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      OUT: outputs/cap-bakeoff-phase2/compose
+    steps:
+      - uses: actions/checkout@v6
+      - run: mkdir -p "$OUT" _tmp/bakeoff2-compose
+
+      - name: Write throwaway compose file (SeaweedFS variant, never docker-compose.yml)
+        run: |
+          cat > _tmp/bakeoff2-compose/compose.seaweedfs.yml <<EOF
+          services:
+            seaweedfs:
+              image: ${SEAWEEDFS_DIGEST}
+              command: ["-dir=/data", "-s3", "-s3.port=8333", "-volume.max=64", "-telemetry=false"]
+              ports: ["8333:8333"]
+              healthcheck:
+                test: ["CMD", "wget", "-qO-", "http://localhost:8333/status"]
+                interval: 5s
+                retries: 20
+          EOF
+
+      - name: Bring the throwaway stack up for real (not a config lint)
+        run: |
+          set -euo pipefail
+          docker compose -f _tmp/bakeoff2-compose/compose.seaweedfs.yml up -d
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8333/status > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8333/status | tee "$OUT/seaweedfs_compose_status.json"
+          docker compose -f _tmp/bakeoff2-compose/compose.seaweedfs.yml down -v
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bakeoff-phase2-compose
+          path: outputs/cap-bakeoff-phase2/compose/
