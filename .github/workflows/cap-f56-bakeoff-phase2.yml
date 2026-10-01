@@ -66,6 +66,16 @@ jobs:
       CAP_CERT_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
       CAP283_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
       CAP283_PG_SYNC: postgresql://cap:cap@127.0.0.1:55432/cap283
+      # app.config.settings.Settings.database_url defaults to
+      # postgresql+asyncpg://cap:cap@postgres:5432/cap (the compose service
+      # hostname) and alembic/env.py reads it via get_settings(), not the
+      # CAP283_PG_DSN vars the test suite uses -- the first fixed dispatch
+      # (run 36814747284) still failed here with
+      # `socket.gaierror: Temporary failure in name resolution` because
+      # `postgres` isn't a resolvable host on a services:-block runner.
+      # DATABASE_URL is the pydantic-settings env var that actually
+      # overrides it (same pattern cap-linux-certification.yml:401 uses).
+      DATABASE_URL: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
       # SeaweedFS's S3 gateway listens on 8333 (its default, and what we
       # explicitly pass via -s3.port=8333 under the `server` subcommand --
       # not MinIO's 9000) -- confirmed live by the inspect step below, not
@@ -112,12 +122,19 @@ jobs:
         # the readiness loop spun for the full 60s and every subsequent
         # step ran against nothing. Phase 1 §J's own native measurement was
         # against `weed server`, so that's the subcommand this needs too.
+        # Second dispatch (run 36814747284) added the subcommand but kept
+        # the bare `-telemetry=false` flag Phase 1 measured under `weed
+        # mini` -- `weed server` registers that opt-out as
+        # `-master.telemetry` instead (weed/command/server.go), so the
+        # unrecognized flag triggered the same usage-text dump again (K8s
+        # job's seaweedfs_logs.txt from that run). Fixed by using the
+        # subcommand-correct flag name everywhere this arg set appears.
         run: |
           set -euo pipefail
           docker run -d --name bakeoff-seaweedfs \
             -p 8333:8333 \
             "${SEAWEEDFS_DIGEST}" \
-            server -dir=/data -s3 -s3.port=8333 -volume.max=64 -telemetry=false
+            server -dir=/data -s3 -s3.port=8333 -volume.max=64 -master.telemetry=false
           for i in $(seq 1 60); do
             curl -sf http://127.0.0.1:8333/status > /dev/null 2>&1 && break
             sleep 1
@@ -260,6 +277,7 @@ jobs:
       CAP_CERT_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
       CAP283_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
       CAP283_PG_SYNC: postgresql://cap:cap@127.0.0.1:55432/cap283
+      DATABASE_URL: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
       CAP283_S3_ENDPOINT: 127.0.0.1:3900
       CAP283_S3_BUCKET: cap-evidence284
       OUT: outputs/cap-bakeoff-phase2/garage
@@ -540,7 +558,7 @@ jobs:
                 containers:
                   - name: seaweedfs
                     image: ${SEAWEEDFS_DIGEST}
-                    args: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-volume.max=64", "-telemetry=false"]
+                    args: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-volume.max=64", "-master.telemetry=false"]
                     ports: [{containerPort: 8333}]
           EOF
           kubectl -n cap-bakeoff-a rollout status deployment/seaweedfs --timeout=120s
@@ -595,7 +613,16 @@ jobs:
                 containers:
                   - name: garage
                     image: ${GARAGE_DIGEST}
-                    args: ["server"]
+                    # Garage's image has Entrypoint=null, Cmd=["/garage",
+                    # "server"] (confirmed in the garage-container job's
+                    # identity.txt). K8s `args` replaces Cmd but not
+                    # Entrypoint -- with no entrypoint, `args: ["server"]`
+                    # alone made the runtime try to exec the literal string
+                    # "server" as a binary, crash-looping with no logs at
+                    # all (run 36814747284's garage_logs.txt was empty).
+                    # Setting the full command explicitly avoids relying on
+                    # the image's unset Entrypoint.
+                    command: ["/garage", "server"]
                     ports: [{containerPort: 3900}]
                     volumeMounts:
                       - {name: config, mountPath: /etc/garage.toml, subPath: garage.toml}
@@ -653,7 +680,7 @@ jobs:
           services:
             seaweedfs:
               image: ${SEAWEEDFS_DIGEST}
-              command: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-volume.max=64", "-telemetry=false"]
+              command: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-volume.max=64", "-master.telemetry=false"]
               ports: ["8333:8333"]
               healthcheck:
                 test: ["CMD", "wget", "-qO-", "http://localhost:8333/status"]
@@ -665,10 +692,22 @@ jobs:
         run: |
           set -euo pipefail
           docker compose -f _tmp/bakeoff2-compose/compose.seaweedfs.yml up -d
+          READY=0
           for i in $(seq 1 60); do
-            curl -sf http://127.0.0.1:8333/status > /dev/null 2>&1 && break
+            curl -sf http://127.0.0.1:8333/status > /dev/null 2>&1 && { READY=1; break; }
             sleep 1
           done
+          # Capture container logs regardless of outcome -- the first two
+          # dispatches (runs 36813633972, 36814747284) hit curl's exit 7
+          # here with `set -euo pipefail` aborting the step before any
+          # diagnostic was captured, leaving no evidence of why the
+          # container never answered on 8333.
+          docker compose -f _tmp/bakeoff2-compose/compose.seaweedfs.yml logs > "$OUT/compose_seaweedfs.log" 2>&1 || true
+          if [ "$READY" -eq 0 ]; then
+            echo "FATAL: SeaweedFS never answered /status within 60s -- see compose_seaweedfs.log" | tee "$OUT/compose_failure.txt"
+            docker compose -f _tmp/bakeoff2-compose/compose.seaweedfs.yml down -v || true
+            exit 1
+          fi
           curl -sf http://127.0.0.1:8333/status | tee "$OUT/seaweedfs_compose_status.json"
           docker compose -f _tmp/bakeoff2-compose/compose.seaweedfs.yml down -v
 
