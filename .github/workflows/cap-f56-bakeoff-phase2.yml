@@ -245,10 +245,27 @@ jobs:
           mc mb --ignore-existing bakeoff/cap-dr-test
           mkdir -p /tmp/dr-src /tmp/dr-restore
           for i in 1 2 3; do echo "dr-object-$i-$(date +%s)" > "/tmp/dr-src/obj-$i.txt"; done
-          mc mirror --overwrite /tmp/dr-src bakeoff/cap-dr-test
+          # Run 36818595246 saw a transient "Signed request requires setting up
+          # SeaweedFS S3 authentication" (ErrAuthNotSetup) on 1 of 3 concurrently
+          # mirrored objects, while 19/19 signed pytest requests against the same
+          # running container all passed -- treated as a racy startup condition,
+          # not a deterministic auth misconfiguration, so retry bounded instead of
+          # failing the job outright.
+          mc_mirror_retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if mc mirror --overwrite "$1" "$2"; then
+                return 0
+              fi
+              echo "mc mirror attempt $attempt failed, retrying in 3s..." >&2
+              sleep 3
+            done
+            return 1
+          }
+          mc_mirror_retry /tmp/dr-src bakeoff/cap-dr-test
           mc rm --recursive --force bakeoff/cap-dr-test/ || true
-          mc mirror --overwrite /tmp/dr-src bakeoff/cap-dr-test
-          mc mirror --overwrite bakeoff/cap-dr-test /tmp/dr-restore
+          mc_mirror_retry /tmp/dr-src bakeoff/cap-dr-test
+          mc_mirror_retry bakeoff/cap-dr-test /tmp/dr-restore
           diff -r /tmp/dr-src /tmp/dr-restore && echo "DR_ROUNDTRIP_OK" | tee "$OUT/dr_result.txt"
 
       - name: Forced restart + recovery
@@ -317,7 +334,15 @@ jobs:
           rpc_secret = "0000000000000000000000000000000000000000000000000000000000000000"
 
           [s3_api]
-          s3_region = "garage"
+          # app.acquisition.store.S3EvidenceStore passes no region to the
+          # minio SDK, and its make_bucket call hardcodes
+          # location="us-east-1" (store.py:221-234, confirmed in Phase 1's
+          # own measurement table) -- not test scaffolding we can change,
+          # so Garage's s3_region must match it. Run 36818595246 used
+          # "garage" (Garage's own quickstart default) and every signed
+          # request failed with AuthorizationHeaderMalformed once pytest
+          # actually exercised SigV4.
+          s3_region = "us-east-1"
           api_bind_addr = "[::]:3900"
           root_domain = ".s3.garage.localhost"
 
@@ -474,10 +499,21 @@ jobs:
           mc mb --ignore-existing bakeoff/cap-dr-test || true
           mkdir -p /tmp/dr-src /tmp/dr-restore
           for i in 1 2 3; do echo "dr-object-$i-$(date +%s)" > "/tmp/dr-src/obj-$i.txt"; done
-          mc mirror --overwrite /tmp/dr-src bakeoff/cap-dr-test
+          mc_mirror_retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if mc mirror --overwrite "$1" "$2"; then
+                return 0
+              fi
+              echo "mc mirror attempt $attempt failed, retrying in 3s..." >&2
+              sleep 3
+            done
+            return 1
+          }
+          mc_mirror_retry /tmp/dr-src bakeoff/cap-dr-test
           mc rm --recursive --force bakeoff/cap-dr-test/ || true
-          mc mirror --overwrite /tmp/dr-src bakeoff/cap-dr-test
-          mc mirror --overwrite bakeoff/cap-dr-test /tmp/dr-restore
+          mc_mirror_retry /tmp/dr-src bakeoff/cap-dr-test
+          mc_mirror_retry bakeoff/cap-dr-test /tmp/dr-restore
           diff -r /tmp/dr-src /tmp/dr-restore && echo "DR_ROUNDTRIP_OK" | tee "$OUT/dr_result.txt"
 
       - name: Forced restart + recovery
@@ -586,7 +622,15 @@ jobs:
           rpc_public_addr = "127.0.0.1:3901"
           rpc_secret = "0000000000000000000000000000000000000000000000000000000000000000"
           [s3_api]
-          s3_region = "garage"
+          # app.acquisition.store.S3EvidenceStore passes no region to the
+          # minio SDK, and its make_bucket call hardcodes
+          # location="us-east-1" (store.py:221-234, confirmed in Phase 1's
+          # own measurement table) -- not test scaffolding we can change,
+          # so Garage's s3_region must match it. Run 36818595246 used
+          # "garage" (Garage's own quickstart default) and every signed
+          # request failed with AuthorizationHeaderMalformed once pytest
+          # actually exercised SigV4.
+          s3_region = "us-east-1"
           api_bind_addr = "[::]:3900"
           root_domain = ".s3.garage.localhost"
           [admin]
