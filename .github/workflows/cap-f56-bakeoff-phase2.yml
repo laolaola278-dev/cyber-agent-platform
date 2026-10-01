@@ -66,9 +66,10 @@ jobs:
       CAP_CERT_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
       CAP283_PG_DSN: postgresql+asyncpg://cap:cap@127.0.0.1:55432/cap283
       CAP283_PG_SYNC: postgresql://cap:cap@127.0.0.1:55432/cap283
-      # SeaweedFS's S3 gateway listens on 8333 in `mini` mode (Phase 1 §E:
-      # Cmd=["mini","-dir=/data"], not MinIO's 9000) -- confirmed live by the
-      # inspect step below, not assumed.
+      # SeaweedFS's S3 gateway listens on 8333 (its default, and what we
+      # explicitly pass via -s3.port=8333 under the `server` subcommand --
+      # not MinIO's 9000) -- confirmed live by the inspect step below, not
+      # assumed.
       CAP283_S3_ENDPOINT: 127.0.0.1:8333
       CAP283_S3_ACCESS: capadmin
       CAP283_S3_SECRET: capadmin123
@@ -89,18 +90,34 @@ jobs:
       - run: uv sync --project backend --frozen --extra dev
       - run: mkdir -p "$OUT"
 
+      - name: Migrate Postgres schema to head (same step cap-linux-certification.yml uses)
+        # The first dispatch (run 36813633972) skipped this: every pytest
+        # -m object_store test hit `asyncpg.exceptions.UndefinedTableError:
+        # relation "acquisition_artifacts" does not exist` because the
+        # services:-block postgres starts with an empty `cap283` database,
+        # never with the product's schema applied.
+        run: uv run --project backend alembic -c backend/alembic.ini upgrade head
+
       - name: Run the SeaweedFS container (real linux/amd64 image, explicit args)
         # GHA `services:` blocks accept image/env/ports/options but not a
         # command override, and the image's baked-in CMD is plain `mini
         # -dir=/data` with no -volume.max or -telemetry flag -- exactly the
         # volume-exhaustion and telemetry-phone-home defaults Phase 1 §J
         # measured as unsafe. A `docker run` step is required to pass them.
+        # The first dispatch of this workflow (run 36813633972) omitted the
+        # `server` subcommand and passed `-dir=/data` as a bare top-level
+        # flag; `weed` doesn't recognize that outside a subcommand and
+        # printed its usage text instead of starting (see startup.log from
+        # that run) -- the container never actually listened on 8333, so
+        # the readiness loop spun for the full 60s and every subsequent
+        # step ran against nothing. Phase 1 §J's own native measurement was
+        # against `weed server`, so that's the subcommand this needs too.
         run: |
           set -euo pipefail
           docker run -d --name bakeoff-seaweedfs \
             -p 8333:8333 \
             "${SEAWEEDFS_DIGEST}" \
-            -dir=/data -s3 -s3.port=8333 -volume.max=64 -telemetry=false
+            server -dir=/data -s3 -s3.port=8333 -volume.max=64 -telemetry=false
           for i in $(seq 1 60); do
             curl -sf http://127.0.0.1:8333/status > /dev/null 2>&1 && break
             sleep 1
@@ -261,6 +278,9 @@ jobs:
       - run: uv sync --project backend --frozen --extra dev
       - run: mkdir -p "$OUT" /tmp/garage-data /tmp/garage-meta
 
+      - name: Migrate Postgres schema to head (same step cap-linux-certification.yml uses)
+        run: uv run --project backend alembic -c backend/alembic.ini upgrade head
+
       - name: Smallest documented single-node Garage config (not a MinIO-mimicking tune)
         # Garage has zero OCI labels and one layer (Phase 1 §E), and its exact
         # CLI surface was never run before this step -- this is the minimal
@@ -326,7 +346,14 @@ jobs:
         run: |
           set -euo pipefail
           docker exec bakeoff-garage /garage status | tee "$OUT/node_status.txt"
-          NODE_ID=$(awk '/NODE/{found=1;next} found{print $1; exit}' "$OUT/node_status.txt")
+          # The first dispatch (run 36813633972) parsed the column-header
+          # row ("ID  Hostname  Address ...") as data -- `/NODE/` matches
+          # the `==== HEALTHY NODES ====` banner and `next` leaves the very
+          # next line (the header) to be captured by `found{print $1}`, so
+          # NODE_ID came out as the literal string "ID" and `garage layout
+          # assign` failed with "Error: 0 nodes match 'ID'". Skip the header
+          # row explicitly before capturing the first data row.
+          NODE_ID=$(awk '/HEALTHY NODES/{found=1;next} found && /^ID/{next} found{print $1; exit}' "$OUT/node_status.txt")
           test -n "$NODE_ID" || { echo "FATAL: could not parse a node ID from garage status -- see node_status.txt"; exit 1; }
           docker exec bakeoff-garage /garage layout assign -z dc1 -c 1G "$NODE_ID"
           docker exec bakeoff-garage /garage layout apply --version 1
@@ -513,7 +540,7 @@ jobs:
                 containers:
                   - name: seaweedfs
                     image: ${SEAWEEDFS_DIGEST}
-                    args: ["-dir=/data", "-s3", "-s3.port=8333", "-volume.max=64", "-telemetry=false"]
+                    args: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-volume.max=64", "-telemetry=false"]
                     ports: [{containerPort: 8333}]
           EOF
           kubectl -n cap-bakeoff-a rollout status deployment/seaweedfs --timeout=120s
@@ -626,7 +653,7 @@ jobs:
           services:
             seaweedfs:
               image: ${SEAWEEDFS_DIGEST}
-              command: ["-dir=/data", "-s3", "-s3.port=8333", "-volume.max=64", "-telemetry=false"]
+              command: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-volume.max=64", "-telemetry=false"]
               ports: ["8333:8333"]
               healthcheck:
                 test: ["CMD", "wget", "-qO-", "http://localhost:8333/status"]
