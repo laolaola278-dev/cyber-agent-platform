@@ -958,6 +958,16 @@ reconciliation inherits from that candidate rather than re-certifying it.
   `deployment/third-party-images.json` was changed, no candidate was frozen, no certification was
   dispatched, no tag was created, no credential was invented, the classifier was not touched, and sealed
   `v1.0.6-rc1` was re-audited read-only at the end of the round: `SEALED RELEASE INTACT`.
+- **Three findings the 2026-09-29 bake-off measured but did not file are now numbered.** F-58 (the
+  object-store certification surface never writes at `S3EvidenceStore`'s own 20 MiB ceiling, the one
+  size-dependent code path it has) and F-59 (`CAP284_HA_N` is exported by
+  `cap-linux-certification.yml` and `run_ha.sh` but `test_phase_28_4_multi_worker_ha.py` hardcodes
+  `n = 24` and has never read it, since commit `1ccab56`) are the two the bake-off report proposed and
+  explicitly left unfiled because filing was outside that round's authorization. A third, not previously
+  numbered, is filed alongside them: F-60, `test_phase_28_4_evidence_fencing.py`'s teardown can raise
+  `UnboundLocalError` on `run_id` and mask whatever actually failed first, the same family as F-55's
+  blind failure dump. This entry registers all three in `docs/known-issues.md`; none is fixed by it --
+  no test, no workflow, no production code changed.
 
 ## [1.0.5] - 2026-09-07
 

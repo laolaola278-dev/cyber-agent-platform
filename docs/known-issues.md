@@ -1147,6 +1147,73 @@ listed so that an import name is not mistaken for a working capability.
     fails the derived-unlisted test on an **unmutated baseline**. Controls run in that position mean
     nothing; run them outside the repository, as these were.
 
+25. **The object-store contract never writes at the store's own 20 MiB ceiling (F-58) — OPEN, coverage
+    gap.** Found while measuring the F-56 Option D bake-off's compatibility contract, not by reading the
+    suite. `S3EvidenceStore` enforces a `max_object_bytes` cap of `20 * 1024 * 1024`
+    (`backend/app/acquisition/store.py:198`), the exact point at which the pinned `minio` SDK's
+    `put_object` can switch its internal upload path for a large payload -- yet no test under
+    `pytest -m object_store` writes a payload above a few hundred bytes: `test_phase_28_4_object_store.py`
+    (lines 52-117) and `test_phase_28_4_orphan_gc.py` (lines 107-132) are the files that exercise
+    put/get/list/delete, and none of their fixtures approach the ceiling.
+
+    Consequence: the one size-dependent code path the store actually has has never been certified
+    against any object store, MinIO included -- not because it was tried and passed, but because it was
+    never tried. A replacement object store's multipart behavior at that boundary is therefore unverified
+    by the existing suite regardless of which candidate (or the incumbent) is running underneath it.
+
+    Measured separately, outside the suite, during the Option D bake-off (native SeaweedFS 4.48, not
+    certified here): 1 MiB produced a single PUT, 8 MiB and 20 MiB both produced a multipart upload, and
+    all three read back byte-exact with a matching sha256 -- see
+    `docs/quality/cap-f56-option-d-bake-off-2026-09-29.md` §R.3 and §I. That measurement is ad hoc
+    tooling, not a suite addition, and does not close this finding.
+
+    Not fixed here -- adding fixtures at 1 MiB / 8 MiB / 20 MiB to the object-store contract is proposed
+    future work, not performed by this entry. Filing the finding is bookkeeping; the suite is unchanged.
+
+26. **`CAP284_HA_N` is exported and ignored; the HA certification gate always runs 24, never 100 (F-59)
+    -- OPEN, measurement-reporting gap.** Found while cross-checking certification claims against the
+    code those claims describe, during the F-56 Option D bake-off. `.github/workflows/cap-linux-
+    certification.yml` sets `CAP284_HA_N=20` on the PR layer (line 130) and `CAP284_HA_N=100` on the
+    main and release layers (lines 192 and 282); `scripts/certification/run_ha.sh` exports it with a
+    default (`export CAP284_HA_N="${CAP284_HA_N:-100}"`, line 9). But
+    `backend/tests/test_phase_28_4_multi_worker_ha.py` never reads that variable -- it only reads
+    DSN/endpoint names (lines 33-48) and hardcodes `n = 24` at line 191. `git log -S 'CAP284_HA_N' --
+    backend/tests/test_phase_28_4_multi_worker_ha.py` returns no commits: the read has never existed in
+    this file. Both the hardcoded `n = 24` and the (inert) export were introduced together by commit
+    `1ccab56`.
+
+    Consequence: every certification round's HA gate has executed a 24-run test regardless of which
+    layer it ran on or what the workflow's own env var said. Three prior reports describe a scale the
+    code did not run -- `backend/docs/phase_28_5_rc2_final_blocker_closure_report.md:170` ("100-run OCI
+    HA"), `phase_28_5_ci_pipeline_report.md:110`, and `phase_28_5L_full_regression_closure.md:256` -- and
+    `phase_28_5L_linux_certification_manual.md:322` names a variable, `CAP285_HA_N`, that does not appear
+    anywhere else in the tree. Any future claim that a candidate or change "survived the 100-run HA
+    certification" repeats a number the gate does not enforce; the load-bearing HA evidence that does
+    exist is the 24-run `kill -9` survivor test, not a 100-run one.
+
+    Not fixed here -- making the test actually honor `CAP284_HA_N`, or correcting the three prior
+    reports' prose, is proposed future work. This entry is the first place the gap is filed; it changes
+    no code and no test.
+
+27. **A certification test's own teardown can destroy the evidence of why it failed (F-60) -- OPEN,
+    harness defect.** Found during the F-56 Option D bake-off while diagnosing an unrelated run, the
+    same family as F-55's blind failure dump. `backend/tests/test_phase_28_4_evidence_fencing.py::
+    TestEvidenceFencing::test_stale_worker_cannot_attach_evidence_via_object_store` assigns `run_id`
+    inside its `try:` block only after several earlier statements succeed (construction of the engine,
+    session, and store at lines ~82-87, then `service.create()`, `session.commit()`, worker
+    registration, and `coord_a.claim()` at lines 88-98, with `run_id` first bound at line 99). Its
+    `finally:` block at line 169 unconditionally references `run_id` in a cleanup query at line 175. If
+    any statement before line 99 raises -- a DB connectivity failure, a schema mismatch, the object
+    store being unreachable despite an earlier health probe (a TOCTOU gap) -- control reaches `finally`
+    with `run_id` never bound, and Python raises `UnboundLocalError: cannot access local variable
+    'run_id'` from the teardown. That secondary exception is what a test run reports; the original
+    failure that actually caused the test to fail is masked underneath it.
+
+    Not fixed here -- test edits are out of scope for a bake-off measurement round. The fix, when
+    undertaken, is mechanical: initialize `run_id = None` before the `try:` and guard the `finally`
+    cleanup with `if run_id is not None:`. This entry records the defect so a future red run of this
+    test is not mistaken for an `UnboundLocalError` bug in the fencing code itself.
+
 ## Live verification against a real PostgreSQL server
 
 The post-1.0.5 delivery audit ran the shipped application -- not the test
